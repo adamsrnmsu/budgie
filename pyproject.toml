@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-budgie = "budgie.budgie:main"
+budgie = "budgie.budgie:cli"
 
 [build-system]
 requires = ["setuptools>=42"]
