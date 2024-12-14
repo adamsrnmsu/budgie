@@ -1,7 +1,8 @@
+import logging
+
+import pyfiglet
 from rich.console import Console
 from rich.logging import RichHandler
-import logging
-import pyfiglet
 
 # Singleton for rich console
 console = Console()

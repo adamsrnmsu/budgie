@@ -1,5 +1,7 @@
 import pytest
+
 from budgie.budgie import main
+
 
 def test_main(capsys):
     main()
