@@ -8,6 +8,8 @@ dependencies = [
     "pandas",
     "pyfiglet",
     "rich",
+    "black",
+    "click",
 ]
 
 [project.scripts]
@@ -22,4 +24,5 @@ dev = [
     "pytest>=6.2.4",
     "isort",
     "ruff",
+    "pyyaml",
 ]
