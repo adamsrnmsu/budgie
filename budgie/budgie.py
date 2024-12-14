@@ -7,15 +7,11 @@ from pathlib import Path
 import click
 import pandas as pd
 
-from budgie.singletons import console, header, logger
-from budgie.utils.utils import display_dataframe
+from budgie.singletons import logger
+from budgie.utils.utils import display_dataframe, display_startup_message
 
 THIS_FILE = Path(__file__).resolve()
 THIS_DIR = THIS_FILE.parent
-
-def display_startup_message():
-    console.print(header, style="bold blue")
-    logger.info("Budgie started!")
 
 
 @click.group()
