@@ -1,0 +1,25 @@
+[project]
+name = "Budgie"
+version = "0.1.0"
+description = "The Ultimate Project Budget Companion"
+authors = [{name = "Ryan Adams", email = "adamsrnmsu@gmail.com"}]
+
+dependencies = [
+    "pandas",
+    "pyfiglet",
+    "rich",
+]
+
+[project.scripts]
+budgie = "budgie.budgie:main"
+
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[tool.optional-dependencies]
+dev = [
+    "pytest>=6.2.4",
+    "isort",
+    "ruff",
+]
