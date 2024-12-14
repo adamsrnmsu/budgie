@@ -13,15 +13,6 @@ from budgie.utils.utils import display_dataframe
 THIS_FILE = Path(__file__).resolve()
 THIS_DIR = THIS_FILE.parent
 
-
-@click.group()
-def cli():
-    """
-    Main CLI Entrypoint for budgie
-    """
-    pass
-
-
 def display_startup_message():
     console.print(header, style="bold blue")
     logger.info("Budgie started!")
