@@ -12,7 +12,7 @@ def create_table(df, style, display=True):
     if display:
         console.print(table, style=style)
     return table
-   
+
 
 def display_startup_message():
     console.print(header, style="bold blue")
