@@ -11,7 +11,7 @@ Budgie is a CLI budget/forecasting companion — a terminal alternative to sprea
 Editable install, then invoke via the `budgie` console script (`pyproject.toml` → `budgie.budgie:cli`):
 
 ```bash
-pip install -e .                 # or: make venv  (creates .venv and installs)
+pip install -e .                 # or: make venv  (builds the venv and installs)
 budgie                           # grouped, phased landing screen (also `budgie --help`)
 budgie guide [people|plan|...]   # walkthrough, or how to fill in one input file
 budgie init [name]               # scaffold a project into a SUBFOLDER (default budget/)
@@ -32,6 +32,10 @@ formats — keep it in sync when commands or CSV shapes change.
 Or run the module directly: `python -m budgie.budgie forecast ...`.
 
 Note: this project is typically installed into a virtualenv. Be careful that the interpreter running the package matches the one `pip`/`pytest` use — a bare `python3` on PATH may be a different version than where the package is installed.
+
+**The venv lives outside the repo, at `~/Documents/tools/budgie`** (alongside the other tools there), so the working tree holds no build artifacts. `Makefile` `VENV ?=` sets it; every target takes `VENV=` to override. Run the suite as `~/Documents/tools/budgie/bin/pytest`.
+
+**macOS hidden-`.pth` trap.** `site.addpackage` *silently skips any `.pth` file carrying the `UF_HIDDEN` flag* — so an editable install can report success while the package stays unimportable, and `budgie` dies with `ModuleNotFoundError: No module named 'budgie'`. The tell: importing works from the repo root (cwd puts `./budgie/` on `sys.path`) but fails from anywhere else, and every test module errors on collection at once. Diagnose from a **neutral cwd** — testing from the repo root gives a false pass. `/bin/ls -lO <site-packages>` shows the flag; `chflags nohidden <file>` clears it (`chflags -R` skips symlinks — use `find ... -print0 | xargs -0 chflags -h nohidden`). Moving the venv out of the tree is what keeps whatever hides files from reaching it.
 
 ## Commands
 

@@ -1,4 +1,8 @@
-VENV := .venv
+# The venv lives OUTSIDE the repo, alongside the other tools. Keeping it in-tree
+# invites editors and cleanup scripts to touch it, and a .pth file that picks up
+# macOS's UF_HIDDEN flag is silently skipped by site.py — the package installs
+# fine and then won't import. Override with: make venv VENV=/some/other/path
+VENV ?= $(HOME)/Documents/tools/budgie
 BIN := $(VENV)/bin
 
 .PHONY: help venv activate install lint format test clean
@@ -7,12 +11,12 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
-venv: ## Create the .venv virtualenv and install budgie (editable) with deps
+venv: ## Create the virtualenv in $(VENV) and install budgie (editable) with deps
 	python3 -m venv $(VENV)
 	$(BIN)/pip install --upgrade pip
 	$(BIN)/pip install -e .
 
-install: ## Reinstall the package into an existing .venv
+install: ## Reinstall the package into an existing venv
 	$(BIN)/pip install -e .
 
 activate: ## Print the command to activate the venv (a target can't alter your shell)

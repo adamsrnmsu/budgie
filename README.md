@@ -37,19 +37,29 @@ Requires Python 3.10+.
 ```bash
 git clone https://github.com/adamsrnmsu/budgie.git
 cd budgie
-make venv                      # creates .venv and installs budgie + deps
-source .venv/bin/activate      # (make activate prints this for you)
+make venv                      # creates the venv and installs budgie + deps
+make activate                  # prints the source command for your shell
 ```
+
+`make venv` builds the virtualenv **outside the repo**, at `~/Documents/tools/budgie`,
+so nothing in the working tree is a build artifact. Put it somewhere else with
+`make venv VENV=/path/to/env` (every other target takes the same `VENV=`).
 
 Or by hand:
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
+python3 -m venv /path/to/env && source /path/to/env/bin/activate
 pip install -e .
 ```
 
 > **Note:** make sure the interpreter running `budgie` is the same one `pip` installed into.
 > A bare `python3` on your `PATH` may be a different version than your virtualenv.
+>
+> **macOS:** if `budgie` dies with `ModuleNotFoundError: No module named 'budgie'`
+> right after a successful `pip install -e .`, check the editable `.pth` for the
+> hidden flag: `ls -lO "$(python -c 'import site;print(site.getsitepackages()[0])')"`.
+> `site.py` silently skips any `.pth` marked `hidden`, so the finder never installs.
+> Clear it with `chflags nohidden <file>`.
 
 ## Start a project
 
