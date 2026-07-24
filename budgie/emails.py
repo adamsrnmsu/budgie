@@ -14,7 +14,7 @@ from email.message import EmailMessage
 from pathlib import Path
 
 from budgie.core.allocation import Allocation
-from budgie.core.burndown import BurndownStatus
+from budgie.core.burndown import BurndownStatus, RequiredPace
 
 # Content-ID used to reference the embedded burn-down chart from the HTML body.
 CHART_CID = "burndown"
@@ -41,7 +41,7 @@ Here's where your {year} time allocation stands:
   Hours allocated:  {allocated:,.0f}
   Hours spent:      {spent:,.0f}
   Hours remaining:  {remaining:,.0f}  ({pct_used:.0%} used)
-{status_line}
+{pace_line}{status_line}
 Please let me know if anything looks off.
 
 Thanks,
@@ -72,13 +72,46 @@ def _status_line(alloc: Allocation) -> str:
     return ""
 
 
+def pace_sentence(pace: RequiredPace) -> str:
+    """Remaining hours restated as a weekly commitment.
+
+    "318 hours left" is not something anyone can act on. The number people plan
+    against is "roughly a day and a half a week for the rest of the year".
+    """
+    if pace.out_of_time:
+        return (
+            f"There are no working days left in the year, so the remaining "
+            f"{pace.hours_remaining:,.0f} hours can't be spent."
+        )
+    if pace.is_exhausted:
+        return "There are no hours left to spend on this project."
+    weeks = pace.weeks_remaining
+    ask = (
+        f"Spending the remaining {pace.hours_remaining:,.0f} hours evenly over the "
+        f"{pace.workdays_remaining} working days left ({weeks:,.0f} weeks) means "
+        f"about {pace.hours_per_week:,.0f} hours a week -- "
+        f"{pace.fte:.0%} of your time."
+    )
+    if pace.is_impossible:
+        return (
+            ask + " That is more than a full-time week, so the allocation can't "
+            "be spent in the time remaining."
+        )
+    return ask
+
+
 def render_email(
     alloc: Allocation,
     year: int,
     subject_template: str = DEFAULT_SUBJECT,
     body_template: str = DEFAULT_BODY,
+    pace: RequiredPace | None = None,
 ) -> EmailDraft:
-    """Render a personalized :class:`EmailDraft` for one allocation."""
+    """Render a personalized :class:`EmailDraft` for one allocation.
+
+    Pass ``pace`` (from :attr:`BurndownStatus.required_pace`) to include the
+    what-this-means-per-week sentence.
+    """
     fields = {
         "name": alloc.name,
         "year": year,
@@ -88,6 +121,7 @@ def render_email(
         "remaining": alloc.hours_remaining,
         "pct_used": alloc.fraction_used,
         "status_line": _status_line(alloc),
+        "pace_line": f"\n{pace_sentence(pace)}\n" if pace else "",
     }
     return EmailDraft(
         to=alloc.email,
@@ -97,17 +131,17 @@ def render_email(
 
 
 def write_drafts(
-    allocations: list[Allocation],
+    statuses: list[BurndownStatus],
     year: int,
     out_dir: str | Path,
 ) -> list[Path]:
-    """Render and write one draft file per allocation; return the paths."""
+    """Render and write one plain-text draft per person; return the paths."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     paths = []
-    for alloc in allocations:
-        draft = render_email(alloc, year)
-        path = out / f"{slug(alloc.name)}.txt"
+    for status in statuses:
+        draft = render_email(status.allocation, year, pace=status.required_pace)
+        path = out / f"{slug(status.allocation.name)}.txt"
         path.write_text(draft.as_text())
         paths.append(path)
     return paths
@@ -164,7 +198,9 @@ def render_html_email(status: BurndownStatus, year: int) -> str:
     """Render an Outlook-safe HTML body (tables + inline styles, cid: image)."""
     alloc = status.allocation
     color, message = _pace_banner(status)
+    pace = status.required_pace
     remaining_color = _RED if alloc.is_over_budget else _INK
+    pace_color = _RED if pace.is_impossible else _INK
 
     # Built up front so the template below holds only simple substitutions --
     # a formatter can't reflow call expressions it can't see.
@@ -180,8 +216,15 @@ def render_html_email(status: BurndownStatus, year: int) -> str:
                 color=remaining_color,
             ),
             _row("Used", f"{alloc.fraction_used:.0%}"),
+            _row(
+                "To finish on plan",
+                f"{pace.hours_per_week:,.0f} h/week ({pace.fte:.0%} of your time)",
+                bold=True,
+                color=pace_color,
+            ),
         ]
     )
+    pace_text = pace_sentence(pace)
     as_of = f"{status.as_of:%B %-d, %Y}"
 
     return f"""\
@@ -217,6 +260,14 @@ font-family:{_FONT};font-size:14px;color:{_INK};line-height:1.5;">{message}</td>
     </table>
   </td></tr>
 
+  <tr><td style="padding:10px 28px 0 28px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr><td style="border-left:4px solid {pace_color};padding:10px 14px;\
+background:#fafbfa;font-family:{_FONT};font-size:14px;color:{_INK};line-height:1.5;">\
+{pace_text}</td></tr>
+    </table>
+  </td></tr>
+
   <tr><td style="padding:20px 28px 4px 28px;">
     <img src="cid:{CHART_CID}" width="544" alt="Hours burn-down chart" \
 style="display:block;width:544px;max-width:100%;height:auto;border:0;">
@@ -245,7 +296,9 @@ def build_message(
     HTML, because Outlook will not render base64 ``data:`` image URIs.
     """
     alloc = status.allocation
-    draft = render_email(alloc, year)
+    # The text/plain part carries the same pace sentence as the HTML, so a
+    # recipient whose client blocks HTML gets the whole message.
+    draft = render_email(alloc, year, pace=status.required_pace)
 
     msg = EmailMessage()
     msg["Subject"] = draft.subject

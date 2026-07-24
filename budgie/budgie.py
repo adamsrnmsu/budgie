@@ -386,9 +386,9 @@ def hours(alloc_csv, year, pto):
 @click.option(
     "--html/--plain",
     "as_html",
-    default=False,
-    help="Write Outlook-ready .eml drafts with an embedded burn-down chart "
-    "(default: plain .txt).",
+    default=True,
+    show_default=True,
+    help="Outlook-ready .eml drafts with an embedded burn-down chart, or plain .txt.",
 )
 @click.option(
     "--as-of",
@@ -435,35 +435,41 @@ def emails(
     ph = productive_hours(year, pto_days=pto)
     allocs = load_allocations(alloc_csv, available_hours=ph)
 
+    statuses = _burndown_statuses(allocs, year, as_of, actuals_csv, weekly_csv)
+
     if as_html:
-        paths = _write_html_emails(
-            allocs, year, out_dir, as_of, actuals_csv, weekly_csv
-        )
+        paths, charts_dir = _write_html_emails(statuses, year, out_dir)
     else:
-        paths = write_drafts(allocs, year, out_dir)
+        paths, charts_dir = write_drafts(statuses, year, out_dir), None
 
     console.print(
         f"[bold]Wrote {len(paths)} draft(s)[/bold] to {out_dir}/ (review before sending)"
     )
     for path in paths:
         console.print(f"  • {path}")
+    if charts_dir:
+        console.print(f"[dim]Burn-down charts in {charts_dir}/[/dim]")
 
-    if preview and allocs and not as_html:
-        console.rule("Preview")
-        console.print(render_email(allocs[0], year).as_text())
+    if preview and statuses:
+        # The plain-text body is the readable one in a terminal, and it is the
+        # .eml's own text/plain part -- so previewing it is honest either way.
+        console.rule("Preview" + (" (text part of the .eml)" if as_html else ""))
+        console.print(
+            render_email(
+                statuses[0].allocation, year, pace=statuses[0].required_pace
+            ).as_text()
+        )
 
 
-def _write_html_emails(allocs, year, out_dir, as_of, actuals_csv=None, weekly_csv=None):
-    """Render a burn-down chart per person and write Outlook-ready .eml drafts."""
+def _burndown_statuses(allocs, year, as_of, actuals_csv=None, weekly_csv=None):
+    """Build a BurndownStatus per person, using real spend readings if given.
+
+    Both mail formats need this now: the plain-text draft carries the required
+    pace, which is measured against the working days left after the as-of date.
+    """
     from budgie.core.actuals import load_weekly_actuals, monthly_to_observations
     from budgie.core.burndown import burndown
     from budgie.core.monthly import load_monthly_actuals
-    from budgie.emails import slug, write_eml_drafts
-    from budgie.plots import burndown_chart
-
-    out = Path(out_dir)
-    charts_dir = out / "charts"
-    charts_dir.mkdir(parents=True, exist_ok=True)
 
     # Real spend readings turn the interpolated burn-down into a true curve.
     # Weekly cumulative readings and monthly per-period hours both reduce to
@@ -479,18 +485,32 @@ def _write_html_emails(allocs, year, out_dir, as_of, actuals_csv=None, weekly_cs
         observations = {}
 
     as_of_date = as_of.date() if as_of else None
-    statuses, charts = [], {}
+    statuses = []
     for alloc in allocs:
         obs = observations.get(alloc.name)
         # Never chart a reading dated after the as-of date.
         if obs and as_of_date:
             obs = [o for o in obs if o[0] <= as_of_date]
-        status = burndown(alloc, year, as_of=as_of_date, observations=obs)
-        chart_path = burndown_chart(status, charts_dir / f"{slug(alloc.name)}.png")
-        statuses.append(status)
-        charts[alloc.name] = chart_path.read_bytes()
+        statuses.append(burndown(alloc, year, as_of=as_of_date, observations=obs))
+    return statuses
 
-    return write_eml_drafts(statuses, year, out, charts=charts)
+
+def _write_html_emails(statuses, year, out_dir):
+    """Render a burn-down chart per person and write Outlook-ready .eml drafts."""
+    from budgie.emails import slug, write_eml_drafts
+    from budgie.plots import burndown_chart
+
+    out = Path(out_dir)
+    charts_dir = out / "charts"
+    charts_dir.mkdir(parents=True, exist_ok=True)
+
+    charts = {}
+    for status in statuses:
+        name = status.allocation.name
+        chart_path = burndown_chart(status, charts_dir / f"{slug(name)}.png")
+        charts[name] = chart_path.read_bytes()
+
+    return write_eml_drafts(statuses, year, out, charts=charts), charts_dir
 
 
 def _print_hours_table(allocs):
