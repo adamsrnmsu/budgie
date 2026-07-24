@@ -248,17 +248,22 @@ than a full-time week, the draft says so outright.
 budgie tui
 ```
 
-Four tabs over your project:
+Four tabs over your project, left to right in the order you'd build a budget — data first,
+conclusion last:
 
-- **Forecast** — edit year, PTO, iterations and seed; the table and Monte Carlo histogram
-  recompute live.
-- **Plan** — the allocation plan, with a form to append a dated change. Re-planning is an
-  appended row, never an edit, so the history stays intact.
-- **Inputs** — every project file, whether it exists, and what feeds what. Select one and
-  press `e` to open it in `$EDITOR`, then `r` to recalculate.
-- **Assumptions** — the same model assumptions `budgie assumptions` prints.
+1. **Inputs** — every project file, whether it exists, and what feeds what. Select one and
+   press `e` to open it in `$EDITOR`, then `r` to recalculate.
+2. **Plan** — the allocation plan, with a form to append a dated change. Re-planning is an
+   appended row, never an edit, so the history stays intact.
+3. **Forecast** — edit year, PTO, iterations and seed; the table and Monte Carlo histogram
+   recompute live.
+4. **Assumptions** — the same model assumptions `budgie assumptions` prints.
 
-Press `r` to recalculate, `e` to edit the selected input, `q` to quit.
+Press `1`–`4` to jump to a tab, `r` to recalculate, `e` to edit the selected input, `q` to
+quit.
+
+It opens on **Forecast** when it can compute one, and on **Inputs** when it can't — if a file
+won't load, the tab that fixes it is more useful than the one that can only report the error.
 
 ## Input files
 

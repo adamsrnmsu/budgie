@@ -63,6 +63,16 @@ _TABS: tuple[tuple[str, str], ...] = (
     ("tab_assumptions", "4 Assumptions"),
 )
 
+# Inputs-table geometry. A DataTable clips its cells rather than wrapping them,
+# so the widths have to be chosen rather than discovered: everything here is
+# fixed and the description column absorbs whatever is left.
+_FILE_COL = 16  # longest scaffolded filename is `allocations.csv`
+_ROWS_COL = 4
+_CELL_PADDING = 2  # DataTable's default, one space either side
+
+# `#mc_pane` is `padding: 1 2`, so four columns of its width are not content.
+_MC_PANE_PADDING = 4
+
 
 def ascii_histogram(values: np.ndarray, bins: int = 42, height: int = 8) -> str:
     """Render a compact vertical block histogram of ``values`` as text.
@@ -106,6 +116,17 @@ def shorten_path(path: str | Path, width: int = 60) -> str:
     if len(text) <= width:
         return text
     return "…" + text[-(width - 1) :]
+
+
+def _ellipsize(text: str, width: int) -> str:
+    """Trim ``text`` to ``width``, ending in an ellipsis when it was cut.
+
+    A DataTable clips a too-long cell mid-word with no marker, which reads as a
+    rendering bug. The ellipsis says the truncation was deliberate.
+    """
+    if len(text) <= width:
+        return text
+    return text[: max(width - 1, 0)].rstrip() + "…"
 
 
 def open_in_editor(path: Path) -> str:
@@ -192,7 +213,10 @@ class BudgieTUI(App):
     }
 
     /* --- Shared -------------------------------------------------------- */
+    /* Hidden until something goes wrong -- an empty banner is still two rows
+       of alarm-coloured background, which is worse than no banner. */
     .banner {
+        display: none;
         height: auto;
         padding: 1 2;
         background: $error 20%;
@@ -278,28 +302,16 @@ class BudgieTUI(App):
     def compose(self) -> ComposeResult:
         yield Static(id="titlebar")
         yield Static(id="contextbar")
-        with TabbedContent(initial=self._initial_tab(), id="tabs"):
-            with TabPane(_TABS[0][1], id="tab_inputs"):
+        with TabbedContent(initial="tab_forecast", id="tabs"):
+            with TabPane(_TABS[0][1], id=_TABS[0][0]):
                 yield from self._compose_inputs()
-            with TabPane(_TABS[1][1], id="tab_plan"):
+            with TabPane(_TABS[1][1], id=_TABS[1][0]):
                 yield from self._compose_plan()
-            with TabPane(_TABS[2][1], id="tab_forecast"):
+            with TabPane(_TABS[2][1], id=_TABS[2][0]):
                 yield from self._compose_forecast()
-            with TabPane(_TABS[3][1], id="tab_assumptions"):
+            with TabPane(_TABS[3][1], id=_TABS[3][0]):
                 yield VerticalScroll(Static(id="assumptions_text"))
         yield Footer()
-
-    def _initial_tab(self) -> str:
-        """Forecast when there is one to show, Inputs when there isn't.
-
-        Landing on a tab that can only display an error helps nobody; landing
-        on the tab that fixes it does.
-        """
-        try:
-            load_people(self.people_path, productive_hours=productive_hours(2026))
-        except (OSError, ValueError):
-            return "tab_inputs"
-        return "tab_forecast"
 
     def _compose_forecast(self) -> ComposeResult:
         controls = Horizontal(id="controls")
@@ -374,11 +386,16 @@ class BudgieTUI(App):
         plan_table.zebra_stripes = True
 
         inputs_table = self.query_one("#inputs_table", DataTable)
-        inputs_table.add_columns("", "File", "Rows", "What it is", "Used by")
         inputs_table.cursor_type = "row"
         inputs_table.zebra_stripes = True
 
         self.recalculate()
+        # Open on Forecast when there is one, on Inputs when there isn't:
+        # landing on a tab that can only show an error helps nobody, landing on
+        # the tab that fixes it does. `recalculate` has already tried the load,
+        # so this reads the outcome rather than parsing the file a second time.
+        if self._load_error is not None:
+            self.action_show_tab("tab_inputs")
 
     def _setting(self, key: str, default):
         if self.workspace:
@@ -420,8 +437,11 @@ class BudgieTUI(App):
             return
         with self.suspend():
             message = open_in_editor(items[row].path)
-        status.update(message)
+        # Recalculate first: it rewrites this same status line with whatever
+        # the edited file now says, and the editor's own message is the newer
+        # news of the two.
         self.recalculate()
+        status.update(message)
 
     # -- reading the form --------------------------------------------------
 
@@ -495,8 +515,7 @@ class BudgieTUI(App):
         """The two header rows: who/what/when on top, where below."""
         figures = f"{year}   ·   PTO {pto:g}d   ·   {self._clock()}"
         self.query_one("#titlebar", Static).update(
-            f"BUDGIE   {self.project_name}{' ' * 4}"
-            f"[not bold]{figures}[/not bold]"
+            f"BUDGIE   {self.project_name}{' ' * 4}[not bold]{figures}[/not bold]"
         )
         location = (
             shorten_path(self.workspace.root, 70)
@@ -510,6 +529,16 @@ class BudgieTUI(App):
         # Local time: the point is "did my keypress take effect", not UTC.
         return datetime.now().strftime("%H:%M:%S")  # noqa: DTZ005
 
+    def _mc_width(self) -> int:
+        """Content width of the Monte Carlo pane, in characters.
+
+        Derived from the app width and the 3fr/2fr split rather than read off
+        the widget: the first render happens from ``on_mount``, before layout
+        has run, so ``#mc_pane.size.width`` is still 0 and a fallback guess
+        would lay out the one pass a user actually sees on startup.
+        """
+        return max(int(self.size.width * 2 / 5) - _MC_PANE_PADDING, 12)
+
     def _refresh_forecast(self, ph, iterations: int, seed: int) -> None:
         banner = self.query_one("#forecast_banner", Static)
         table = self.query_one("#forecast", DataTable)
@@ -518,10 +547,10 @@ class BudgieTUI(App):
         except (OSError, ValueError) as exc:
             # A missing or malformed CSV is a normal state to be in, not a
             # crash: say which file and what to read to fix it.
-            self._load_error = str(exc)
+            self._load_error = f"Can't read {Path(self.people_path).name}: {exc}"
             banner.display = True
             banner.update(
-                f"Can't read {Path(self.people_path).name}: {exc}\n"
+                f"{self._load_error}\n"
                 f"Fix the file, then press r. `budgie guide people` explains "
                 f"the columns."
             )
@@ -549,24 +578,41 @@ class BudgieTUI(App):
             f"[b]{_money(det.total_cost)}[/b]",
         )
 
-        # Percentiles as aligned rows rather than one wrapping line -- three
-        # numbers meant to be compared should sit in a column.
-        self.query_one("#mc_figures", Static).update(
-            f"[green]P10[/green]  {_money(pct[10]):>12}   [dim]optimistic[/dim]\n"
-            f"[b]P50[/b]  {_money(pct[50]):>12}   [dim]expected[/dim]\n"
-            f"[green]P90[/green]  {_money(pct[90]):>12}   [dim]reserve this[/dim]"
-        )
-        hist = self.query_one("#hist", Static)
+        width = self._mc_width()
         # Fit the histogram to the pane; a wider one wraps into noise.
-        width = max(hist.size.width or 36, 12)
-        hist.update(ascii_histogram(sim.total_costs, bins=width))
+        self.query_one("#hist", Static).update(
+            ascii_histogram(sim.total_costs, bins=width)
+        )
+
+        # Percentiles as aligned rows rather than one wrapping line -- three
+        # numbers meant to be compared should sit in a column. The gloss is the
+        # first thing dropped on a narrow pane: a wrapped label costs a whole
+        # row and pushes the figure it explains away from it.
+        glosses = ("optimistic", "expected", "reserve this")
+        room = width >= 34
+        self.query_one("#mc_figures", Static).update(
+            "\n".join(
+                f"{style}  {_money(pct[p]):>12}"
+                + (f"   [dim]{gloss}[/dim]" if room else "")
+                for p, style, gloss in zip(
+                    (10, 50, 90),
+                    ("[green]P10[/green]", "[b]P50[/b]", "[green]P90[/green]"),
+                    glosses,
+                )
+            )
+        )
+        # One figure per line. Run these together and the pane wraps them at
+        # whatever column it reaches, which breaks a number across two rows.
         self.query_one("#mc_stats", Static).update(
-            f"{sim.iterations:,} sims   mean {_money(sim.mean)}   "
-            f"std {_money(sim.std)}\n"
+            f"{sim.iterations:,} sims\n"
+            f"mean {_money(sim.mean)}   std {_money(sim.std)}\n"
             f"[dim]available hours {ph.available_hours:,.0f} @ 1.0 FTE[/dim]"
         )
         self.query_one("#source", Static).update(
-            f"people: {shorten_path(self.people_path, 40)}"
+            # -8 for the "people: " label, -2 for the pane's scrollbar: this
+            # line is the last thing in a VerticalScroll, so the bar is usually
+            # there and a path sized to the full width wraps under its label.
+            f"[dim]people:[/dim] {shorten_path(self.people_path, max(width - 10, 12))}"
         )
 
     def _refresh_plan(self, year: int, pto: float) -> None:
@@ -594,20 +640,42 @@ class BudgieTUI(App):
         table.add_row("[b]Total[/b]", "", f"[b]{total:,.0f}[/b]")
 
     def _refresh_inputs(self) -> None:
+        # Say why we're here. Arriving on this tab because a file wouldn't load
+        # is confusing unless the reason arrives with you.
+        self.query_one("#inputs_status", Static).update(
+            "" if self._load_error is None else f"[red]{self._load_error}[/red]"
+        )
         table = self.query_one("#inputs_table", DataTable)
-        table.clear()
+        items = self.workspace.inputs() if self.workspace else []
+        used_by = [" ".join(item.used_by) for item in items]
+
+        # Columns are rebuilt each refresh because the description column is
+        # sized to whatever room is left over. A DataTable clips rather than
+        # wraps, and the rightmost column is the one that says what feeds what
+        # -- letting prose push it off the screen loses the point of the tab.
+        table.clear(columns=True)
+        width = table.size.width or self.size.width
+        fixed = _FILE_COL + _ROWS_COL + max(map(len, used_by), default=0) + 1
+        description_width = max(width - fixed - _CELL_PADDING * 5, 20)
+
+        table.add_column("", width=1)
+        table.add_column("File", width=_FILE_COL)
+        table.add_column("Rows", width=_ROWS_COL)
+        table.add_column("What it is", width=description_width)
+        table.add_column("Used by")
+
         if self.workspace is None:
             table.add_row(
                 "", "[dim]no budgie.yaml[/dim]", "", "Run `budgie init` to start", ""
             )
             return
-        for item in self.workspace.inputs():
+        for item, used in zip(items, used_by):
             table.add_row(
                 "[green]✓[/green]" if item.exists else "[dim]·[/dim]",
                 item.path.name if item.exists else f"[dim]{item.path.name}[/dim]",
                 "" if item.rows is None else str(item.rows),
-                item.description,
-                " ".join(item.used_by),
+                _ellipsize(item.description, description_width),
+                used,
             )
 
     def _refresh_assumptions(self, ph, year: int) -> None:

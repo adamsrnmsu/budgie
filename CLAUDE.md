@@ -18,7 +18,7 @@ budgie init [name]               # scaffold a project into a SUBFOLDER (default 
 budgie status                    # which inputs exist, and what feeds what
 budgie assumptions               # every modelling assumption + where it's set
 budgie forecast --people tests/team.csv --year 2026 --pto 15 --seed 42 --plots
-budgie tui                       # 4-tab explorer: Forecast / Plan / Inputs / Assumptions
+budgie tui                       # 4-tab explorer: Inputs / Plan / Forecast / Assumptions
 budgie hours                     # FTE allocated / spent / remaining per person
 budgie emails --out-dir emails   # Outlook .eml drafts + charts by default (never sends)
 budgie emails --plain            # plain-text drafts instead
@@ -75,10 +75,12 @@ Presentation layers (all thin adapters over `core/`):
   - `_SIGNAL_STYLE` is keyed by `Signal.name`, not the enum, so rendering never imports the engine.
   - The group is `invoke_without_command=True, add_help_option=False` with its own `-h/--help` flag, so bare `budgie` and `budgie --help` both render the grouped overview from `guide_ui`. Click's built-in group help is a flat alphabetical list that tells a new user nothing about what to run second. Subcommands keep click's normal `--help`.
 - `budgie/guide_ui.py` — rich rendering for the landing screen, the walkthrough and the topic pages. On the bare-`budgie` path, so it must stay cheap: rich only, no engine, no pyfiglet. Prose that wraps goes through `_indented()` or a borderless two-column `Table` — `console.print(f"    {text}")` only indents the *first* line, and rich wraps the rest to column zero.
-- `budgie/tui.py` — Textual TUI (`BudgieTUI`), four tabs over the workspace: Forecast (live recompute), Plan (append a dated change), Inputs (list + open in `$EDITOR` via the `e` binding), Assumptions. `ascii_histogram()` renders the distribution as block characters.
+- `budgie/tui.py` — Textual TUI (`BudgieTUI`), four tabs over the workspace in **workflow order, data to conclusion**: `1` Inputs (list + open in `$EDITOR` via the `e` binding), `2` Plan (append a dated change), `3` Forecast (live recompute), `4` Assumptions. `_TABS` is the one place that order lives, and the number keys are bindings onto it. `ascii_histogram()` renders the distribution as block characters.
   - **The only thing the TUI writes is a plan row, and it appends.** `append_plan_row()` never edits an existing row, because that's what `core/plan.py` models — history is a record, not mutable state.
   - `add_plan_row()` returns the status message it displayed, so tests can assert the outcome without reaching into widget internals.
-  - TUI tests are async (`App.run_test()`); `pyproject.toml` sets `asyncio_mode = "auto"` so they don't each need a marker.
+  - A people.csv that won't load is a **normal state**, not a crash: `_refresh_forecast` catches it into `_load_error`, shows a banner naming the file, empties the table rather than leaving stale numbers, and `on_mount` opens on Inputs instead of Forecast — the tab that can fix it rather than the one that can only complain.
+  - **Layout widths are computed, not read off widgets.** The first render runs from `on_mount`, *before* Textual has laid anything out, so `widget.size.width` is still 0 — the one pass a user sees on startup would be laid out against a fallback guess. `_mc_width()` derives the Monte Carlo pane from the app width and the 3fr/2fr split instead. A `DataTable` clips rather than wraps, so the Inputs table rebuilds its columns each refresh with the description sized to what's left over and `_ellipsize`d, keeping "Used by" on screen. (`budgie status` renders the same data through a rich `Table`, which wraps, so it doesn't need any of this.)
+  - TUI tests are async (`App.run_test()`); `pyproject.toml` sets `asyncio_mode = "auto"` so they don't each need a marker. `run_test(size=...)` is how the responsive behaviour is tested; `_text()` reads a `Static` back via `.content` (Textual 8 dropped `.renderable`).
 - `budgie/plots.py` — matplotlib figures (Agg backend, file output only — no windows). `montecarlo_histogram`, `forecast_bars`, and `burndown_chart` (even-pace vs actual vs projection, with the exhaustion date marked). Reusable by TUI/GUI.
 - `budgie/emails.py` — renders a per-person `EmailDraft` from an `Allocation` and writes draft files. **Renders only; never sends** — sending is left to a reviewed, explicit step.
   - `budgie emails` defaults to `--html` (`.eml` + per-person burn-down charts under `emails/charts/`); `--plain` is the opt-out. It used to default the other way, which is why it looked like the charts were broken.

@@ -7,7 +7,7 @@ import pytest
 from budgie.core.plan import load_plan
 from budgie.core.scaffold import init_workspace
 from budgie.core.workspace import forget_workspaces
-from budgie.tui import BudgieTUI, append_plan_row, open_in_editor
+from budgie.tui import BudgieTUI, append_plan_row, open_in_editor, shorten_path
 
 
 @pytest.fixture(autouse=True)
@@ -15,6 +15,13 @@ def _clear_workspace_cache():
     forget_workspaces()
     yield
     forget_workspaces()
+
+
+def _text(app, selector: str) -> str:
+    """The plain text a Static is currently displaying, markup stripped."""
+    from rich.text import Text
+
+    return Text.from_markup(str(app.query_one(selector).content)).plain
 
 
 def test_append_plan_row_creates_the_file_with_a_header(tmp_path):
@@ -74,7 +81,9 @@ async def test_tui_shows_every_tab_and_the_project_root(tmp_path, monkeypatch):
     app = BudgieTUI()
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app.sub_title == str(tmp_path.resolve())
+        # The title bar names the project; the context bar says where it is.
+        assert tmp_path.name in _text(app, "#titlebar")
+        assert tmp_path.name in _text(app, "#contextbar")
         # The forecast table is populated from the project's people.csv.
         assert app.query_one("#forecast").row_count > 0
         # The plan tab reflects the project's plan.csv.
@@ -129,5 +138,96 @@ async def test_tui_works_without_a_project(tmp_path, monkeypatch):
     async with app.run_test() as pilot:
         await pilot.pause()
         # Falls back to the bundled sample rather than failing.
-        assert app.sub_title == "no project"
+        assert "no project" in _text(app, "#titlebar")
+        assert "budgie init" in _text(app, "#contextbar")
         assert app.query_one("#forecast").row_count > 0
+
+
+# -- the workflow order, and what happens when an input won't load ----------
+
+
+async def test_tui_opens_on_forecast_when_it_can_compute_one(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one("#tabs").active == "tab_forecast"
+        # Nothing is wrong, so the error banner stays out of the way.
+        assert app.query_one("#forecast_banner").display is False
+
+
+async def test_tui_opens_on_inputs_when_people_will_not_load(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    (tmp_path / "people.csv").write_text("name,hourly_cost\nAlice,not-a-number\n")
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Land on the tab that can fix it, not the one that can only complain.
+        assert app.query_one("#tabs").active == "tab_inputs"
+        # And say why you were sent there -- naming the file, since the reason
+        # is being read away from the forecast that produced it.
+        assert "people.csv" in _text(app, "#inputs_status")
+        # The forecast table is emptied rather than left showing stale numbers.
+        assert app.query_one("#forecast").row_count == 0
+        assert "people.csv" in _text(app, "#forecast_banner")
+
+
+async def test_number_keys_switch_tabs(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        for key, expected in (
+            ("1", "tab_inputs"),
+            ("2", "tab_plan"),
+            ("3", "tab_forecast"),
+            ("4", "tab_assumptions"),
+        ):
+            await pilot.press(key)
+            await pilot.pause()
+            assert app.query_one("#tabs").active == expected
+
+
+async def test_narrow_terminal_drops_the_percentile_glosses(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+    # The first render runs from on_mount, before layout, so this also pins
+    # that the width is derived rather than read off an unsized widget.
+    async with BudgieTUI().run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        narrow = _text(pilot.app, "#mc_figures")
+
+    async with BudgieTUI().run_test(size=(140, 30)) as pilot:
+        await pilot.pause()
+        wide = _text(pilot.app, "#mc_figures")
+
+    # Same three figures either way; only the gloss is negotiable, because a
+    # wrapped label costs a row and separates the figure from its explanation.
+    assert narrow.count("\n") == wide.count("\n") == 2
+    assert "P90" in narrow and "P90" in wide
+    assert "reserve this" in wide
+    assert "reserve this" not in narrow
+    assert max(len(line) for line in narrow.splitlines()) < 34
+
+
+def test_shorten_path_keeps_the_end_that_identifies_the_file():
+    # The end of a path says which file it is; the start says which disk.
+    long = "/private/var/folders/hl/04xmlc/T/pytest-of-me/test_0/people.csv"
+    short = shorten_path(long, width=24)
+
+    assert len(short) == 24
+    assert short.endswith("people.csv")
+    assert short.startswith("…")
+    # A path that already fits is returned untouched.
+    assert shorten_path("people.csv", width=24) == "people.csv"
