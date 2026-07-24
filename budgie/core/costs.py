@@ -28,7 +28,8 @@ from datetime import date
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
+
+from budgie.core.csvio import as_float, as_required_float, as_str, parse_date, read_rows
 
 logger = logging.getLogger(__name__)
 
@@ -130,27 +131,17 @@ def load_costs(csv_path: str | Path) -> list[CostItem]:
 
     Required columns ``name,amount,date``; optional ``category,low,high,recurring``.
     """
-    frame = pd.read_csv(csv_path)
-    missing = _REQUIRED_COLS - set(frame.columns)
-    if missing:
-        raise ValueError(f"costs CSV missing columns: {sorted(missing)}")
-
-    def optional(row, field):
-        value = getattr(row, field, None)
-        return None if value is None or pd.isna(value) else float(value)
-
     items = []
-    for row in frame.itertuples(index=False):
-        recurring = str(getattr(row, "recurring", "")).strip().lower() in _TRUTHY
+    for row in read_rows(csv_path, required=_REQUIRED_COLS):
         items.append(
             CostItem(
-                name=str(row.name),
-                amount=float(row.amount),
-                when=pd.to_datetime(row.date).date(),
-                category=str(getattr(row, "category", "other") or "other"),
-                low=optional(row, "low"),
-                high=optional(row, "high"),
-                recurring=recurring,
+                name=as_str(row, "name"),
+                amount=as_required_float(row, "amount"),
+                when=parse_date(row["date"]),
+                category=as_str(row, "category", "other"),
+                low=as_float(row, "low"),
+                high=as_float(row, "high"),
+                recurring=as_str(row, "recurring").lower() in _TRUTHY,
             )
         )
     logger.info(

@@ -5,7 +5,6 @@ description = "The Ultimate Project Budget Companion"
 authors = [{name = "Ryan Adams", email = "adamsrnmsu@gmail.com"}]
 
 dependencies = [
-    "pandas",
     "pyfiglet",
     "rich",
     "black",
@@ -14,7 +13,6 @@ dependencies = [
     "isort",
     "ruff",
     "pyyaml",
-    "termplotlib",
     "numpy",
     "holidays",
     "matplotlib",

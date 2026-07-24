@@ -24,7 +24,13 @@ from datetime import date
 from itertools import pairwise
 from pathlib import Path
 
-import pandas as pd
+from budgie.core.csvio import (
+    as_int,
+    as_required_float,
+    as_str,
+    last_day_of_month,
+    read_rows,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,15 +60,12 @@ def load_weekly_actuals(
     Expected columns ``name,week,hours_to_date``. Returns each person's
     observations sorted by date.
     """
-    frame = pd.read_csv(csv_path)
-    missing = _WEEKLY_COLS - set(frame.columns)
-    if missing:
-        raise ValueError(f"weekly actuals CSV missing columns: {sorted(missing)}")
-
     out: dict[str, list[Observation]] = {}
-    for row in frame.itertuples(index=False):
-        when = week_ending(year, int(row.week))
-        out.setdefault(str(row.name), []).append((when, float(row.hours_to_date)))
+    for row in read_rows(csv_path, required=_WEEKLY_COLS):
+        when = week_ending(year, as_int(row, "week"))
+        out.setdefault(as_str(row, "name"), []).append(
+            (when, as_required_float(row, "hours_to_date"))
+        )
 
     for name, obs in out.items():
         obs.sort(key=lambda o: o[0])
@@ -81,14 +84,8 @@ def monthly_to_observations(year: int, monthly_hours: list[float]) -> list[Obser
     out: list[Observation] = []
     running = 0.0
     for index, hours in enumerate(monthly_hours):
-        month = index + 1
         running += hours
-        last_day = (
-            date(year, 12, 31)
-            if month == 12
-            else date(year, month + 1, 1) - pd.Timedelta(days=1).to_pytimedelta()
-        )
-        out.append((last_day, running))
+        out.append((last_day_of_month(year, index + 1), running))
     return out
 
 

@@ -4,33 +4,33 @@ Budgie CLI.
 Thin front-end over the presentation-independent engine in ``budgie.core``. Each
 command loads inputs, calls the engine, and renders results with rich (and
 optionally matplotlib figures). No budgeting math lives here.
+
+**Nothing heavy is imported at module scope.** Click has to import this file just
+to build the command tree, so every engine and rendering import lives inside the
+command that needs it. Importing numpy, holidays and rich up here put roughly a
+second between typing ``budgie`` and seeing the help text.
 """
 
 from pathlib import Path
 
 import click
 
-from budgie.core.allocation import load_allocations
-from budgie.core.calendar import productive_hours
-from budgie.core.costs import load_costs
-from budgie.core.forecast import forecast as run_forecast
-from budgie.core.loader import load_people
-from budgie.core.montecarlo import simulate
-from budgie.core.scenario import run_scenarios
-from budgie.core.signals import Signal
-from budgie.singletons import console, logger, set_verbose
-from budgie.utils.utils import display_startup_message
-
-# Stoplight glyph + rich color per signal.
+# Stoplight glyph + rich color per signal, keyed by Signal.name so rendering the
+# table never has to import the engine's enum.
 _SIGNAL_STYLE = {
-    Signal.GREEN: ("●", "green", "GOOD"),
-    Signal.YELLOW: ("●", "yellow", "CAUTION"),
-    Signal.RED: ("●", "red", "BAD"),
-    Signal.BLUE: ("●", "blue", "NO CHANGE"),
+    "GREEN": ("●", "green", "GOOD"),
+    "YELLOW": ("●", "yellow", "CAUTION"),
+    "RED": ("●", "red", "BAD"),
+    "BLUE": ("●", "blue", "NO CHANGE"),
 }
 
 THIS_FILE = Path(__file__).resolve()
 THIS_DIR = THIS_FILE.parent
+
+
+def _style(signal) -> tuple[str, str, str]:
+    """(glyph, rich color, word) for a :class:`budgie.core.signals.Signal`."""
+    return _SIGNAL_STYLE[signal.name]
 
 
 @click.group()
@@ -39,6 +39,8 @@ THIS_DIR = THIS_FILE.parent
 )
 def cli(verbose):
     """Budgie -- the ultimate budget companion."""
+    from budgie.singletons import set_verbose
+
     set_verbose(verbose)
 
 
@@ -96,6 +98,14 @@ def forecast(
     people_csv, year, pto, iterations, seed, plots, out_dir, costs_csv, budget_arg
 ):
     """Forecast team cost with productive-hours + Monte Carlo simulation."""
+    from budgie.core.calendar import productive_hours
+    from budgie.core.costs import load_costs
+    from budgie.core.forecast import forecast as run_forecast
+    from budgie.core.loader import load_people
+    from budgie.core.montecarlo import simulate
+    from budgie.singletons import console, logger
+    from budgie.utils.utils import display_startup_message
+
     display_startup_message()
 
     ph = productive_hours(year, pto_days=pto)
@@ -138,6 +148,8 @@ def forecast(
 def _print_forecast_table(det):
     from rich.table import Table
 
+    from budgie.singletons import console
+
     table = Table(
         show_header=True, header_style="bold magenta", title="Deterministic forecast"
     )
@@ -178,6 +190,7 @@ def _print_costs_table(det):
     from rich.table import Table
 
     from budgie.core.costs import by_category
+    from budgie.singletons import console
 
     table = Table(
         show_header=True, header_style="bold magenta", title="Non-labor costs"
@@ -204,10 +217,11 @@ def _print_costs_table(det):
 
 def _print_signal(sim, budget):
     from budgie.core.signals import evaluate
+    from budgie.singletons import console
 
     # Signal against the budget as it stands now, not the original baseline.
     result = evaluate(sim, budget.latest)
-    _, color, word = _SIGNAL_STYLE[result.signal]
+    _, color, word = _style(result.signal)
     if budget.has_revisions:
         console.print(
             f"[dim]Budget: original ${budget.original:,.0f} → current "
@@ -218,6 +232,8 @@ def _print_signal(sim, budget):
 
 
 def _print_montecarlo_summary(sim, pct):
+    from budgie.singletons import console
+
     console.print(
         f"[bold]Monte Carlo[/bold] ({sim.iterations:,} sims):  "
         f"P10 [green]${pct[10]:,.0f}[/green]  |  "
@@ -261,6 +277,11 @@ def tui(people_csv):
 )
 def hours(alloc_csv, year, pto):
     """Show each person's allocated / spent / remaining hours from their FTE."""
+    from budgie.core.allocation import load_allocations
+    from budgie.core.calendar import productive_hours
+    from budgie.singletons import logger
+    from budgie.utils.utils import display_startup_message
+
     display_startup_message()
     ph = productive_hours(year, pto_days=pto)
     allocs = load_allocations(alloc_csv, available_hours=ph.available_hours)
@@ -330,7 +351,11 @@ def emails(
 
     Writes draft files only -- nothing is sent.
     """
+    from budgie.core.allocation import load_allocations
+    from budgie.core.calendar import productive_hours
     from budgie.emails import render_email, write_drafts
+    from budgie.singletons import console
+    from budgie.utils.utils import display_startup_message
 
     display_startup_message()
     ph = productive_hours(year, pto_days=pto)
@@ -397,6 +422,8 @@ def _write_html_emails(allocs, year, out_dir, as_of, actuals_csv=None, weekly_cs
 def _print_hours_table(allocs):
     from rich.table import Table
 
+    from budgie.singletons import console
+
     table = Table(
         show_header=True, header_style="bold magenta", title="FTE hours remaining"
     )
@@ -433,13 +460,17 @@ def _print_hours_table(allocs):
 )
 def scenario(config_path):
     """Compare what-if scenarios side by side, with a stoplight vs the budget."""
+    from budgie.core.scenario import run_scenarios
+    from budgie.singletons import console, logger
+    from budgie.utils.utils import display_startup_message
+
     display_startup_message()
     results, budget = run_scenarios(config_path)
     logger.info(f"Budget target: ${budget:,.0f}   (baseline: {results[0].name})")
     _print_scenario_table(results, budget)
     console.print("\n[bold]Signals[/bold]")
     for r in results:
-        _, color, word = _SIGNAL_STYLE[r.signal.signal]
+        _, color, word = _style(r.signal.signal)
         console.print(
             f"  [{color}]●[/{color}] [bold]{r.name}[/bold] — {word}: {r.signal.rationale}"
         )
@@ -447,6 +478,8 @@ def scenario(config_path):
 
 def _print_scenario_table(results, budget):
     from rich.table import Table
+
+    from budgie.singletons import console
 
     table = Table(
         show_header=True, header_style="bold magenta", title="Scenario comparison"
@@ -458,7 +491,7 @@ def _print_scenario_table(results, budget):
     table.add_column("P90", justify="right")
     table.add_column("P(over budget)", justify="right")
     for r in results:
-        _, color, _word = _SIGNAL_STYLE[r.signal.signal]
+        _, color, _word = _style(r.signal.signal)
         delta = "—" if r.cost_delta == 0 else f"{r.cost_delta:+,.0f}"
         table.add_row(
             f"[{color}]●[/{color}]",
@@ -508,7 +541,12 @@ def monthly(
     people_csv, year, pto, iterations, seed, budget_arg, costs_csv, plots, out_dir
 ):
     """Break the year into months: cost per month and a cumulative fan chart."""
+    from budgie.core.calendar import productive_hours
+    from budgie.core.costs import load_costs
+    from budgie.core.loader import load_people
     from budgie.core.monthly import monthly_forecast, monthly_simulation
+    from budgie.singletons import console, logger
+    from budgie.utils.utils import display_startup_message
 
     display_startup_message()
     people = load_people(
@@ -539,6 +577,7 @@ def _print_monthly_table(mf, sim, budget):
     from rich.table import Table
 
     from budgie.core.monthly import MONTH_NAMES
+    from budgie.singletons import console
 
     p10, p50, p90 = sim.band(10), sim.band(50), sim.band(90)
     table = Table(
@@ -595,6 +634,7 @@ def plan(plan_csv, year, pto):
     so joining mid-year, leaving, and re-planning are all just appended rows.
     """
     from budgie.core.plan import load_plan
+    from budgie.utils.utils import display_startup_message
 
     display_startup_message()
     allocation_plan = load_plan(plan_csv)
@@ -603,6 +643,8 @@ def plan(plan_csv, year, pto):
 
 def _print_plan_table(allocation_plan, year, pto):
     from rich.table import Table
+
+    from budgie.singletons import console
 
     table = Table(
         show_header=True, header_style="bold magenta", title=f"Allocation plan {year}"

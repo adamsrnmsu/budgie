@@ -30,9 +30,9 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import holidays
-import pandas as pd
 
 from budgie.core.calendar import hours_per_workday
+from budgie.core.csvio import as_required_float, as_str, parse_date, read_rows
 
 logger = logging.getLogger(__name__)
 
@@ -108,23 +108,19 @@ class AllocationPlan:
 def load_plan(csv_path: str | Path) -> AllocationPlan:
     """Load an allocation plan from a ``name,effective_date,fte`` CSV.
 
-    ``effective_date`` is any format pandas can parse (ISO ``YYYY-MM-DD`` is
-    recommended). A person may have any number of rows.
+    ``effective_date`` is ISO ``YYYY-MM-DD`` (spreadsheet-style ``MM/DD/YYYY``
+    is also accepted). A person may have any number of rows.
     """
-    frame = pd.read_csv(csv_path)
-    missing = _REQUIRED_COLS - set(frame.columns)
-    if missing:
-        raise ValueError(f"plan CSV missing columns: {sorted(missing)}")
-
     entries = []
-    for row in frame.itertuples(index=False):
-        fte = float(row.fte)
+    for row in read_rows(csv_path, required=_REQUIRED_COLS):
+        name = as_str(row, "name")
+        fte = as_required_float(row, "fte")
         if fte < 0:
-            raise ValueError(f"fte cannot be negative, got {fte} for {row.name}")
+            raise ValueError(f"fte cannot be negative, got {fte} for {name}")
         entries.append(
             PlanEntry(
-                name=str(row.name),
-                effective_date=pd.to_datetime(row.effective_date).date(),
+                name=name,
+                effective_date=parse_date(row["effective_date"]),
                 fte=fte,
             )
         )

@@ -24,10 +24,10 @@ from pathlib import Path
 
 import holidays
 import numpy as np
-import pandas as pd
 
 from budgie.core.calendar import productive_hours
 from budgie.core.costs import CostItem, monthly_totals, sample_total
+from budgie.core.csvio import as_int, as_required_float, as_str, read_rows
 from budgie.core.person import Person
 
 logger = logging.getLogger(__name__)
@@ -183,16 +183,14 @@ def load_monthly_actuals(csv_path: str | Path) -> dict[str, list[float]]:
     count as zero. Returns ``{name: [12 monthly hours]}`` (not cumulative --
     call :func:`cumulative` for a burn-down curve).
     """
-    frame = pd.read_csv(csv_path)
-    missing = {"name", "month", "hours"} - set(frame.columns)
-    if missing:
-        raise ValueError(f"monthly actuals CSV missing columns: {sorted(missing)}")
-
     actuals: dict[str, list[float]] = {}
-    for row in frame.itertuples(index=False):
-        month = int(row.month)
+    for row in read_rows(csv_path, required={"name", "month", "hours"}):
+        name = as_str(row, "name")
+        month = as_int(row, "month")
         if not 1 <= month <= 12:
-            raise ValueError(f"month must be 1-12, got {month} for {row.name}")
-        actuals.setdefault(str(row.name), [0.0] * 12)[month - 1] += float(row.hours)
+            raise ValueError(f"month must be 1-12, got {month} for {name}")
+        actuals.setdefault(name, [0.0] * 12)[month - 1] += as_required_float(
+            row, "hours"
+        )
     logger.info("Loaded monthly actuals for %d people from %s", len(actuals), csv_path)
     return actuals

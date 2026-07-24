@@ -25,7 +25,13 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-import pandas as pd
+from budgie.core.csvio import (
+    as_required_float,
+    as_str,
+    last_day_of_month,
+    parse_date,
+    read_rows,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,30 +95,18 @@ class Budget:
 
     def monthly_amounts(self, year: int) -> list[float]:
         """The budget in force at each month end, for a stepped budget line."""
-        return [
-            self.amount_on(
-                date(year, 12, 31)
-                if m == 12
-                else date(year, m + 1, 1) - pd.Timedelta(days=1)
-            )
-            for m in range(1, 13)
-        ]
+        return [self.amount_on(last_day_of_month(year, m)) for m in range(1, 13)]
 
 
 def load_budget(csv_path: str | Path) -> Budget:
     """Load budget revisions from an ``effective_date,amount[,note]`` CSV."""
-    frame = pd.read_csv(csv_path)
-    missing = _REQUIRED_COLS - set(frame.columns)
-    if missing:
-        raise ValueError(f"budget CSV missing columns: {sorted(missing)}")
-
     revisions = [
         BudgetRevision(
-            effective_date=pd.to_datetime(row.effective_date).date(),
-            amount=float(row.amount),
-            note=str(getattr(row, "note", "") or ""),
+            effective_date=parse_date(row["effective_date"]),
+            amount=as_required_float(row, "amount"),
+            note=as_str(row, "note"),
         )
-        for row in frame.itertuples(index=False)
+        for row in read_rows(csv_path, required=_REQUIRED_COLS)
     ]
     revisions.sort(key=lambda r: r.effective_date)
     budget = Budget(tuple(revisions))
@@ -141,7 +135,7 @@ def coerce_budget(value: float | dict | list | str | Path) -> Budget:
     if isinstance(value, list):
         revisions = [
             BudgetRevision(
-                effective_date=pd.to_datetime(entry["date"]).date(),
+                effective_date=parse_date(entry["date"]),
                 amount=float(entry["amount"]),
                 note=str(entry.get("note", "")),
             )

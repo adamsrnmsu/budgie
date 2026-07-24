@@ -18,7 +18,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-import pandas as pd
+from budgie.core.csvio import as_required_float, as_str, read_rows
 
 logger = logging.getLogger(__name__)
 
@@ -63,20 +63,15 @@ def load_allocations(csv_path: str | Path, available_hours: float) -> list[Alloc
 
     Expected columns: ``name, fte, hours_spent`` and optionally ``email``.
     """
-    frame = pd.read_csv(csv_path)
-    missing = _REQUIRED_COLS - set(frame.columns)
-    if missing:
-        raise ValueError(f"allocations CSV missing columns: {sorted(missing)}")
-
-    has_email = "email" in frame.columns
-    logger.info("Loaded %d allocations from %s", len(frame), csv_path)
+    rows = read_rows(csv_path, required=_REQUIRED_COLS)
+    logger.info("Loaded %d allocations from %s", len(rows), csv_path)
     return [
         Allocation(
-            name=str(row.name),
-            fte=float(row.fte),
-            hours_spent=float(row.hours_spent),
+            name=as_str(row, "name"),
+            fte=as_required_float(row, "fte"),
+            hours_spent=as_required_float(row, "hours_spent"),
             available_hours=available_hours,
-            email=(str(row.email) if has_email else None),
+            email=as_str(row, "email") or None,
         )
-        for row in frame.itertuples(index=False)
+        for row in rows
     ]

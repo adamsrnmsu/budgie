@@ -5,11 +5,15 @@ This is where rich gets wired into logging. Modules under ``budgie/core/`` use
 plain ``logging.getLogger(__name__)`` and never import rich -- their records
 propagate to the root logger configured here, so the engine stays UI-free while
 its logs still come out rich-formatted whenever a front-end is running.
+
+Importing this module is deliberately cheap-ish, but the ASCII banner is not:
+``pyfiglet.figlet_format`` parses a font file on every call, so the banner is
+built on first use by :func:`banner` rather than at import.
 """
 
 import logging
+from functools import lru_cache
 
-import pyfiglet
 from rich.console import Console
 from rich.logging import RichHandler
 
@@ -30,8 +34,13 @@ logging.getLogger("matplotlib").setLevel(logging.WARNING)
 # Singleton for rich console
 console = Console()
 
-# header for budgie
-header = pyfiglet.figlet_format("Budgie", font="slant")
+
+@lru_cache(maxsize=1)
+def banner() -> str:
+    """The Budgie ASCII-art header, rendered once on first use."""
+    import pyfiglet
+
+    return pyfiglet.figlet_format("Budgie", font="slant")
 
 
 def set_verbose(verbose: bool) -> None:

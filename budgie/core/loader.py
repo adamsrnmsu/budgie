@@ -23,8 +23,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import pandas as pd
-
+from budgie.core.csvio import as_required_float, as_str, read_rows
 from budgie.core.person import HoursEstimate, Person
 
 logger = logging.getLogger(__name__)
@@ -48,11 +47,8 @@ def load_people(
         ValueError: If required columns are missing, or the utilization form is
             used without a ``productive_hours`` ceiling.
     """
-    frame = pd.read_csv(csv_path)
-    cols = set(frame.columns)
-
-    if {"name", "hourly_cost"} - cols:
-        raise ValueError("team CSV must have 'name' and 'hourly_cost' columns")
+    rows = read_rows(csv_path, required={"name", "hourly_cost"})
+    cols = rows.columns
 
     if set(_UTIL_COLS) <= cols:
         if productive_hours is None:
@@ -62,11 +58,14 @@ def load_people(
             )
         shape = "utilization"
         build = lambda row: HoursEstimate.from_utilization(
-            productive_hours, row.util_low, row.util_mode, row.util_high
+            productive_hours,
+            *(as_required_float(row, c) for c in _UTIL_COLS),
         )
     elif set(_HOURS_COLS) <= cols:
         shape = "absolute-hours"
-        build = lambda row: HoursEstimate(row.hours_low, row.hours_mode, row.hours_high)
+        build = lambda row: HoursEstimate(
+            *(as_required_float(row, c) for c in _HOURS_COLS)
+        )
     else:
         raise ValueError(
             "team CSV must have either utilization columns "
@@ -74,8 +73,12 @@ def load_people(
         )
 
     people = [
-        Person(name=str(row.name), hourly_cost=float(row.hourly_cost), hours=build(row))
-        for row in frame.itertuples(index=False)
+        Person(
+            name=as_str(row, "name"),
+            hourly_cost=as_required_float(row, "hourly_cost"),
+            hours=build(row),
+        )
+        for row in rows
     ]
     logger.info("Loaded %d people from %s (%s form)", len(people), csv_path, shape)
     return people
