@@ -13,9 +13,14 @@ rather than assuming a flat 2080-hour year.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+from datetime import date, timedelta
 
 import holidays
+
+logger = logging.getLogger(__name__)
+
 
 HOURS_PER_DAY = 8.0
 HOURS_PER_WEEK = 40.0
@@ -35,6 +40,40 @@ def federal_holiday_workdays(year: int) -> int:
     """
     us_holidays = holidays.UnitedStates(years=year)
     return sum(1 for day in us_holidays if day.weekday() < 5)
+
+
+def workdays_between(start: date, end: date) -> int:
+    """Count Mon-Fri days in ``[start, end]`` that are not federal holidays."""
+    if end < start:
+        return 0
+    years = range(start.year, end.year + 1)
+    us_holidays = holidays.UnitedStates(years=list(years))
+    count = 0
+    day = start
+    while day <= end:
+        if day.weekday() < 5 and day not in us_holidays:
+            count += 1
+        day += timedelta(days=1)
+    return count
+
+
+def workdays_in_year(year: int) -> int:
+    """Working days in the whole calendar year."""
+    return workdays_between(date(year, 1, 1), date(year, 12, 31))
+
+
+def hours_per_workday(year: int, pto_days: float = 0.0) -> float:
+    """Available hours spread evenly across the year's real working days.
+
+    The year's available-hours figure comes from the 52-week model (2080 gross),
+    while a real calendar has its own working-day count. Dividing one by the
+    other keeps day-level math reconciling exactly to the annual total instead
+    of drifting by the difference.
+    """
+    workdays = workdays_in_year(year)
+    if workdays == 0:
+        return 0.0
+    return productive_hours(year, pto_days=pto_days).available_hours / workdays
 
 
 @dataclass(frozen=True)
