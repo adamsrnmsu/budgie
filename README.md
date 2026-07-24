@@ -65,6 +65,20 @@ budgie forecast --people team.csv --year 2026 --pto 15 --seed 42 --plots
 Prints the per-person deterministic forecast plus Monte Carlo **P10 / P50 / P90**.
 `--plots` writes `montecarlo.png` (cost distribution) and `forecast.png` (cost per person).
 
+Add non-labor costs and a budget to get the full picture and a stoplight:
+
+```bash
+budgie forecast --costs costs.csv --budget budget.csv --seed 42
+```
+
+```
+Total (labor)                    $712,738
+Non-labor                         $81,500
+Labor + non-labor                $794,238
+Budget: original $720,000 → current $765,000 (+45,000 over 3 revisions)
+● BAD — 77% chance of exceeding budget
+```
+
 ### `budgie monthly` — the trend, not just the total
 
 ```bash
@@ -211,10 +225,40 @@ was distributed between readings. One row per person is enough; more rows give a
 Budgie takes the as-of date from the latest reading (week 29 of 2026 ends July 19), so the burn
 rate is measured over the right window rather than against today's date.
 
+**Non-labor costs** — `costs.csv` (materials, licences, hardware, travel):
+
+```csv
+name,category,date,amount,low,high,recurring
+Laptops,materials,2026-03-15,12000,11000,14000,no
+Cloud hosting,services,2026-01-01,2000,,,yes
+Travel,travel,2026-06-01,8000,6000,11000,no
+```
+
+`amount` is the most-likely figure; `low`/`high` are optional and make the line participate in
+the Monte Carlo just like uncertain hours do. `recurring: yes` books the amount **every month
+from its own month through December**, so one row covers a subscription (the cloud line above
+totals $24,000). Costs land in the month they're incurred, so they show up as a step in the
+monthly and fan charts rather than being smeared across the year.
+
+**Budget revisions** — `budget.csv`. Budgets get increased, cut, and re-baselined:
+
+```csv
+effective_date,amount,note
+2026-01-01,720000,Original approved budget
+2026-05-01,780000,Q2 increase for extra scope
+2026-10-01,765000,Q4 trim
+```
+
+Each revision holds until the next, same as an allocation plan — you append rather than
+overwrite, so the original baseline and the trail of changes stay recoverable. Stoplight
+signals compare against the **current** budget, while the summary line shows the drift from the
+original. A plain number still works anywhere a budget is accepted.
+
 **Scenarios** — `scenarios.yaml`:
 
 ```yaml
-budget: 720000
+budget: 720000        # or a list of revisions, or budget.csv
+costs: costs.csv      # optional non-labor lines applied to every scenario
 iterations: 10000
 seed: 42
 scenarios:
