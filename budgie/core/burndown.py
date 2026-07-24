@@ -17,11 +17,15 @@ month-by-month data is available and the chart will use it instead.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+from budgie.core.actuals import Observation
 from budgie.core.allocation import Allocation
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -33,7 +37,18 @@ class BurndownStatus:
     as_of: date
     days_in_year: int
     days_elapsed: int
-    monthly_spent: tuple[float, ...] | None = None
+    observations: tuple[Observation, ...] = ()
+
+    @property
+    def hours_spent(self) -> float:
+        """Hours booked to date.
+
+        The latest observation wins when there is one: it is a dated reading,
+        whereas the allocation's scalar has no as-of date attached.
+        """
+        if self.observations:
+            return self.observations[-1][1]
+        return self.allocation.hours_spent
 
     @property
     def elapsed_fraction(self) -> float:
@@ -47,7 +62,7 @@ class BurndownStatus:
     @property
     def variance(self) -> float:
         """Spent minus expected. Positive = burning faster than pace."""
-        return self.allocation.hours_spent - self.expected_by_now
+        return self.hours_spent - self.expected_by_now
 
     @property
     def is_over_pace(self) -> bool:
@@ -57,7 +72,7 @@ class BurndownStatus:
     def burn_rate_per_day(self) -> float:
         if self.days_elapsed <= 0:
             return 0.0
-        return self.allocation.hours_spent / self.days_elapsed
+        return self.hours_spent / self.days_elapsed
 
     @property
     def projected_total(self) -> float:
@@ -84,33 +99,45 @@ def burndown(
     allocation: Allocation,
     year: int,
     as_of: date | None = None,
-    monthly_spent: Sequence[float] | None = None,
+    observations: Sequence[Observation] | None = None,
 ) -> BurndownStatus:
     """Build a :class:`BurndownStatus` for ``allocation`` as of a date.
 
     Args:
         allocation: The person's FTE allocation and hours spent.
         year: The budget year.
-        as_of: Date to measure against (defaults to today, clamped into the year).
-        monthly_spent: Optional cumulative hours at each month end, for a real
-            (rather than interpolated) actual curve.
+        as_of: Date to measure against. Defaults to the date of the latest
+            observation when there is one (a dated reading beats "today", which
+            would otherwise stretch the elapsed window and understate the burn
+            rate), else today. Always clamped into the year.
+        observations: Cumulative ``(date, hours_to_date)`` readings. One is
+            enough; several give a real curve. See :mod:`budgie.core.actuals`.
     """
     start = date(year, 1, 1)
     end = date(year, 12, 31)
     days_in_year = (end - start).days + 1
 
+    obs = tuple(sorted(observations, key=lambda o: o[0])) if observations else ()
+
     if as_of is None:
-        # Local calendar date is what a budget year is measured in; a UTC-aware
-        # timestamp would be wrong for users west of UTC late in the day.
-        as_of = date.today()  # noqa: DTZ011
+        if obs:
+            as_of = obs[-1][0]
+        else:
+            # Local calendar date is what a budget year is measured in; a
+            # UTC-aware timestamp would be wrong for users west of UTC late
+            # in the day.
+            as_of = date.today()  # noqa: DTZ011
     # Clamp so a past/future year still yields a sane elapsed figure.
     as_of = min(max(as_of, start), end)
 
+    logger.debug(
+        "burndown %s: as_of=%s observations=%d", allocation.name, as_of, len(obs)
+    )
     return BurndownStatus(
         allocation=allocation,
         year=year,
         as_of=as_of,
         days_in_year=days_in_year,
         days_elapsed=(as_of - start).days + 1,
-        monthly_spent=tuple(monthly_spent) if monthly_spent is not None else None,
+        observations=obs,
     )
