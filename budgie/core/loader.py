@@ -23,7 +23,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from budgie.core.csvio import as_required_float, as_str, read_rows
+from budgie.core.calendar import ProductiveHours, resolve_ceiling
+from budgie.core.csvio import as_float, as_required_float, as_str, read_rows
 from budgie.core.person import HoursEstimate, Person
 
 logger = logging.getLogger(__name__)
@@ -34,14 +35,16 @@ _HOURS_COLS = ("hours_low", "hours_mode", "hours_high")
 
 
 def load_people(
-    csv_path: str | Path, productive_hours: float | None = None
+    csv_path: str | Path, productive_hours: float | ProductiveHours | None = None
 ) -> list[Person]:
     """Load a list of :class:`Person` from a CSV file.
 
     Args:
         csv_path: Path to the team CSV.
         productive_hours: Ceiling used to resolve the utilization form. Required
-            if the CSV uses ``util_*`` columns.
+            if the CSV uses ``util_*`` columns. Pass a
+            :class:`~budgie.core.calendar.ProductiveHours` breakdown to let a
+            per-row ``pto_days`` column give someone their own ceiling.
 
     Raises:
         ValueError: If required columns are missing, or the utilization form is
@@ -58,7 +61,7 @@ def load_people(
             )
         shape = "utilization"
         build = lambda row: HoursEstimate.from_utilization(
-            productive_hours,
+            resolve_ceiling(productive_hours, as_float(row, "pto_days")),
             *(as_required_float(row, c) for c in _UTIL_COLS),
         )
     elif set(_HOURS_COLS) <= cols:

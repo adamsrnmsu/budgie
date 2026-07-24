@@ -131,7 +131,7 @@ class BudgieTUI(App):
         seed = self._read_int("seed", 42)
 
         ph = productive_hours(year, pto_days=pto)
-        people = load_people(self.csv_path, productive_hours=ph.available_hours)
+        people = load_people(self.csv_path, productive_hours=ph)
         det = run_forecast(people)
         sim = simulate(people, iterations=iterations, seed=seed)
         pct = sim.percentiles()

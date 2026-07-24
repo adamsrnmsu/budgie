@@ -84,6 +84,7 @@ class ProductiveHours:
     gross_hours: float
     holiday_hours: float
     pto_hours: float
+    hours_per_day: float = HOURS_PER_DAY
 
     @property
     def productive_hours(self) -> float:
@@ -94,6 +95,45 @@ class ProductiveHours:
     def available_hours(self) -> float:
         """Productive hours minus PTO/sick -- what's left to actually bill/work."""
         return self.productive_hours - self.pto_hours
+
+    @property
+    def pto_days(self) -> float:
+        """The PTO figure this breakdown was built with, back in days."""
+        return self.pto_hours / self.hours_per_day if self.hours_per_day else 0.0
+
+    def available_for(self, pto_days: float | None = None) -> float:
+        """Available hours for one person, honouring their own PTO figure.
+
+        ``None`` means "this person didn't state their own PTO", so the team
+        default baked into this breakdown applies.
+
+        Note this is a **full-time** ceiling. Scaling by FTE happens afterwards
+        (:class:`budgie.core.allocation.Allocation`), which is what makes PTO
+        pro-rated: a 0.25 FTE person gives the project a quarter of their PTO,
+        not all of it. See :func:`explain_pto`.
+        """
+        if pto_days is None:
+            return self.available_hours
+        return self.productive_hours - pto_days * self.hours_per_day
+
+
+def resolve_ceiling(ceiling: float | ProductiveHours, pto_days: float | None) -> float:
+    """The hours ceiling for one person, from either kind of ceiling argument.
+
+    Loaders accept a plain number (one ceiling for the whole team) or a
+    :class:`ProductiveHours` breakdown (which additionally lets a person's own
+    ``pto_days`` column give them their own ceiling). A per-person PTO figure
+    needs the breakdown -- a bare number has already had PTO subtracted and
+    can't be un-subtracted.
+    """
+    if isinstance(ceiling, ProductiveHours):
+        return ceiling.available_for(pto_days)
+    if pto_days is not None:
+        raise ValueError(
+            "a per-person pto_days column needs a ProductiveHours ceiling, not a "
+            "plain number (the number has already had the team's PTO taken off)"
+        )
+    return float(ceiling)
 
 
 def productive_hours(
@@ -119,4 +159,36 @@ def productive_hours(
         gross_hours=GROSS_ANNUAL_HOURS,
         holiday_hours=holiday_days * hours_per_day,
         pto_hours=pto_days * hours_per_day,
+        hours_per_day=hours_per_day,
+    )
+
+
+# The single most-asked question about this model, answered in one place so the
+# CLI, the README and the docstrings can't drift apart.
+PTO_RULE = (
+    "PTO is pro-rated by FTE. A person's ceiling is computed full-time "
+    "(2080 gross - holidays - their PTO), and *then* multiplied by their FTE. "
+    "So someone 25% on the project gives up 25% of their PTO to it, not all of "
+    "it -- the other 75% comes out of whatever else they work on."
+)
+
+
+def explain_pto(ph: ProductiveHours, fte: float = 0.25) -> str:
+    """Worked example of the PTO/FTE rule at a given FTE, for `budgie assumptions`."""
+    if not ph.pto_hours:
+        # With no PTO there is nothing to pro-rate, and the two ways of
+        # counting it agree -- so showing them side by side would just confuse.
+        return (
+            f"No PTO is set, so there is nothing to pro-rate: {fte:g} FTE is "
+            f"{fte:g} x {ph.productive_hours:,.0f} = "
+            f"{fte * ph.productive_hours:,.0f} h. Set --pto (or a pto_days "
+            f"column) to see the difference this rule makes."
+        )
+    full_time = ph.available_hours
+    prorated = fte * full_time
+    all_pto = fte * ph.productive_hours - ph.pto_hours
+    return (
+        f"At {fte:g} FTE with {ph.pto_days:g} PTO days: "
+        f"{fte:g} x {full_time:,.0f} = {prorated:,.0f} h "
+        f"(charging all their PTO to the project would give {all_pto:,.0f} h)"
     )

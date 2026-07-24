@@ -24,8 +24,56 @@ from datetime import date, timedelta
 
 from budgie.core.actuals import Observation
 from budgie.core.allocation import Allocation
+from budgie.core.calendar import HOURS_PER_WEEK, workdays_between
 
 logger = logging.getLogger(__name__)
+
+# A full-time week, used to turn an hours-per-week pace back into an FTE.
+WORKDAYS_PER_WEEK = 5.0
+
+
+@dataclass(frozen=True)
+class RequiredPace:
+    """What finishing the year exactly on allocation would take from here.
+
+    "You have 318 hours left" is a number people can't act on. "That's about 12
+    hours a week, or 30% of your time, for the 26 weeks left" is the same fact
+    in the unit they actually plan in.
+    """
+
+    hours_remaining: float
+    workdays_remaining: int
+
+    @property
+    def weeks_remaining(self) -> float:
+        return self.workdays_remaining / WORKDAYS_PER_WEEK
+
+    @property
+    def hours_per_week(self) -> float:
+        """Even weekly pace that lands exactly on the allocation."""
+        if self.workdays_remaining <= 0 or self.hours_remaining <= 0:
+            return 0.0
+        return self.hours_remaining / self.weeks_remaining
+
+    @property
+    def fte(self) -> float:
+        """That weekly pace as a fraction of a full-time week."""
+        return self.hours_per_week / HOURS_PER_WEEK
+
+    @property
+    def is_exhausted(self) -> bool:
+        """Nothing left to spend -- the allocation is used up or overrun."""
+        return self.hours_remaining <= 0
+
+    @property
+    def is_impossible(self) -> bool:
+        """The remaining hours can't be worked in the time left (over 1.0 FTE)."""
+        return self.fte > 1.0
+
+    @property
+    def out_of_time(self) -> bool:
+        """Hours left but no working days left to spend them in."""
+        return self.workdays_remaining <= 0 and self.hours_remaining > 0
 
 
 @dataclass(frozen=True)
@@ -82,6 +130,21 @@ class BurndownStatus:
     @property
     def projected_over(self) -> bool:
         return self.projected_total > self.allocation.allocated_hours
+
+    @property
+    def required_pace(self) -> RequiredPace:
+        """Weekly hours / FTE needed to finish the year exactly on allocation.
+
+        Counted over the *real working days* left after ``as_of`` -- Mon-Fri
+        minus federal holidays -- so a December reading doesn't imply there are
+        four more weeks of capacity than there are.
+        """
+        return RequiredPace(
+            hours_remaining=self.allocation.allocated_hours - self.hours_spent,
+            workdays_remaining=workdays_between(
+                self.as_of + timedelta(days=1), date(self.year, 12, 31)
+            ),
+        )
 
     @property
     def exhaustion_date(self) -> date | None:

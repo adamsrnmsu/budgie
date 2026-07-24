@@ -118,7 +118,7 @@ def forecast(
         )
     )
 
-    people = load_people(people_csv, productive_hours=ph.available_hours)
+    people = load_people(people_csv, productive_hours=ph)
     costs = load_costs(costs_csv) if costs_csv else []
     # Loaded up front so its log line lands with the other loading messages
     # rather than interleaving after the tables.
@@ -284,7 +284,7 @@ def hours(alloc_csv, year, pto):
 
     display_startup_message()
     ph = productive_hours(year, pto_days=pto)
-    allocs = load_allocations(alloc_csv, available_hours=ph.available_hours)
+    allocs = load_allocations(alloc_csv, available_hours=ph)
     logger.info(f"Available hours {year}: {ph.available_hours:,.0f} (1.0 FTE)")
     _print_hours_table(allocs)
 
@@ -359,7 +359,7 @@ def emails(
 
     display_startup_message()
     ph = productive_hours(year, pto_days=pto)
-    allocs = load_allocations(alloc_csv, available_hours=ph.available_hours)
+    allocs = load_allocations(alloc_csv, available_hours=ph)
 
     if as_html:
         paths = _write_html_emails(
@@ -549,10 +549,8 @@ def monthly(
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
-    people = load_people(
-        people_csv,
-        productive_hours=productive_hours(year, pto_days=pto).available_hours,
-    )
+    ph = productive_hours(year, pto_days=pto)
+    people = load_people(people_csv, productive_hours=ph)
     costs = load_costs(costs_csv) if costs_csv else []
     budget = _budget_from(budget_arg) if budget_arg else None
 
@@ -618,6 +616,149 @@ def _print_monthly_table(mf, sim, budget):
 
 
 @click.command()
+@click.option("--year", default=2026, show_default=True, help="Calendar year.")
+@click.option(
+    "--pto",
+    default=0.0,
+    show_default=True,
+    help="PTO/sick days, to show its effect on the ceiling.",
+)
+def assumptions(year, pto):
+    """Print every modelling assumption, its current value, and where it lives.
+
+    Budgie's numbers all fall out of a handful of choices. This shows them in
+    one place so you can check them against how your organisation actually
+    counts time and money, rather than inferring them from the outputs.
+    """
+    from budgie.core.calendar import (
+        GROSS_ANNUAL_HOURS,
+        HOURS_PER_DAY,
+        HOURS_PER_WEEK,
+        PTO_RULE,
+        WEEKS_PER_YEAR,
+        explain_pto,
+        federal_holiday_workdays,
+        productive_hours,
+        workdays_in_year,
+    )
+    from budgie.core.monthly import month_weights
+    from budgie.utils.utils import display_startup_message
+
+    display_startup_message()
+    ph = productive_hours(year, pto_days=pto)
+    weights = month_weights(year)
+
+    # (assumption, current value, where it is set).
+    rows = [
+        _row(
+            "Working week",
+            f"{HOURS_PER_WEEK:g} h over {WEEKS_PER_YEAR:g} weeks"
+            f" = {GROSS_ANNUAL_HOURS:,.0f} h gross",
+            "core/calendar.py",
+        ),
+        _row(
+            "Working day",
+            f"{HOURS_PER_DAY:g} h -- converts holiday and PTO days to hours",
+            "core/calendar.py",
+        ),
+        _row(
+            "Holidays",
+            f"{federal_holiday_workdays(year)} US federal holidays fall Mon-Fri"
+            f" in {year} (-{ph.holiday_hours:,.0f} h)",
+            "core/calendar.py (holidays pkg)",
+        ),
+        _row(
+            "Productive hours",
+            f"{ph.productive_hours:,.0f} h -- gross minus holidays",
+            "core/calendar.py",
+        ),
+        _row(
+            "PTO",
+            f"{pto:g} days (-{ph.pto_hours:,.0f} h)"
+            f" -> available {ph.available_hours:,.0f} h",
+            "--pto, or a pto_days column",
+        ),
+        _row("PTO vs part-time", PTO_RULE, "core/calendar.py: PTO_RULE"),
+        _row("", explain_pto(ph), ""),
+        _row(
+            "Working days",
+            f"{workdays_in_year(year)} in {year}; day-level math spreads"
+            " available hours across exactly these",
+            "core/calendar.py",
+        ),
+        _row(
+            "Month weights",
+            "by working-day share, not 1/12"
+            f" (Jan {weights[0]:.1%} ... Feb {weights[1]:.1%})",
+            "core/monthly.py",
+        ),
+        _row(
+            "Hours uncertainty",
+            "triangular(low, mode, high); the deterministic forecast uses the mode",
+            "core/person.py",
+        ),
+        _row(
+            "Cost uncertainty",
+            "non-labor lines with low/high sample triangularly too;"
+            " blank means known exactly",
+            "core/costs.py",
+        ),
+        _row(
+            "Burn-down pace",
+            "expectation is a straight line from 0 on Jan 1"
+            " to the full allocation on Dec 31",
+            "core/burndown.py",
+        ),
+        _row(
+            "Required pace",
+            "remaining hours spread evenly over the working days left,"
+            " then divided by a 40 h week to give FTE",
+            "core/burndown.py",
+        ),
+        _row(
+            "Signals",
+            "GREEN <=10% chance over budget, YELLOW <=40%, RED above;"
+            " BLUE if a baseline moved <=2%",
+            "core/signals.py",
+        ),
+        _row(
+            "Budget revisions",
+            "signals compare against the LATEST revision, not the original",
+            "core/budget.py",
+        ),
+    ]
+    _print_assumptions_table(year, rows)
+
+
+def _row(name: str, value: str, source: str) -> tuple[str, str, str]:
+    """One row of the assumptions table."""
+    return (name, value, source)
+
+
+def _print_assumptions_table(year, rows):
+    from rich.table import Table
+
+    from budgie.singletons import console
+
+    table = Table(
+        show_header=True,
+        header_style="bold magenta",
+        title=f"Assumptions in force for {year}",
+        show_lines=False,
+    )
+    table.add_column("Assumption", style="bold")
+    table.add_column("Value")
+    table.add_column("Set in", style="dim")
+    for name, value, source in rows:
+        table.add_row(name, value, source)
+    console.print(table)
+    console.print(
+        "[dim]Change any of these by passing the matching option, or edit the "
+        "module named in the last column.[/dim]"
+    )
+
+
+@click.command()
 @click.option(
     "--plan",
     "plan_csv",
@@ -666,6 +807,7 @@ def _print_plan_table(allocation_plan, year, pto):
 
 
 cli.add_command(forecast)
+cli.add_command(assumptions)
 cli.add_command(plan)
 cli.add_command(tui)
 cli.add_command(hours)
