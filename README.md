@@ -178,7 +178,9 @@ Nothing about the model is meant to be folklore.
 ## Commands
 
 Every command uses your project's files when there is one, and bundled sample data when
-there isn't — so you can try them all immediately.
+there isn't — so you can try them all immediately. Every command that reads your project's
+files also takes `--project NAME` to choose between several budgets. (`budgie init` and
+`budgie delete` manage the projects themselves — see [Start a project](#start-a-project).)
 
 ### `budgie forecast` — what will this team cost?
 
@@ -501,6 +503,11 @@ Verbose affects Budgie's own loggers only; third-party libraries stay quiet.
 every input path. If it reports no project, you're on the bundled sample data — run
 `budgie init` where you want your numbers to live.
 
+**"It says there are several projects and won't pick one."** That's deliberate: with two
+budgets under `budget/` there's no right answer to guess at, and quietly forecasting the
+wrong one is worse than asking. Add `--project NAME` (it works from anywhere, including
+from inside a different project) or `cd` into the one you mean.
+
 **"Where did that number come from?"** `budgie assumptions` prints every modelling choice
 with its current value and the module that sets it.
 
@@ -512,6 +519,10 @@ make lint      # ruff check
 make format    # isort + ruff format
 make help      # list all targets
 ```
+
+Every target runs against the virtualenv at `~/Documents/tools/budgie` (see
+[Install](#install)), not one inside the repo — pass `VENV=/path/to/env` to point them
+elsewhere. The working tree holds no build artifacts.
 
 Run a single test:
 
