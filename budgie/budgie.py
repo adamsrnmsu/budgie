@@ -12,6 +12,7 @@ import click
 
 from budgie.core.allocation import load_allocations
 from budgie.core.calendar import productive_hours
+from budgie.core.costs import load_costs
 from budgie.core.forecast import forecast as run_forecast
 from budgie.core.loader import load_people
 from budgie.core.montecarlo import simulate
@@ -78,7 +79,22 @@ def cli(verbose):
     show_default=True,
     help="Directory for figure output when --plots is set.",
 )
-def forecast(people_csv, year, pto, iterations, seed, plots, out_dir):
+@click.option(
+    "--costs",
+    "costs_csv",
+    default=None,
+    type=click.Path(exists=True),
+    help="CSV of non-labor costs (materials, licences, travel) to include.",
+)
+@click.option(
+    "--budget",
+    "budget_arg",
+    default=None,
+    help="Budget to signal against: a number, or a CSV of dated revisions.",
+)
+def forecast(
+    people_csv, year, pto, iterations, seed, plots, out_dir, costs_csv, budget_arg
+):
     """Forecast team cost with productive-hours + Monte Carlo simulation."""
     display_startup_message()
 
@@ -93,14 +109,21 @@ def forecast(people_csv, year, pto, iterations, seed, plots, out_dir):
     )
 
     people = load_people(people_csv, productive_hours=ph.available_hours)
-    logger.info(f"Loaded {len(people)} people from {people_csv}")
+    costs = load_costs(costs_csv) if costs_csv else []
+    # Loaded up front so its log line lands with the other loading messages
+    # rather than interleaving after the tables.
+    budget = _budget_from(budget_arg) if budget_arg else None
 
-    det = run_forecast(people)
-    sim = simulate(people, iterations=iterations, seed=seed)
+    det = run_forecast(people, costs=costs)
+    sim = simulate(people, iterations=iterations, seed=seed, costs=costs)
     pct = sim.percentiles()
 
     _print_forecast_table(det)
+    if costs:
+        _print_costs_table(det)
     _print_montecarlo_summary(sim, pct)
+    if budget is not None:
+        _print_signal(sim, budget)
 
     if plots:
         from budgie.plots import forecast_bars, montecarlo_histogram
@@ -130,13 +153,68 @@ def _print_forecast_table(det):
             f"${item.cost:,.0f}",
         )
     table.add_section()
+    # Labor only -- this table's rows are people, so its total must be the sum
+    # of those rows. Non-labor is totalled in its own table.
     table.add_row(
         "[bold]Total[/bold]",
         "",
         f"[bold]{det.total_hours:,.0f}[/bold]",
-        f"[bold]${det.total_cost:,.0f}[/bold]",
+        f"[bold]${det.labor_cost:,.0f}[/bold]",
     )
     console.print(table)
+
+
+def _budget_from(arg):
+    """A --budget argument is either a number or a path to a revisions CSV."""
+    from budgie.core.budget import coerce_budget
+
+    try:
+        return coerce_budget(float(arg))
+    except ValueError:
+        return coerce_budget(Path(arg))
+
+
+def _print_costs_table(det):
+    from rich.table import Table
+
+    from budgie.core.costs import by_category
+
+    table = Table(
+        show_header=True, header_style="bold magenta", title="Non-labor costs"
+    )
+    table.add_column("Item")
+    table.add_column("Category")
+    table.add_column("When")
+    table.add_column("Total", justify="right")
+    for item in det.cost_items:
+        when = f"{item.when:%b %-d}" + (" (monthly)" if item.recurring else "")
+        table.add_row(item.name, item.category, when, f"${item.total:,.0f}")
+    table.add_section()
+    for category, amount in sorted(by_category(det.cost_items).items()):
+        table.add_row(f"[dim]{category}[/dim]", "", "", f"[dim]${amount:,.0f}[/dim]")
+    table.add_section()
+    table.add_row(
+        "[bold]Non-labor[/bold]", "", "", f"[bold]${det.non_labor_cost:,.0f}[/bold]"
+    )
+    table.add_row(
+        "[bold]Labor + non-labor[/bold]", "", "", f"[bold]${det.total_cost:,.0f}[/bold]"
+    )
+    console.print(table)
+
+
+def _print_signal(sim, budget):
+    from budgie.core.signals import evaluate
+
+    # Signal against the budget as it stands now, not the original baseline.
+    result = evaluate(sim, budget.latest)
+    _, color, word = _SIGNAL_STYLE[result.signal]
+    if budget.has_revisions:
+        console.print(
+            f"[dim]Budget: original ${budget.original:,.0f} → current "
+            f"${budget.latest:,.0f} ({budget.net_change:+,.0f} over "
+            f"{len(budget.revisions)} revisions)[/dim]"
+        )
+    console.print(f"[{color}]●[/{color}] [bold]{word}[/bold] — {result.rationale}")
 
 
 def _print_montecarlo_summary(sim, pct):
@@ -408,7 +486,17 @@ def _print_scenario_table(results, budget):
 )
 @click.option("--seed", default=None, type=int, help="RNG seed.")
 @click.option(
-    "--budget", default=None, type=float, help="Budget line to draw on the fan chart."
+    "--budget",
+    "budget_arg",
+    default=None,
+    help="Budget for the fan chart: a number, or a CSV of dated revisions.",
+)
+@click.option(
+    "--costs",
+    "costs_csv",
+    default=None,
+    type=click.Path(exists=True),
+    help="CSV of non-labor costs to include in the monthly totals.",
 )
 @click.option(
     "--plots/--no-plots", default=False, help="Write fan.png and monthly.png."
@@ -416,7 +504,9 @@ def _print_scenario_table(results, budget):
 @click.option(
     "--out-dir", default=".", show_default=True, help="Directory for figures."
 )
-def monthly(people_csv, year, pto, iterations, seed, budget, plots, out_dir):
+def monthly(
+    people_csv, year, pto, iterations, seed, budget_arg, costs_csv, plots, out_dir
+):
     """Break the year into months: cost per month and a cumulative fan chart."""
     from budgie.core.monthly import monthly_forecast, monthly_simulation
 
@@ -425,12 +515,15 @@ def monthly(people_csv, year, pto, iterations, seed, budget, plots, out_dir):
         people_csv,
         productive_hours=productive_hours(year, pto_days=pto).available_hours,
     )
-    mf = monthly_forecast(people, year, pto_days=pto)
+    costs = load_costs(costs_csv) if costs_csv else []
+    budget = _budget_from(budget_arg) if budget_arg else None
+
+    mf = monthly_forecast(people, year, pto_days=pto, costs=costs)
     sim = monthly_simulation(
-        people, year, pto_days=pto, iterations=iterations, seed=seed
+        people, year, pto_days=pto, iterations=iterations, seed=seed, costs=costs
     )
     logger.info(f"{len(people)} people, {year} split into months by working-day share")
-    _print_monthly_table(mf, sim, budget)
+    _print_monthly_table(mf, sim, budget.latest if budget else None)
 
     if plots:
         from budgie.plots import fan_chart, monthly_cost_bars

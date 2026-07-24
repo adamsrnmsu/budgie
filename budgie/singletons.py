@@ -23,6 +23,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("budgie")
 
+# matplotlib chatters at INFO (categorical-units notices) and floods at DEBUG
+# (font manager). Neither is ours; keep it to real warnings.
+logging.getLogger("matplotlib").setLevel(logging.WARNING)
+
 # Singleton for rich console
 console = Console()
 

@@ -197,7 +197,16 @@ def fan_chart(
     ax.plot(months, p50, color=GREEN, linewidth=2.4, label="P50 (expected)")
 
     if budget is not None:
-        ax.axhline(budget, color=RED, linestyle="--", linewidth=1.4)
+        # A revised budget is a step line, not a flat one -- drawing it flat
+        # would hide exactly the increase or cut you're trying to see.
+        if hasattr(budget, "monthly_amounts"):
+            steps = budget.monthly_amounts(sim.year)
+            ax.step(
+                months, steps, color=RED, linestyle="--", linewidth=1.4, where="post"
+            )
+            budget = steps[-1]
+        else:
+            ax.axhline(budget, color=RED, linestyle="--", linewidth=1.4)
         # Right-aligned so it never collides with the upper-left legend.
         ax.text(
             11,
@@ -231,7 +240,12 @@ def monthly_cost_bars(forecast: MonthlyForecast, out_path: str | Path) -> Path:
     """Per-month cost, showing how working-day count shapes the year."""
     out_path = Path(out_path)
     fig, ax = plt.subplots(figsize=(9, 3.8))
-    ax.bar(MONTH_NAMES, forecast.costs, color=GREEN)
+    # Numeric positions with separate labels: passing month names directly makes
+    # matplotlib treat them as categorical dates and emit a warning.
+    positions = range(len(MONTH_NAMES))
+    ax.bar(positions, forecast.costs, color=GREEN)
+    ax.set_xticks(list(positions))
+    ax.set_xticklabels(MONTH_NAMES)
     ax.set_ylabel("Cost ($)", fontsize=10)
     ax.set_title(f"Cost per month, {forecast.year} (weighted by working days)")
     ax.yaxis.set_major_formatter(lambda x, _: f"${x:,.0f}")
