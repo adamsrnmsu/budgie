@@ -1,0 +1,6 @@
+name,category,date,amount,low,high,recurring
+Laptops,materials,2026-03-15,12000,11000,14000,no
+Test rig,materials,2026-05-01,28000,22000,40000,no
+Cloud hosting,services,2026-01-01,2000,,,yes
+Licenses,services,2026-02-01,9500,,,no
+Travel,travel,2026-06-01,8000,6000,11000,no

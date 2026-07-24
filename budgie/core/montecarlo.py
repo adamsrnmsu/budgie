@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from budgie.core.costs import CostItem, sample_total
 from budgie.core.person import Person
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ def simulate(
     people: Sequence[Person],
     iterations: int = DEFAULT_ITERATIONS,
     seed: int | None = None,
+    costs: Sequence[CostItem] = (),
 ) -> SimulationResult:
     """Run a Monte Carlo simulation of total team cost.
 
@@ -81,4 +83,8 @@ def simulate(
     totals = np.zeros(iterations, dtype=float)
     for person in people:
         totals += person.sample_cost(rng, iterations)
+    if costs:
+        # Non-labor lines carry their own uncertainty and belong in the same
+        # distribution -- a wide equipment estimate moves the budget too.
+        totals += sample_total(costs, rng, iterations)
     return SimulationResult(total_costs=totals, iterations=iterations)

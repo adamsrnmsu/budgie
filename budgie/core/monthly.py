@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 
 from budgie.core.calendar import productive_hours
+from budgie.core.costs import CostItem, monthly_totals, sample_total
 from budgie.core.person import Person
 
 logger = logging.getLogger(__name__)
@@ -99,15 +100,23 @@ class MonthlyForecast:
 
 
 def monthly_forecast(
-    people: Sequence[Person], year: int, pto_days: float = 0.0
+    people: Sequence[Person],
+    year: int,
+    pto_days: float = 0.0,
+    costs: Sequence[CostItem] = (),
 ) -> MonthlyForecast:
-    """Spread the deterministic annual forecast across the months."""
+    """Spread the deterministic annual forecast across the months.
+
+    Labor is spread by working-day weight; non-labor lines land in the month
+    they are actually incurred rather than being smeared across the year.
+    """
     weights = month_weights(year)
     total_hours = sum(p.hours.point for p in people)
     total_cost = sum(p.expected_cost() for p in people)
+    non_labor = monthly_totals(costs, year) if costs else [0.0] * 12
     return MonthlyForecast(
         year=year,
-        costs=tuple(total_cost * w for w in weights),
+        costs=tuple(total_cost * w + n for w, n in zip(weights, non_labor)),
         hours=tuple(total_hours * w for w in weights),
     )
 
@@ -134,6 +143,7 @@ def monthly_simulation(
     pto_days: float = 0.0,
     iterations: int = 10_000,
     seed: int | None = None,
+    costs: Sequence[CostItem] = (),
 ) -> MonthlySimulation:
     """Simulate cumulative team cost month by month.
 
@@ -153,6 +163,16 @@ def monthly_simulation(
     weights = np.array(month_weights(year))
     # (iterations, 1) * (12,) -> (iterations, 12), then accumulate along months.
     monthly = annual_totals[:, None] * weights[None, :]
+
+    if costs:
+        # Non-labor lines are added in the month they fall, at their own
+        # simulated scale, so the band steps up where the spend actually lands.
+        shape = np.array(monthly_totals(costs, year))
+        share = shape / shape.sum() if shape.sum() else shape
+        monthly = (
+            monthly + sample_total(costs, rng, iterations)[:, None] * share[None, :]
+        )
+
     return MonthlySimulation(year=year, cumulative_costs=np.cumsum(monthly, axis=1))
 
 
