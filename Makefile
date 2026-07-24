@@ -1,10 +1,33 @@
-.PHONY: format lint
+VENV := .venv
+BIN := $(VENV)/bin
 
-# Run isort to sort imports
-format:
-    isort .
-    ruff format .
+.PHONY: help venv activate install lint format test clean
 
-# Run ruff to lint the code
-lint:
-    ruff lint .
+help: ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
+
+venv: ## Create the .venv virtualenv and install budgie (editable) with deps
+	python3 -m venv $(VENV)
+	$(BIN)/pip install --upgrade pip
+	$(BIN)/pip install -e .
+
+install: ## Reinstall the package into an existing .venv
+	$(BIN)/pip install -e .
+
+activate: ## Print the command to activate the venv (a target can't alter your shell)
+	@echo "Run this in your shell:  source $(BIN)/activate"
+
+lint: ## Lint with ruff
+	$(BIN)/ruff check .
+
+format: ## Sort imports (isort) and format (ruff)
+	$(BIN)/isort .
+	$(BIN)/ruff format .
+
+test: ## Run the test suite
+	$(BIN)/pytest
+
+clean: ## Remove caches and build artifacts
+	rm -rf build *.egg-info .pytest_cache
+	find . -type d -name __pycache__ -prune -exec rm -rf {} +

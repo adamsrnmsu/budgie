@@ -156,3 +156,11 @@ cython_debug/
 
 # Vscode settings
 .vscode/
+
+# macOS
+.DS_Store
+
+# Budgie generated output
+emails/
+montecarlo.png
+forecast.png
