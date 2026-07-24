@@ -1,0 +1,19 @@
+budget: 720000
+iterations: 10000
+seed: 42
+
+scenarios:
+  - name: Baseline
+    people: team.csv
+    year: 2026
+    pto: 0
+
+  - name: With 15 PTO days
+    people: team.csv
+    year: 2026
+    pto: 15
+
+  - name: Lean team (3 people)
+    people: team_lean.csv
+    year: 2026
+    pto: 0
