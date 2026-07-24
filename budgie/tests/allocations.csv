@@ -1,0 +1,5 @@
+name,email,fte,hours_spent
+Alice,alice@example.com,0.25,180
+Bob,bob@example.com,0.50,760
+Charlie,charlie@example.com,1.00,1400
+David,david@example.com,0.10,205
