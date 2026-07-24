@@ -33,6 +33,64 @@ def _style(signal) -> tuple[str, str, str]:
     return _SIGNAL_STYLE[signal.name]
 
 
+def _sample(name: str) -> str:
+    """Path to a bundled sample file, used when there's no workspace."""
+    return str(THIS_DIR / "tests" / name)
+
+
+def _input(key: str, override, sample: str):
+    """Resolve an input path: explicit option > workspace file > bundled sample.
+
+    Click options all default to None now, so "the user said nothing" is
+    distinguishable from "the user asked for the default" -- that's what lets a
+    workspace supply the default without the option always overriding it.
+    """
+    from budgie.core.workspace import find_workspace
+
+    if override:
+        return str(override)
+    workspace = find_workspace()
+    if workspace:
+        resolved = workspace.resolve(key)
+        if resolved:
+            return resolved
+    return _sample(sample)
+
+
+def _workspace_input(key: str):
+    """The project's file for ``key`` if it exists, else None.
+
+    Used for genuinely optional inputs (actuals, costs) where falling back to a
+    bundled sample would silently invent data.
+    """
+    from budgie.core.workspace import find_workspace
+
+    workspace = find_workspace()
+    return workspace.resolve(key) if workspace else None
+
+
+def _budget_arg(override):
+    """Resolve --budget: explicit value > a number in budgie.yaml > budget.csv."""
+    if override is not None:
+        return override
+    pinned = _setting("budget", None, None)
+    if pinned is not None:
+        return pinned
+    return _workspace_input("budget")
+
+
+def _setting(key: str, override, default):
+    """Resolve a scalar setting: explicit option > workspace > built-in default."""
+    from budgie.core.workspace import find_workspace
+
+    if override is not None:
+        return override
+    workspace = find_workspace()
+    if workspace:
+        return workspace.setting(key, default)
+    return default
+
+
 @click.group()
 @click.option(
     "-v", "--verbose", is_flag=True, help="Show DEBUG logging from budgie's internals."
@@ -48,24 +106,22 @@ def cli(verbose):
 @click.option(
     "--people",
     "people_csv",
-    default=str(THIS_DIR / "tests" / "team.csv"),
-    show_default=True,
-    help="CSV of team members (name, hourly_cost, and util_*/hours_* columns).",
+    default=None,
+    help="CSV of team members (name, hourly_cost, and util_*/hours_* columns) "
+    "[default: the project's, else bundled sample].",
 )
-@click.option(
-    "--year",
-    default=2026,
-    show_default=True,
-    help="Calendar year for productive hours.",
-)
+@click.option("--year", default=None, type=int, help="Calendar year [default: 2026].")
 @click.option(
     "--pto",
-    default=0.0,
-    show_default=True,
-    help="PTO/sick days to subtract per person.",
+    default=None,
+    type=float,
+    help="PTO/sick days to subtract per person [default: 0].",
 )
 @click.option(
-    "--iterations", default=10_000, show_default=True, help="Monte Carlo iterations."
+    "--iterations",
+    default=None,
+    type=int,
+    help="Monte Carlo iterations [default: 10000].",
 )
 @click.option(
     "--seed", default=None, type=int, help="RNG seed for reproducible simulation."
@@ -107,6 +163,14 @@ def forecast(
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
+
+    people_csv = _input("people", people_csv, "team.csv")
+    costs_csv = costs_csv or _workspace_input("costs")
+    year = _setting("year", year, 2026)
+    pto = _setting("pto", pto, 0.0)
+    iterations = _setting("iterations", iterations, 10_000)
+    seed = _setting("seed", seed, None)
+    budget_arg = _budget_arg(budget_arg)
 
     ph = productive_hours(year, pto_days=pto)
     logger.info(
@@ -262,18 +326,16 @@ def tui(people_csv):
 @click.option(
     "--allocations",
     "alloc_csv",
-    default=str(THIS_DIR / "tests" / "allocations.csv"),
-    show_default=True,
-    help="CSV of allocations (name, fte, hours_spent, and optional email).",
+    default=None,
+    help="CSV of allocations (name, fte, hours_spent, optional email/pto_days) "
+    "[default: the project's, else bundled sample].",
 )
-@click.option(
-    "--year", default=2026, show_default=True, help="Calendar year for available hours."
-)
+@click.option("--year", default=None, type=int, help="Calendar year [default: 2026].")
 @click.option(
     "--pto",
-    default=0.0,
-    show_default=True,
-    help="PTO/sick days subtracted from the ceiling.",
+    default=None,
+    type=float,
+    help="PTO/sick days subtracted from the ceiling [default: 0].",
 )
 def hours(alloc_csv, year, pto):
     """Show each person's allocated / spent / remaining hours from their FTE."""
@@ -283,6 +345,10 @@ def hours(alloc_csv, year, pto):
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
+    alloc_csv = _input("allocations", alloc_csv, "allocations.csv")
+    year = _setting("year", year, 2026)
+    pto = _setting("pto", pto, 0.0)
+
     ph = productive_hours(year, pto_days=pto)
     allocs = load_allocations(alloc_csv, available_hours=ph)
     logger.info(f"Available hours {year}: {ph.available_hours:,.0f} (1.0 FTE)")
@@ -358,6 +424,14 @@ def emails(
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
+    alloc_csv = _input("allocations", alloc_csv, "allocations.csv")
+    year = _setting("year", year, 2026)
+    pto = _setting("pto", pto, 0.0)
+    # Actuals are optional, so only reach for the project's copy when the user
+    # didn't name one -- and only if it's actually there.
+    actuals_csv = actuals_csv or _workspace_input("actuals")
+    weekly_csv = weekly_csv or _workspace_input("weekly")
+
     ph = productive_hours(year, pto_days=pto)
     allocs = load_allocations(alloc_csv, available_hours=ph)
 
@@ -454,9 +528,9 @@ def _print_hours_table(allocs):
 @click.option(
     "--config",
     "config_path",
-    default=str(THIS_DIR / "tests" / "scenarios.yaml"),
-    show_default=True,
-    help="YAML config describing a budget and named scenarios to compare.",
+    default=None,
+    help="YAML config describing a budget and named scenarios to compare "
+    "[default: the project's, else bundled sample].",
 )
 def scenario(config_path):
     """Compare what-if scenarios side by side, with a stoplight vs the budget."""
@@ -465,6 +539,8 @@ def scenario(config_path):
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
+    config_path = _input("scenarios", config_path, "scenarios.yaml")
+
     results, budget = run_scenarios(config_path)
     logger.info(f"Budget target: ${budget:,.0f}   (baseline: {results[0].name})")
     _print_scenario_table(results, budget)
@@ -508,14 +584,18 @@ def _print_scenario_table(results, budget):
 @click.option(
     "--people",
     "people_csv",
-    default=str(THIS_DIR / "tests" / "team.csv"),
-    show_default=True,
-    help="CSV of team members.",
+    default=None,
+    help="CSV of team members [default: the project's, else bundled sample].",
 )
-@click.option("--year", default=2026, show_default=True, help="Calendar year.")
-@click.option("--pto", default=0.0, show_default=True, help="PTO/sick days per person.")
+@click.option("--year", default=None, type=int, help="Calendar year [default: 2026].")
 @click.option(
-    "--iterations", default=10_000, show_default=True, help="Monte Carlo iterations."
+    "--pto", default=None, type=float, help="PTO/sick days per person [default: 0]."
+)
+@click.option(
+    "--iterations",
+    default=None,
+    type=int,
+    help="Monte Carlo iterations [default: 10000].",
 )
 @click.option("--seed", default=None, type=int, help="RNG seed.")
 @click.option(
@@ -549,6 +629,13 @@ def monthly(
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
+    people_csv = _input("people", people_csv, "team.csv")
+    year = _setting("year", year, 2026)
+    pto = _setting("pto", pto, 0.0)
+    iterations = _setting("iterations", iterations, 10_000)
+    seed = _setting("seed", seed, None)
+    budget_arg = _budget_arg(budget_arg)
+
     ph = productive_hours(year, pto_days=pto)
     people = load_people(people_csv, productive_hours=ph)
     costs = load_costs(costs_csv) if costs_csv else []
@@ -616,12 +703,115 @@ def _print_monthly_table(mf, sim, budget):
 
 
 @click.command()
-@click.option("--year", default=2026, show_default=True, help="Calendar year.")
+@click.argument("directory", default=".", type=click.Path(file_okay=False))
+@click.option("--year", default=2026, show_default=True, help="Year to scaffold for.")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Overwrite files that already exist (off by default -- init never "
+    "silently replaces your numbers).",
+)
+def init(directory, year, force):
+    """Create a Budgie project here: a budgie.yaml and starter input files.
+
+    Every command afterwards finds this project by walking up from wherever you
+    run it, so you can edit the CSVs in place and just re-run `budgie forecast`.
+    """
+    from budgie.core.scaffold import init_workspace
+    from budgie.core.workspace import CONFIG_NAME, forget_workspaces
+    from budgie.singletons import console
+    from budgie.utils.utils import display_startup_message
+
+    display_startup_message()
+    written, skipped = init_workspace(directory, year=year, overwrite=force)
+    forget_workspaces()
+
+    root = Path(directory).resolve()
+    console.print(f"[bold]Project at[/bold] {root}")
+    for path in written:
+        console.print(f"  [green]+[/green] {path.name}")
+    for path in skipped:
+        console.print(f"  [dim]· {path.name} (already there, left alone)[/dim]")
+    if skipped and not force:
+        console.print("[dim]Pass --force to overwrite the existing files.[/dim]")
+
+    console.print(
+        f"\nEdit the CSVs, then run [bold]budgie status[/bold] to check them.\n"
+        f"Settings like year, PTO and budget live in [bold]{CONFIG_NAME}[/bold]."
+    )
+
+
+@click.command()
+def status():
+    """Show the current project: which inputs exist, and what feeds what."""
+    from budgie.core.workspace import find_workspace
+    from budgie.singletons import console
+    from budgie.utils.utils import display_startup_message
+
+    display_startup_message()
+    workspace = find_workspace()
+    if workspace is None:
+        console.print(
+            "[yellow]No budgie.yaml found[/yellow] above "
+            f"{Path.cwd()}.\n"
+            "Commands are running against the bundled sample data in "
+            f"{THIS_DIR / 'tests'}.\n\n"
+            "Run [bold]budgie init[/bold] to start a project with your own numbers."
+        )
+        return
+
+    _print_status_table(workspace)
+    missing = [i for i in workspace.inputs() if not i.exists]
+    if missing:
+        console.print(
+            f"[dim]{len(missing)} input(s) not created yet. That's fine -- each "
+            f"is only needed by the commands listed against it.[/dim]"
+        )
+    console.print(f"[dim]Settings from {workspace.config_path}[/dim]")
+
+
+def _print_status_table(workspace):
+    from rich.table import Table
+
+    from budgie.singletons import console
+
+    settings = workspace.settings
+    if settings:
+        console.print(
+            "  ".join(f"[bold]{k}[/bold] {v}" for k, v in sorted(settings.items()))
+        )
+
+    table = Table(
+        show_header=True,
+        header_style="bold magenta",
+        title=f"Project inputs — {workspace.root}",
+    )
+    table.add_column("")
+    table.add_column("File")
+    table.add_column("Rows", justify="right")
+    table.add_column("What it is")
+    table.add_column("Used by", style="dim")
+    for item in workspace.inputs():
+        mark = "[green]✓[/green]" if item.exists else "[dim]·[/dim]"
+        name = item.path.name if item.exists else f"[dim]{item.path.name}[/dim]"
+        rows = "" if item.rows is None else f"{item.rows}"
+        table.add_row(
+            mark,
+            name,
+            rows,
+            item.description,
+            " ".join(item.used_by),
+        )
+    console.print(table)
+
+
+@click.command()
+@click.option("--year", default=None, type=int, help="Calendar year [default: 2026].")
 @click.option(
     "--pto",
-    default=0.0,
-    show_default=True,
-    help="PTO/sick days, to show its effect on the ceiling.",
+    default=None,
+    type=float,
+    help="PTO/sick days, to show its effect on the ceiling [default: 0].",
 )
 def assumptions(year, pto):
     """Print every modelling assumption, its current value, and where it lives.
@@ -645,6 +835,9 @@ def assumptions(year, pto):
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
+    year = _setting("year", year, 2026)
+    pto = _setting("pto", pto, 0.0)
+
     ph = productive_hours(year, pto_days=pto)
     weights = month_weights(year)
 
@@ -762,12 +955,14 @@ def _print_assumptions_table(year, rows):
 @click.option(
     "--plan",
     "plan_csv",
-    default=str(THIS_DIR / "tests" / "plan.csv"),
-    show_default=True,
-    help="CSV of allocation changes (name, effective_date, fte).",
+    default=None,
+    help="CSV of allocation changes (name, effective_date, fte) "
+    "[default: the project's, else bundled sample].",
 )
-@click.option("--year", default=2026, show_default=True, help="Calendar year.")
-@click.option("--pto", default=0.0, show_default=True, help="PTO/sick days per person.")
+@click.option("--year", default=None, type=int, help="Calendar year [default: 2026].")
+@click.option(
+    "--pto", default=None, type=float, help="PTO/sick days per person [default: 0]."
+)
 def plan(plan_csv, year, pto):
     """Show allocated hours from a date-resolution allocation plan.
 
@@ -778,6 +973,10 @@ def plan(plan_csv, year, pto):
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
+    plan_csv = _input("plan", plan_csv, "plan.csv")
+    year = _setting("year", year, 2026)
+    pto = _setting("pto", pto, 0.0)
+
     allocation_plan = load_plan(plan_csv)
     _print_plan_table(allocation_plan, year, pto)
 
@@ -806,6 +1005,8 @@ def _print_plan_table(allocation_plan, year, pto):
     console.print(table)
 
 
+cli.add_command(init)
+cli.add_command(status)
 cli.add_command(forecast)
 cli.add_command(assumptions)
 cli.add_command(plan)
