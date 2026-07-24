@@ -30,7 +30,9 @@ from pathlib import Path
 
 import yaml
 
+from budgie.core.budget import coerce_budget
 from budgie.core.calendar import productive_hours
+from budgie.core.costs import load_costs
 from budgie.core.forecast import Forecast
 from budgie.core.forecast import forecast as run_forecast
 from budgie.core.loader import load_people
@@ -65,9 +67,17 @@ def run_scenarios(config_path: str | Path) -> tuple[list[ScenarioResult], float]
     config = yaml.safe_load(config_path.read_text())
     base_dir = config_path.parent
 
-    budget = float(config["budget"])
+    # `budget:` accepts a plain number (as before), a list of dated revisions,
+    # or a path to a revisions CSV.
+    budget_spec = config["budget"]
+    if isinstance(budget_spec, str):
+        budget_spec = _resolve(budget_spec, base_dir)
+    budget_obj = coerce_budget(budget_spec)
+    budget = budget_obj.latest
     iterations = int(config.get("iterations", 10_000))
     seed = config.get("seed")
+    cost_spec = config.get("costs")
+    costs = load_costs(_resolve(cost_spec, base_dir)) if cost_spec else []
     specs = config["scenarios"]
     if not specs:
         raise ValueError("config must define at least one scenario")
@@ -83,8 +93,8 @@ def run_scenarios(config_path: str | Path) -> tuple[list[ScenarioResult], float]
         people = load_people(
             _resolve(spec["people"], base_dir), productive_hours=ph.available_hours
         )
-        det = run_forecast(people)
-        sim = simulate(people, iterations=iterations, seed=seed)
+        det = run_forecast(people, costs=costs)
+        sim = simulate(people, iterations=iterations, seed=seed, costs=costs)
         signal = evaluate(sim, budget, baseline=baseline_sim)
         logger.info(
             "Scenario %r: total=%.0f signal=%s",
