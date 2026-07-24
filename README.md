@@ -89,6 +89,32 @@ budgie scenario --config scenarios.yaml
 
 The first scenario is the baseline; the rest are measured against it.
 
+### `budgie plan` — allocations that change during the year
+
+```bash
+budgie plan --plan plan.csv --year 2026
+```
+
+People join, leave, and get re-planned. A plan records **when** each change takes effect;
+each row applies from its date until the next row for that person.
+
+```csv
+name,effective_date,fte
+Alice,2026-01-01,0.25
+Bob,2026-01-01,0.50
+Bob,2026-09-01,0.00      # zeroed out — left the project
+Carol,2026-07-15,0.50    # joined mid-July
+Dave,2026-01-01,0.25
+Dave,2026-04-01,0.75     # re-planned upward
+```
+
+Adding a member, zeroing someone out, and re-planning are all the same operation: append a
+row. You never edit history, so the record of what changed and when is preserved.
+
+Hours are counted **day by day over real working days**, so a mid-month start is charged from
+the actual day. Carol's July 15 start at 0.50 FTE yields 466 hours — not the 996 a flat annual
+model would give, and not the 502 you'd get by rounding her start to July 1.
+
 ### `budgie hours` — how much time does everyone have left?
 
 ```bash
@@ -153,13 +179,37 @@ name,email,fte,hours_spent
 Alice,alice@example.com,0.25,180
 ```
 
-**Monthly actuals** — `actuals.csv` (optional, for true burn-down curves):
+**Allocation plan** — `plan.csv` (for `plan`; see above for semantics):
+
+```csv
+name,effective_date,fte
+Carol,2026-07-15,0.50
+```
+
+**Actuals** — optional, for true burn-down curves. Two shapes, whichever your data gives you.
+
+Per-period monthly hours (`actuals.csv`, used with `--actuals`):
 
 ```csv
 name,month,hours
 Alice,1,26
 Alice,2,24
 ```
+
+Or **cumulative hours through an ISO week** (`weekly.csv`, used with `--weekly`) — which is what
+most timesheet exports actually give you:
+
+```csv
+name,week,hours_to_date
+Alice,12,88
+Alice,20,142
+Alice,29,180
+```
+
+These are *cumulative totals*, not per-week hours, so nothing is invented about how the time
+was distributed between readings. One row per person is enough; more rows give a real curve.
+Budgie takes the as-of date from the latest reading (week 29 of 2026 ends July 19), so the burn
+rate is measured over the right window rather than against today's date.
 
 **Scenarios** — `scenarios.yaml`:
 
@@ -204,6 +254,18 @@ probability of exceeding your budget, measured straight off the simulated outcom
 | 🟡 yellow | caution | ≤40% |
 | 🔴 red | bad | >40% |
 | 🔵 blue | no change | within 2% of a baseline run |
+
+## Troubleshooting
+
+Every command accepts `-v` / `--verbose` for DEBUG logging of what Budgie is doing — which
+files it loaded, each person's plan changes, simulation parameters, and how a stoplight signal
+was decided:
+
+```bash
+budgie -v plan
+```
+
+Verbose affects Budgie's own loggers only; third-party libraries stay quiet.
 
 ## Development
 
