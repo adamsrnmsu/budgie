@@ -64,7 +64,7 @@ def render_overview(in_project: bool, project_root=None) -> None:
     else:
         console.print(
             f"  Next: [{_CMD}]budgie init my-budget[/{_CMD}] to start a "
-            f"project, then [{_CMD}]cd my-budget[/{_CMD}]."
+            f"project, then [{_CMD}]cd budget/my-budget[/{_CMD}]."
         )
     console.print(
         f"  New here? [{_CMD}]budgie guide[/{_CMD}] walks you through building "

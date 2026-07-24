@@ -16,14 +16,19 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from budgie.core.workspace import CONFIG_NAME, INPUTS
+from budgie.core.workspace import CONFIG_NAME, INPUTS, PROJECTS_DIR
 
 logger = logging.getLogger(__name__)
 
 # `budgie init` writes into a subfolder by default. Ten files loose in whatever
 # directory you happened to be standing in is clutter, and a project is a thing
 # you keep -- it deserves its own folder.
-DEFAULT_PROJECT_DIR = "budget"
+DEFAULT_PROJECT_DIR = PROJECTS_DIR
+
+# What the project is called when you accept the prompt without typing a name.
+# Something neutral, because the container it sits in is already called
+# `budget/` -- `budget/budget/` would be a silly thing to have written.
+DEFAULT_PROJECT_NAME = "main"
 
 
 CONFIG_TEMPLATE = """\
@@ -218,3 +223,39 @@ def init_workspace(
         len(skipped),
     )
     return written, skipped
+
+
+def delete_project(directory: str | Path) -> list[Path]:
+    """Delete a project directory outright, returning what was removed.
+
+    This is the one irreversible thing Budgie does, so it refuses everything it
+    isn't certain about rather than deleting its best guess:
+
+    * the directory must hold a ``budgie.yaml`` -- so a mistyped path takes the
+      error and not the contents of somebody's home directory;
+    * it must not be a symlink, which would otherwise follow somewhere else;
+    * it must not contain the working directory, because deleting the ground
+      you are standing on leaves every later command resolving against a path
+      that no longer exists.
+
+    Callers are expected to have confirmed with the user first: by the time this
+    runs, the files are going.
+    """
+    import shutil
+
+    from budgie.core.workspace import CONFIG_NAME
+
+    root = Path(directory).resolve()
+    if root.is_symlink():
+        raise ValueError(f"{root} is a symlink, not a project directory")
+    if not (root / CONFIG_NAME).is_file():
+        raise ValueError(f"{root} is not a Budgie project (no {CONFIG_NAME})")
+
+    cwd = Path.cwd().resolve()
+    if root == cwd or root in cwd.parents:
+        raise ValueError(f"{root} is the directory you're in -- cd out of it first")
+
+    removed = sorted(p for p in root.rglob("*") if p.is_file())
+    shutil.rmtree(root)
+    logger.info("Deleted project %s (%d file(s))", root, len(removed))
+    return removed

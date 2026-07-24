@@ -87,6 +87,7 @@ COMMAND_GROUPS: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...] = (
             ("status", "Which inputs exist, and what reads each one"),
             ("assumptions", "What Budgie assumes about time and money"),
             ("guide", "Walk through building a budget, step by step"),
+            ("delete", "Remove a project and everything in it"),
         ),
     ),
     (
@@ -127,13 +128,16 @@ PHASES: tuple[Phase, ...] = (
         steps=(
             Step(
                 "budgie init my-budget",
-                "Makes a my-budget/ folder. The starter files hold working "
-                "example data, so every command runs before you change a thing.",
+                "Makes budget/my-budget/. Projects live together under budget/, "
+                "so next year's can sit beside this one. Leave the name off and "
+                "it asks. The starter files hold working example data, so every "
+                "command runs before you change a thing.",
             ),
             Step(
-                "cd my-budget",
+                "cd budget/my-budget",
                 "Commands find the project by looking up from where you are, "
-                "so work from inside it.",
+                "so work from inside it. With more than one project, "
+                "--project my-budget picks it from anywhere.",
             ),
             Step(
                 "budgie status",

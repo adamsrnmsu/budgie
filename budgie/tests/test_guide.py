@@ -5,7 +5,11 @@ from click.testing import CliRunner
 
 from budgie.budgie import cli
 from budgie.core.guide import COMMAND_GROUPS, PHASES, TOPICS, topic_names
-from budgie.core.scaffold import DEFAULT_PROJECT_DIR, init_workspace
+from budgie.core.scaffold import (
+    DEFAULT_PROJECT_DIR,
+    DEFAULT_PROJECT_NAME,
+    init_workspace,
+)
 from budgie.core.workspace import INPUTS, forget_workspaces
 
 
@@ -121,7 +125,9 @@ def test_init_creates_a_subfolder_not_clutter(tmp_path, monkeypatch):
     result = _run(["init"], tmp_path, monkeypatch)
 
     assert result.exit_code == 0, result.output
-    assert (tmp_path / DEFAULT_PROJECT_DIR / "budgie.yaml").is_file()
+    assert (
+        tmp_path / DEFAULT_PROJECT_DIR / DEFAULT_PROJECT_NAME / "budgie.yaml"
+    ).is_file()
     # Nothing loose in the directory the user was standing in.
     assert [p.name for p in tmp_path.iterdir()] == [DEFAULT_PROJECT_DIR]
 
@@ -130,7 +136,49 @@ def test_init_takes_a_name(tmp_path, monkeypatch):
     result = _run(["init", "fy27"], tmp_path, monkeypatch)
 
     assert result.exit_code == 0, result.output
-    assert (tmp_path / "fy27" / "budgie.yaml").is_file()
+    # Named projects go in the container alongside each other, not loose.
+    assert (tmp_path / DEFAULT_PROJECT_DIR / "fy27" / "budgie.yaml").is_file()
+
+
+def test_init_puts_several_projects_side_by_side(tmp_path, monkeypatch):
+    _run(["init", "fy26"], tmp_path, monkeypatch)
+    result = _run(["init", "fy27"], tmp_path, monkeypatch)
+
+    assert result.exit_code == 0, result.output
+    container = tmp_path / DEFAULT_PROJECT_DIR
+    assert sorted(p.name for p in container.iterdir()) == ["fy26", "fy27"]
+
+
+def test_init_prompts_for_a_name_when_interactive(tmp_path, monkeypatch):
+    # The prompt only appears on a terminal; pretend we have one.
+    monkeypatch.setattr("budgie.budgie._interactive", lambda: True)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    result = CliRunner().invoke(cli, ["init"], input="q3-refresh\n")
+
+    assert result.exit_code == 0, result.output
+    assert "Project name" in result.output
+    assert (tmp_path / DEFAULT_PROJECT_DIR / "q3-refresh" / "budgie.yaml").is_file()
+
+
+def test_init_prompt_accepts_the_default(tmp_path, monkeypatch):
+    monkeypatch.setattr("budgie.budgie._interactive", lambda: True)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    result = CliRunner().invoke(cli, ["init"], input="\n")
+
+    assert result.exit_code == 0, result.output
+    assert (
+        tmp_path / DEFAULT_PROJECT_DIR / DEFAULT_PROJECT_NAME / "budgie.yaml"
+    ).is_file()
+
+
+def test_init_does_not_prompt_when_piped(tmp_path, monkeypatch):
+    # No terminal: `budgie init` in a script must not block or abort on EOF.
+    result = _run(["init"], tmp_path, monkeypatch)
+
+    assert result.exit_code == 0, result.output
+    assert "Project name" not in result.output
 
 
 def test_init_here_still_works(tmp_path, monkeypatch):
@@ -164,8 +212,41 @@ def test_two_projects_below_are_not_guessed_between(tmp_path, monkeypatch):
 
     result = _run(["status"], tmp_path, monkeypatch)
 
-    # Ambiguous: better to say there's no project than to pick the wrong budget.
-    assert "budgie init" in result.output
+    # Ambiguous: better to name the candidates than to pick the wrong budget.
+    # "Run budgie init" would be nonsense advice to someone with two projects.
+    assert "--project" in result.output
+    assert "  a" in result.output
+    assert "  b" in result.output
+    assert "budgie init" not in result.output
+
+
+def test_projects_in_the_container_are_offered_by_name(tmp_path, monkeypatch):
+    _run(["init", "fy26"], tmp_path, monkeypatch)
+    _run(["init", "fy27"], tmp_path, monkeypatch)
+
+    result = _run(["status"], tmp_path, monkeypatch)
+
+    assert "fy26" in result.output
+    assert "fy27" in result.output
+
+
+def test_project_flag_picks_one_of_several(tmp_path, monkeypatch):
+    _run(["init", "fy26"], tmp_path, monkeypatch)
+    _run(["init", "fy27"], tmp_path, monkeypatch)
+
+    result = _run(["status", "--project", "fy27"], tmp_path, monkeypatch)
+
+    assert result.exit_code == 0, result.output
+    assert "fy27" in result.output.replace("\n", "")
+
+
+def test_a_single_project_in_the_container_needs_no_flag(tmp_path, monkeypatch):
+    _run(["init", "fy26"], tmp_path, monkeypatch)
+
+    result = _run(["status"], tmp_path, monkeypatch)
+
+    assert result.exit_code == 0, result.output
+    assert "--project" not in result.output
 
 
 def test_a_project_above_still_wins_over_one_below(tmp_path, monkeypatch):
@@ -176,3 +257,83 @@ def test_a_project_above_still_wins_over_one_below(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert str(tmp_path.resolve()) in result.output.replace("\n", "")
+
+
+# -- deleting a project -------------------------------------------------
+
+
+def test_delete_removes_the_named_project(tmp_path, monkeypatch):
+    _run(["init", "fy26"], tmp_path, monkeypatch)
+    _run(["init", "fy27"], tmp_path, monkeypatch)
+    container = tmp_path / DEFAULT_PROJECT_DIR
+
+    monkeypatch.setattr("budgie.budgie._interactive", lambda: True)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    result = CliRunner().invoke(cli, ["delete", "fy26"], input="fy26\n")
+
+    assert result.exit_code == 0, result.output
+    assert not (container / "fy26").exists()
+    assert (container / "fy27").is_dir()
+
+
+def test_delete_needs_the_name_typed_back(tmp_path, monkeypatch):
+    _run(["init", "fy26"], tmp_path, monkeypatch)
+    container = tmp_path / DEFAULT_PROJECT_DIR
+
+    monkeypatch.setattr("budgie.budgie._interactive", lambda: True)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    # A bare "y" is too easy to hit by reflex for something with no undo.
+    result = CliRunner().invoke(cli, ["delete", "fy26"], input="y\n")
+
+    assert result.exit_code != 0
+    assert "Left alone" in result.output
+    assert (container / "fy26" / "budgie.yaml").is_file()
+
+
+def test_delete_yes_flag_skips_the_prompt(tmp_path, monkeypatch):
+    _run(["init", "fy26"], tmp_path, monkeypatch)
+    container = tmp_path / DEFAULT_PROJECT_DIR
+
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    result = CliRunner().invoke(cli, ["delete", "fy26", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert not (container / "fy26").exists()
+
+
+def test_delete_refuses_without_a_terminal_or_yes(tmp_path, monkeypatch):
+    # Piped with no --yes: refuse rather than delete on an unanswerable prompt.
+    _run(["init", "fy26"], tmp_path, monkeypatch)
+    container = tmp_path / DEFAULT_PROJECT_DIR
+
+    result = _run(["delete", "fy26"], tmp_path, monkeypatch)
+
+    assert result.exit_code != 0
+    assert (container / "fy26" / "budgie.yaml").is_file()
+
+
+def test_delete_will_not_guess_between_several(tmp_path, monkeypatch):
+    _run(["init", "fy26"], tmp_path, monkeypatch)
+    _run(["init", "fy27"], tmp_path, monkeypatch)
+    container = tmp_path / DEFAULT_PROJECT_DIR
+
+    result = _run(["delete", "--yes"], tmp_path, monkeypatch)
+
+    # Deleting the wrong budget is not a recoverable mistake.
+    assert result.exit_code != 0
+    assert "fy26" in result.output and "fy27" in result.output
+    assert (container / "fy26").is_dir()
+    assert (container / "fy27").is_dir()
+
+
+def test_delete_rejects_an_unknown_name(tmp_path, monkeypatch):
+    _run(["init", "fy26"], tmp_path, monkeypatch)
+
+    result = _run(["delete", "nope", "--yes"], tmp_path, monkeypatch)
+
+    assert result.exit_code != 0
+    assert "No project called nope" in result.output
+    assert (tmp_path / DEFAULT_PROJECT_DIR / "fy26" / "budgie.yaml").is_file()

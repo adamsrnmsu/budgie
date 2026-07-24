@@ -21,6 +21,23 @@ anywhere inside the project and get *your* numbers. Explicit ``--people`` style
 options still win, and with no workspace at all the bundled samples are used --
 so nothing that worked before stops working.
 
+Projects are kept together under a ``budget/`` container, because a budget is
+rarely singular -- there's next year's, and the one for the other team::
+
+    my-work/
+      budget/
+        fy26/
+          budgie.yaml
+        fy27/
+          budgie.yaml
+
+With one project there, commands find it and nothing changes. With several
+there is no right answer to guess at, so :func:`find_workspace` returns None and
+the front-end lists them -- see :func:`available_projects`. Naming one with
+``--project`` resolves it. The flat layout that earlier versions wrote (a
+project directly below the current directory) is still discovered, so projects
+made before the container existed keep working.
+
 This module is deliberately free of click and rich: it resolves paths and
 reports what exists, and the front-ends decide how to show it.
 """
@@ -35,6 +52,11 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 CONFIG_NAME = "budgie.yaml"
+
+# Projects live together under this folder. It is a *container*, not a project:
+# `budget/budgie.yaml` is a project called "budget" (the shape earlier versions
+# wrote), while `budget/fy26/budgie.yaml` is one called "fy26". Both are found.
+PROJECTS_DIR = "budget"
 
 # Every input Budgie knows how to read: config key -> (default filename,
 # what it is, which commands consume it).
@@ -158,51 +180,138 @@ class Workspace:
         return default if value is None else value
 
 
-@lru_cache(maxsize=8)
-def find_workspace(start: str | Path | None = None) -> Workspace | None:
-    """Find the nearest workspace by walking up from ``start`` (default: cwd).
+@dataclass(frozen=True)
+class Project:
+    """A project found below the current directory, named for its folder."""
 
-    Returns None when there is no ``budgie.yaml`` anywhere above -- the caller
-    then falls back to the bundled sample data.
+    name: str
+    config_path: Path
+
+    @property
+    def root(self) -> Path:
+        return self.config_path.parent
+
+    def load(self) -> Workspace:
+        return load_workspace(self.config_path)
+
+
+@lru_cache(maxsize=8)
+def find_workspace(
+    start: str | Path | None = None, project: str | None = None
+) -> Workspace | None:
+    """Find the workspace to use, from ``start`` (default: cwd).
+
+    Naming a ``project`` picks it out of the ones below; otherwise the nearest
+    ``budgie.yaml`` at or above ``start`` wins, and failing that the single
+    project below. Returns None when there is nothing to use -- the caller then
+    falls back to the bundled sample data, or reports the choice it can't make.
 
     Cached, because a single command resolves several inputs and each would
     otherwise re-walk the tree and re-parse the YAML. Call
     :func:`forget_workspaces` after writing or moving a config.
     """
     here = Path(start or Path.cwd()).resolve()
+
+    if project:
+        # An explicit name beats proximity: `--project fy27` run from inside
+        # fy26 has to mean fy27, or the flag would do nothing where it is most
+        # likely to be typed. Searching only below `here` would find nothing
+        # there -- fy27 is a *sibling* -- so walk up until some directory
+        # contains a project by that name.
+        for directory in (here, *here.parents):
+            for candidate in _projects_below(directory):
+                if candidate.name == project:
+                    logger.info("Using project %s", candidate.root)
+                    return candidate.load()
+        return None
+
     for directory in (here, *here.parents):
         config = directory / CONFIG_NAME
-        if config.is_file():
+        if _is_config(config):
             logger.debug("Using workspace %s", config)
             return load_workspace(config)
 
-    child = _only_child_workspace(here)
-    if child is not None:
+    below = _projects_below(here)
+    if len(below) == 1:
         # `budgie init` puts the project in a subfolder, so the very next thing
         # a user does is run a command one level above it. Walking up alone
         # would send them back to the bundled samples, which look like real
         # output and hide the mistake.
-        logger.info("Using the project in %s/", child.parent.name)
-        return load_workspace(child)
+        only = below[0]
+        logger.info("Using the project in %s/", only.root.name)
+        return only.load()
     return None
 
 
-def _only_child_workspace(directory: Path) -> Path | None:
-    """The config of the single project directly below ``directory``.
+def available_projects(start: str | Path | None = None) -> list[Project]:
+    """The projects a front-end can offer, for listing or browsing.
 
-    Exactly one, or nothing: with two candidates there is no right answer and
-    guessing would silently pick a budget the user didn't mean.
+    This is what makes the ambiguous case actionable: :func:`find_workspace`
+    declines to guess between two budgets, and the caller shows these instead of
+    a bare "no project found".
+
+    Looks below ``start``, and -- when ``start`` is *itself* a project -- among
+    its siblings, since standing in ``budget/fy26`` the thing worth listing is
+    the other budgets, not the nothing underneath it.
+
+    Deliberately not a walk to the filesystem root. Somewhere far above you
+    there may well be an unrelated ``budgie.yaml``, and offering a stranger's
+    budget as a choice here is worse than offering none.
+    """
+    here = Path(start or Path.cwd()).resolve()
+    found = _projects_below(here)
+    if found:
+        return found
+    if _is_config(here / CONFIG_NAME):
+        return _projects_below(_container_of(here))
+    return []
+
+
+def _container_of(project_root: Path) -> Path:
+    """The directory whose children are ``project_root``'s siblings."""
+    parent = project_root.parent
+    # Inside the container, siblings are one level further up: `budget/fy26`'s
+    # peers are found by listing the directory that holds `budget/`.
+    return parent.parent if parent.name == PROJECTS_DIR else parent
+
+
+def _projects_below(directory: Path) -> list[Project]:
+    """Projects directly below ``directory``, and inside its ``budget/``.
+
+    Sorted by name so a listing is stable, and de-duplicated by root so a
+    project reachable both ways is only offered once.
+    """
+    found: dict[Path, Project] = {}
+    for parent in (directory, directory / PROJECTS_DIR):
+        for child in _child_dirs(parent):
+            config = child / CONFIG_NAME
+            if _is_config(config):
+                found[child] = Project(name=child.name, config_path=config)
+    return sorted(found.values(), key=lambda p: p.name)
+
+
+def _child_dirs(directory: Path) -> list[Path]:
+    """Visible subdirectories of ``directory``; empty if it isn't one."""
+    try:
+        return sorted(
+            d for d in directory.iterdir() if d.is_dir() and not d.name.startswith(".")
+        )
+    except OSError:
+        return []
+
+
+def _is_config(path: Path) -> bool:
+    """Whether ``path`` is a readable config file.
+
+    ``Path.is_file()`` propagates PermissionError rather than answering False,
+    and discovery walks all the way to the filesystem root -- one unreadable
+    directory anywhere above you (a restricted /tmp, a network mount) would
+    otherwise crash every command instead of simply not finding a project.
     """
     try:
-        children = sorted(directory.iterdir())
+        return path.is_file()
     except OSError:
-        return None
-    configs = [
-        d / CONFIG_NAME
-        for d in children
-        if d.is_dir() and not d.name.startswith(".") and (d / CONFIG_NAME).is_file()
-    ]
-    return configs[0] if len(configs) == 1 else None
+        return False
 
 
 def forget_workspaces() -> None:

@@ -50,17 +50,26 @@ from budgie.core.forecast import forecast as run_forecast
 from budgie.core.loader import load_people
 from budgie.core.montecarlo import simulate
 from budgie.core.plan import load_plan
-from budgie.core.workspace import INPUTS, Workspace, find_workspace
+from budgie.core.workspace import (
+    INPUTS,
+    PROJECTS_DIR,
+    Workspace,
+    available_projects,
+    find_workspace,
+    forget_workspaces,
+)
 
 _BLOCKS = " ▁▂▃▄▅▆▇█"
 
 # Tabs in workflow order. The number is shown in the label so the sequence is
-# legible at a glance and the 1-4 keys have something obvious to map onto.
+# legible at a glance and the 1-5 keys have something obvious to map onto.
+# Projects comes first because it decides what every other tab is showing.
 _TABS: tuple[tuple[str, str], ...] = (
-    ("tab_inputs", "1 Inputs"),
-    ("tab_plan", "2 Plan"),
-    ("tab_forecast", "3 Forecast"),
-    ("tab_assumptions", "4 Assumptions"),
+    ("tab_projects", "1 Projects"),
+    ("tab_inputs", "2 Inputs"),
+    ("tab_plan", "3 Plan"),
+    ("tab_forecast", "4 Forecast"),
+    ("tab_assumptions", "5 Assumptions"),
 )
 
 # Inputs-table geometry. A DataTable clips its cells rather than wrapping them,
@@ -263,10 +272,12 @@ class BudgieTUI(App):
     BINDINGS: ClassVar[list[BindingType]] = [
         ("r", "recalculate", "Recalculate"),
         ("e", "edit_selected", "Edit input"),
-        ("1", "show_tab('tab_inputs')", "Inputs"),
-        ("2", "show_tab('tab_plan')", "Plan"),
-        ("3", "show_tab('tab_forecast')", "Forecast"),
-        ("4", "show_tab('tab_assumptions')", "Assumptions"),
+        ("d", "delete_project", "Delete project"),
+        ("1", "show_tab('tab_projects')", "Projects"),
+        ("2", "show_tab('tab_inputs')", "Inputs"),
+        ("3", "show_tab('tab_plan')", "Plan"),
+        ("4", "show_tab('tab_forecast')", "Forecast"),
+        ("5", "show_tab('tab_assumptions')", "Assumptions"),
         ("q", "quit", "Quit"),
     ]
 
@@ -276,6 +287,10 @@ class BudgieTUI(App):
         # An explicit path still wins, exactly like on the command line.
         self._people_override = str(csv_path) if csv_path else None
         self._load_error: str | None = None
+        # Which project the next `d` would actually delete. Set by the first
+        # press and cleared by anything else, so deletion always takes two
+        # deliberate keystrokes aimed at the same row.
+        self._delete_armed: str | None = None
 
     # -- paths -------------------------------------------------------------
 
@@ -297,6 +312,11 @@ class BudgieTUI(App):
     def project_name(self) -> str:
         return self.workspace.root.name if self.workspace else "no project"
 
+    def projects(self) -> list:
+        """The budgets on offer: siblings of the current one, else whatever is
+        below the working directory."""
+        return available_projects(self.workspace.root if self.workspace else Path.cwd())
+
     # -- layout ------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
@@ -304,14 +324,26 @@ class BudgieTUI(App):
         yield Static(id="contextbar")
         with TabbedContent(initial="tab_forecast", id="tabs"):
             with TabPane(_TABS[0][1], id=_TABS[0][0]):
-                yield from self._compose_inputs()
+                yield from self._compose_projects()
             with TabPane(_TABS[1][1], id=_TABS[1][0]):
-                yield from self._compose_plan()
+                yield from self._compose_inputs()
             with TabPane(_TABS[2][1], id=_TABS[2][0]):
-                yield from self._compose_forecast()
+                yield from self._compose_plan()
             with TabPane(_TABS[3][1], id=_TABS[3][0]):
+                yield from self._compose_forecast()
+            with TabPane(_TABS[4][1], id=_TABS[4][0]):
                 yield VerticalScroll(Static(id="assumptions_text"))
         yield Footer()
+
+    def _compose_projects(self) -> ComposeResult:
+        yield Static(
+            f"Budgets under [b]{PROJECTS_DIR}/[/b]. Select one and press "
+            "[b]enter[/b] to switch every other tab to it, or [b]d[/b] twice "
+            "to delete it.",
+            classes="hint",
+        )
+        yield DataTable(id="projects_table")
+        yield Static(id="projects_status", classes="status")
 
     def _compose_forecast(self) -> ComposeResult:
         controls = Horizontal(id="controls")
@@ -389,12 +421,20 @@ class BudgieTUI(App):
         inputs_table.cursor_type = "row"
         inputs_table.zebra_stripes = True
 
+        projects_table = self.query_one("#projects_table", DataTable)
+        projects_table.cursor_type = "row"
+        projects_table.zebra_stripes = True
+
         self.recalculate()
-        # Open on Forecast when there is one, on Inputs when there isn't:
-        # landing on a tab that can only show an error helps nobody, landing on
-        # the tab that fixes it does. `recalculate` has already tried the load,
-        # so this reads the outcome rather than parsing the file a second time.
-        if self._load_error is not None:
+        # Open on Forecast when there is one, otherwise on the tab that can fix
+        # what's wrong -- landing on a tab that can only show an error helps
+        # nobody. `recalculate` has already tried the load, so this reads the
+        # outcome rather than parsing the file a second time. No workspace but
+        # projects on disk is the ambiguous case the browser exists to settle,
+        # and it outranks a load error: there is nothing to load yet.
+        if self.workspace is None and self.projects():
+            self.action_show_tab("tab_projects")
+        elif self._load_error is not None:
             self.action_show_tab("tab_inputs")
 
     def _setting(self, key: str, default):
@@ -415,6 +455,11 @@ class BudgieTUI(App):
             self.add_plan_row()
         else:
             self.recalculate()
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        # Three tables share this event; only the project browser acts on it.
+        if event.data_table.id == "projects_table":
+            self.action_open_project()
 
     def action_recalculate(self) -> None:
         self.recalculate()
@@ -496,6 +541,106 @@ class BudgieTUI(App):
         self.query_one("#plan_status", Static).update(message)
         return message
 
+    def switch_project(self, name: str) -> str:
+        """Point the whole app at project ``name``.
+
+        Returns the status message it displayed, so the outcome is observable
+        without reaching into the widget.
+        """
+        for project in self.projects():
+            if project.name != name:
+                continue
+            self.workspace = project.load()
+            # A --people path given at launch was an instruction about the old
+            # project; picking a new one in the browser is the newer of the two,
+            # and leaving it set would make the switch look like it did nothing.
+            self._people_override = None
+            self._load_error = None
+            self.recalculate()
+            return self._projects_status(f"Switched to {name}")
+        return self._projects_status(f"No project called {name}")
+
+    def _projects_status(self, message: str) -> str:
+        self.query_one("#projects_status", Static).update(message)
+        return message
+
+    def selected_project(self) -> str | None:
+        """The name under the cursor in the projects table, if any."""
+        projects = self.projects()
+        row = self.query_one("#projects_table", DataTable).cursor_row
+        return projects[row].name if 0 <= row < len(projects) else None
+
+    def project_names(self) -> list[str]:
+        """The projects on offer, in listed order."""
+        return [p.name for p in self.projects()]
+
+    def project_marks(self) -> dict[str, str]:
+        """Name -> marker as the table is actually rendering it.
+
+        Read back off the table rather than recomputed, so a test sees what a
+        user would see.
+        """
+        table = self.query_one("#projects_table", DataTable)
+        rows = (table.get_row_at(i) for i in range(table.row_count))
+        return {str(row[1]): str(row[0]) for row in rows}
+
+    def action_open_project(self) -> str:
+        name = self.selected_project()
+        if name is None:
+            return self._projects_status("No project to open.")
+        return self.switch_project(name)
+
+    def action_delete_project(self) -> str:
+        """Delete the selected project -- on the second press, not the first.
+
+        There is no undo and no modal in this app, so the arming step *is* the
+        confirmation: the first `d` names what would go, the second does it.
+        Aiming at a different row in between disarms, so a stale confirmation
+        can't land on whatever happens to be under the cursor.
+        """
+        from budgie.core.scaffold import delete_project
+
+        self.action_show_tab("tab_projects")
+        name = self.selected_project()
+        if name is None:
+            return self._projects_status("No project selected.")
+
+        if self._delete_armed != name:
+            self._delete_armed = name
+            return self._projects_status(
+                f"Delete {name} and everything in it? Press d again to confirm, "
+                f"any other key to cancel. This cannot be undone."
+            )
+
+        target = next((p for p in self.projects() if p.name == name), None)
+        self._delete_armed = None
+        if target is None:
+            return self._projects_status(f"No project called {name}.")
+        try:
+            removed = delete_project(target.root)
+        except (OSError, ValueError) as exc:
+            return self._projects_status(str(exc))
+
+        # The deleted project may be the one being displayed; drop it and let
+        # what's left be re-discovered rather than showing numbers from a
+        # directory that no longer exists.
+        if self.workspace is not None and self.workspace.root == target.root:
+            self.workspace = None
+            self._people_override = None
+            remaining = self.projects()
+            if len(remaining) == 1:
+                self.workspace = remaining[0].load()
+        forget_workspaces()
+        self.recalculate()
+        return self._projects_status(f"Deleted {name} ({len(removed)} file(s)).")
+
+    def on_key(self, event) -> None:
+        # Any key that isn't the confirming `d` cancels a pending delete, so an
+        # armed confirmation never outlives the moment it was offered.
+        if self._delete_armed is not None and event.key != "d":
+            self._delete_armed = None
+            self._projects_status("Cancelled.")
+
     def recalculate(self) -> None:
         year = self._read_int("year", 2026)
         pto = self._read_float("pto", 0.0)
@@ -504,10 +649,37 @@ class BudgieTUI(App):
 
         ph = productive_hours(year, pto_days=pto)
         self._refresh_chrome(year, pto)
+        self._refresh_projects()
         self._refresh_forecast(ph, iterations, seed)
         self._refresh_plan(year, pto)
         self._refresh_inputs()
         self._refresh_assumptions(ph, year)
+
+    def _refresh_projects(self) -> None:
+        """List the projects, marking the one in play."""
+        table = self.query_one("#projects_table", DataTable)
+        cursor = table.cursor_row
+        table.clear(columns=True)
+        table.add_columns("", "Project", "Inputs", "Location")
+
+        current = self.workspace.root if self.workspace else None
+        projects = self.projects()
+        for project in projects:
+            present = sum(1 for i in project.load().inputs() if i.exists)
+            table.add_row(
+                "→" if project.root == current else "",
+                project.name,
+                f"{present}/{len(INPUTS)}",
+                shorten_path(project.root, max(self.size.width - 40, 20)),
+            )
+        if projects:
+            # Keep the cursor where the user left it across a recalculate.
+            table.move_cursor(row=min(cursor, len(projects) - 1))
+        else:
+            self._projects_status(
+                f"No projects found. `budgie init NAME` writes one "
+                f"under {PROJECTS_DIR}/."
+            )
 
     # -- rendering ---------------------------------------------------------
 

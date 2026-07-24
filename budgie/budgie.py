@@ -38,6 +38,49 @@ def _sample(name: str) -> str:
     return str(THIS_DIR / "tests" / name)
 
 
+# Which project `--project` named, if any. Process-global because every command
+# resolves its inputs through the helpers below rather than passing a workspace
+# around, and the flag has to reach all of them. Set once at parse time by
+# `_project_option`, so nothing else can quietly change which budget is in play.
+_SELECTED_PROJECT: str | None = None
+
+
+def _remember_project(ctx, param, value):
+    """Record ``--project`` at parse time (the option exposes no value)."""
+    global _SELECTED_PROJECT
+    if value:
+        _SELECTED_PROJECT = value
+    return value
+
+
+def _forget_project() -> None:
+    """Clear the selection at the start of each invocation.
+
+    A one-shot CLI process would never notice, but anything that calls `cli`
+    more than once in a process -- the test suite, an embedding front-end --
+    would otherwise carry one command's `--project` into the next and quietly
+    read the wrong budget.
+    """
+    global _SELECTED_PROJECT
+    _SELECTED_PROJECT = None
+
+
+_project_option = click.option(
+    "--project",
+    default=None,
+    callback=_remember_project,
+    expose_value=False,
+    help="Which project under budget/ to use, when there is more than one.",
+)
+
+
+def _workspace():
+    """The workspace this invocation should use, honouring ``--project``."""
+    from budgie.core.workspace import find_workspace
+
+    return find_workspace(project=_SELECTED_PROJECT)
+
+
 def _input(key: str, override, sample: str):
     """Resolve an input path: explicit option > workspace file > bundled sample.
 
@@ -45,11 +88,9 @@ def _input(key: str, override, sample: str):
     distinguishable from "the user asked for the default" -- that's what lets a
     workspace supply the default without the option always overriding it.
     """
-    from budgie.core.workspace import find_workspace
-
     if override:
         return str(override)
-    workspace = find_workspace()
+    workspace = _workspace()
     if workspace:
         resolved = workspace.resolve(key)
         if resolved:
@@ -63,10 +104,32 @@ def _workspace_input(key: str):
     Used for genuinely optional inputs (actuals, costs) where falling back to a
     bundled sample would silently invent data.
     """
-    from budgie.core.workspace import find_workspace
-
-    workspace = find_workspace()
+    workspace = _workspace()
     return workspace.resolve(key) if workspace else None
+
+
+def _no_project_message() -> str:
+    """What to say when no workspace resolved.
+
+    Three different problems wear the same "no workspace" result, and they want
+    different advice: a name that matched nothing, a choice nobody made, and no
+    projects at all. Telling someone who has two budgets to run `budgie init` is
+    just wrong, and so is saying it to someone who merely typo'd a name.
+    """
+    from budgie.core.workspace import available_projects
+
+    projects = available_projects()
+    names = "\n".join(f"  [bold]{p.name}[/bold]" for p in projects)
+
+    if _SELECTED_PROJECT:
+        missing = f"No project called [bold]{_SELECTED_PROJECT}[/bold]."
+        return f"{missing}\n\nThere is:\n{names}" if projects else missing
+    if len(projects) > 1:
+        return (
+            f"Several projects to choose from:\n{names}\n\n"
+            "Pick one with [bold]--project NAME[/bold], or cd into it."
+        )
+    return "Run [bold]budgie init[/bold] to start a project with your own numbers."
 
 
 def _budget_arg(override):
@@ -81,11 +144,9 @@ def _budget_arg(override):
 
 def _setting(key: str, override, default):
     """Resolve a scalar setting: explicit option > workspace > built-in default."""
-    from budgie.core.workspace import find_workspace
-
     if override is not None:
         return override
-    workspace = find_workspace()
+    workspace = _workspace()
     if workspace:
         return workspace.setting(key, default)
     return default
@@ -103,6 +164,9 @@ def cli(ctx, verbose, show_help):
     """Budgie -- the ultimate budget companion."""
     from budgie.singletons import set_verbose
 
+    # Runs before the subcommand's own options are parsed, so this clears the
+    # previous invocation's selection without discarding this one's.
+    _forget_project()
     set_verbose(verbose)
 
     # Click's own group help is a flat alphabetical list, which tells a new user
@@ -168,6 +232,7 @@ def cli(ctx, verbose, show_help):
     default=None,
     help="Budget to signal against: a number, or a CSV of dated revisions.",
 )
+@_project_option
 def forecast(
     people_csv, year, pto, iterations, seed, plots, out_dir, costs_csv, budget_arg
 ):
@@ -333,6 +398,7 @@ def _print_montecarlo_summary(sim, pct):
     help="CSV of team members (name, hourly_cost, and util_*/hours_* columns) "
     "[default: the project's, else bundled sample].",
 )
+@_project_option
 def tui(people_csv):
     """Launch the interactive TUI to explore forecasts live."""
     from budgie.tui import run
@@ -357,6 +423,7 @@ def tui(people_csv):
     type=float,
     help="PTO/sick days subtracted from the ceiling [default: 0].",
 )
+@_project_option
 def hours(alloc_csv, year, pto):
     """Show each person's allocated / spent / remaining hours from their FTE."""
     from budgie.core.allocation import load_allocations
@@ -428,6 +495,7 @@ def hours(alloc_csv, year, pto):
     type=click.Path(exists=True),
     help="CSV (name,week,hours_to_date) of cumulative hours through an ISO week.",
 )
+@_project_option
 def emails(
     alloc_csv, year, pto, out_dir, preview, as_html, as_of, actuals_csv, weekly_csv
 ):
@@ -570,6 +638,7 @@ def _print_hours_table(allocs):
     help="YAML config describing a budget and named scenarios to compare "
     "[default: the project's, else bundled sample].",
 )
+@_project_option
 def scenario(config_path):
     """Compare what-if scenarios side by side, with a stoplight vs the budget."""
     from budgie.core.scenario import run_scenarios
@@ -655,6 +724,7 @@ def _print_scenario_table(results, budget):
 @click.option(
     "--out-dir", default=".", show_default=True, help="Directory for figures."
 )
+@_project_option
 def monthly(
     people_csv, year, pto, iterations, seed, budget_arg, costs_csv, plots, out_dir
 ):
@@ -740,8 +810,32 @@ def _print_monthly_table(mf, sim, budget):
     console.print(table)
 
 
+def _interactive() -> bool:
+    """Whether there's a terminal to prompt at."""
+    import sys
+
+    try:
+        return sys.stdin.isatty()
+    except (AttributeError, ValueError):
+        # A closed or substituted stdin isn't a terminal either.
+        return False
+
+
+def _ask_project_name(default: str) -> str:
+    """Prompt for the project name, falling back to ``default``.
+
+    Only asks when there's a terminal to ask: piped into a script or run from
+    CI, an interactive prompt would abort on EOF and turn `budgie init` into
+    something you can't automate.
+    """
+    if not _interactive():
+        return default
+    name = click.prompt("Project name", default=default, show_default=True)
+    return name.strip() or default
+
+
 @click.command()
-@click.argument("directory", required=False, type=click.Path(file_okay=False))
+@click.argument("name", required=False)
 @click.option("--year", default=2026, show_default=True, help="Year to scaffold for.")
 @click.option(
     "--force",
@@ -752,25 +846,31 @@ def _print_monthly_table(mf, sim, budget):
 @click.option(
     "--here",
     is_flag=True,
-    help="Scaffold into the current directory instead of a subfolder.",
+    help="Scaffold into the current directory instead of under budget/.",
 )
-def init(directory, year, force, here):
+def init(name, year, force, here):
     """Create a Budgie project: a folder with budgie.yaml and starter inputs.
 
-    Ten files go in a subfolder (default: budget/) rather than the directory you
-    are standing in -- a project is a thing you keep, not clutter alongside
-    whatever else lives here. Pass a name to choose it, or --here if you really
-    do want them loose in the current directory.
+    Projects live together under budget/, so NAME picks which one -- budget/fy27
+    for `budgie init fy27`. Asked for if you don't pass it. Keeping them in one
+    place is what lets you hold next year's budget and this one at the same
+    time, and what the TUI browses. Use --here to put the files loose in the
+    current directory instead.
     """
-    from budgie.core.scaffold import DEFAULT_PROJECT_DIR, init_workspace
+    from budgie.core.scaffold import DEFAULT_PROJECT_NAME, PROJECTS_DIR, init_workspace
     from budgie.core.workspace import CONFIG_NAME, forget_workspaces
     from budgie.singletons import console
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
-    if here and directory:
-        raise click.UsageError("give a directory or --here, not both")
-    target = "." if here else (directory or DEFAULT_PROJECT_DIR)
+    if here and name:
+        raise click.UsageError("give a name or --here, not both")
+
+    if here:
+        target = Path(".")
+    else:
+        chosen = name or _ask_project_name(DEFAULT_PROJECT_NAME)
+        target = Path(PROJECTS_DIR) / chosen
 
     written, skipped = init_workspace(target, year=year, overwrite=force)
     forget_workspaces()
@@ -791,6 +891,79 @@ def init(directory, year, force, here):
         f"\nEdit the CSVs, then run [bold]budgie status[/bold] to check them.\n"
         f"Settings like year, PTO and budget live in [bold]{CONFIG_NAME}[/bold]."
     )
+
+
+@click.command("delete")
+@click.argument("name", required=False)
+@click.option(
+    "--yes",
+    is_flag=True,
+    help="Skip the confirmation prompt (for scripts -- there is no undo).",
+)
+def delete_project_cmd(name, yes):
+    """Delete a project and everything in it. There is no undo.
+
+    NAME is a project under budget/. Without it, the one project here is used --
+    and if there are several, they're listed rather than guessed between, since
+    deleting the wrong budget is not a recoverable mistake.
+    """
+    from budgie.core.scaffold import delete_project
+    from budgie.core.workspace import available_projects, forget_workspaces
+    from budgie.singletons import console
+    from budgie.utils.utils import display_startup_message
+
+    display_startup_message()
+    projects = available_projects()
+    if not projects:
+        console.print("[yellow]No projects here to delete.[/yellow]")
+        raise SystemExit(1)
+
+    if name:
+        chosen = next((p for p in projects if p.name == name), None)
+        if chosen is None:
+            listed = "\n".join(f"  [bold]{p.name}[/bold]" for p in projects)
+            console.print(
+                f"[red]No project called {name}.[/red]\n\nThere is:\n{listed}"
+            )
+            raise SystemExit(1)
+    elif len(projects) > 1:
+        listed = "\n".join(f"  [bold]{p.name}[/bold]" for p in projects)
+        console.print(
+            f"Several projects here -- name the one to delete:\n{listed}\n\n"
+            "[dim]budgie delete NAME[/dim]"
+        )
+        raise SystemExit(1)
+    else:
+        chosen = projects[0]
+
+    files = sum(1 for p in chosen.root.rglob("*") if p.is_file())
+    console.print(
+        f"[bold]{chosen.name}[/bold] — {chosen.root}\n"
+        f"{files} file(s), including your numbers. [red]This cannot be undone.[/red]"
+    )
+    # An explicit --yes is the scriptable path; otherwise make them type it.
+    # `click.confirm` on a y/N default is too easy to hit by reflex for
+    # something with no undo, so the project's own name is the confirmation.
+    if not yes:
+        if not _interactive():
+            console.print(
+                "[yellow]Not a terminal -- pass --yes to delete without asking.[/yellow]"
+            )
+            raise SystemExit(1)
+        typed = click.prompt(
+            f"Type {chosen.name!r} to confirm", default="", show_default=False
+        )
+        if typed.strip() != chosen.name:
+            console.print("[yellow]Left alone.[/yellow]")
+            raise SystemExit(1)
+
+    try:
+        removed = delete_project(chosen.root)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+    forget_workspaces()
+    console.print(f"[green]Deleted[/green] {chosen.name} ({len(removed)} file(s)).")
 
 
 @click.command()
@@ -825,21 +998,20 @@ def guide(topic):
 
 
 @click.command()
+@_project_option
 def status():
     """Show the current project: which inputs exist, and what feeds what."""
-    from budgie.core.workspace import find_workspace
     from budgie.singletons import console
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
-    workspace = find_workspace()
+    workspace = _workspace()
     if workspace is None:
         console.print(
             "[yellow]No budgie.yaml found[/yellow] above "
             f"{Path.cwd()}.\n"
             "Commands are running against the bundled sample data in "
-            f"{THIS_DIR / 'tests'}.\n\n"
-            "Run [bold]budgie init[/bold] to start a project with your own numbers."
+            f"{THIS_DIR / 'tests'}.\n\n" + _no_project_message()
         )
         return
 
@@ -896,6 +1068,7 @@ def _print_status_table(workspace):
     type=float,
     help="PTO/sick days, to show its effect on the ceiling [default: 0].",
 )
+@_project_option
 def assumptions(year, pto):
     """Print every modelling assumption, its current value, and where it lives.
 
@@ -1046,6 +1219,7 @@ def _print_assumptions_table(year, rows):
 @click.option(
     "--pto", default=None, type=float, help="PTO/sick days per person [default: 0]."
 )
+@_project_option
 def plan(plan_csv, year, pto):
     """Show allocated hours from a date-resolution allocation plan.
 
@@ -1090,6 +1264,7 @@ def _print_plan_table(allocation_plan, year, pto):
 
 
 cli.add_command(init)
+cli.add_command(delete_project_cmd)
 cli.add_command(guide)
 cli.add_command(status)
 cli.add_command(forecast)

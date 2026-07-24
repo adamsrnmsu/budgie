@@ -65,16 +65,58 @@ pip install -e .
 
 ```bash
 budgie init my-budget
-cd my-budget
+cd budget/my-budget
 ```
 
-That creates a `my-budget/` folder holding a `budgie.yaml` and a starter CSV for every
-input, already filled with loadable example rows — `budgie forecast` works the moment
-`init` finishes. Edit the CSVs with your own numbers and re-run.
+That creates a `budget/my-budget/` folder holding a `budgie.yaml` and a starter CSV for
+every input, already filled with loadable example rows — `budgie forecast` works the
+moment `init` finishes. Edit the CSVs with your own numbers and re-run.
 
-The files go in their own folder rather than loose in the directory you're standing in.
-Pass a name to choose it (default `budget/`), or `--here` if you really do want them in
-the current directory.
+Leave the name off and `budgie init` asks for one (it won't prompt when there's no
+terminal, so scripts and CI still work). Use `--here` if you really do want the files
+loose in the current directory.
+
+**Projects live together under `budget/`.** A budget is rarely singular — there's next
+year's, and the one for the other team — so each `init` adds another folder beside the
+last:
+
+```
+my-work/
+  budget/
+    fy26/
+      budgie.yaml
+      people.csv
+    fy27/
+      budgie.yaml
+      people.csv
+```
+
+With one project there, every command just finds it. With several there's no right answer
+to guess at, so Budgie lists them instead of picking:
+
+```console
+$ budgie status
+Several projects to choose from:
+  fy26
+  fy27
+
+Pick one with --project NAME, or cd into it.
+```
+
+`--project fy27` works on any command, from anywhere — including from inside `fy26`, so
+you can compare next year's numbers without changing directory.
+
+To remove one:
+
+```bash
+budgie delete fy26        # asks you to type "fy26" back before it goes
+budgie delete fy26 --yes  # for scripts
+```
+
+There is no undo, so `delete` refuses everything it isn't sure about: a name that matches
+no project, an ambiguous "which one did you mean", a directory with no `budgie.yaml` in it,
+or the directory you're currently standing in. A plain `y/N` confirmation is too easy to
+hit by reflex for something irreversible, so it asks for the project's name instead.
 
 Not sure what to do next? **`budgie`** on its own shows the commands grouped by when
 you'd reach for them, and **`budgie guide`** walks through building a budget in five
@@ -258,22 +300,27 @@ than a full-time week, the draft says so outright.
 budgie tui
 ```
 
-Four tabs over your project, left to right in the order you'd build a budget — data first,
+Five tabs over your project, left to right in the order you'd build a budget — data first,
 conclusion last:
 
-1. **Inputs** — every project file, whether it exists, and what feeds what. Select one and
+1. **Projects** — every budget under `budget/`, how many of its inputs exist, and which one
+   is currently loaded. Select one and press `enter` to point every other tab at it, without
+   quitting and changing directory. `d` deletes the selected project — twice, deliberately:
+   the first press names what would go, the second does it, and any other key cancels.
+2. **Inputs** — every project file, whether it exists, and what feeds what. Select one and
    press `e` to open it in `$EDITOR`, then `r` to recalculate.
-2. **Plan** — the allocation plan, with a form to append a dated change. Re-planning is an
+3. **Plan** — the allocation plan, with a form to append a dated change. Re-planning is an
    appended row, never an edit, so the history stays intact.
-3. **Forecast** — edit year, PTO, iterations and seed; the table and Monte Carlo histogram
+4. **Forecast** — edit year, PTO, iterations and seed; the table and Monte Carlo histogram
    recompute live.
-4. **Assumptions** — the same model assumptions `budgie assumptions` prints.
+5. **Assumptions** — the same model assumptions `budgie assumptions` prints.
 
-Press `1`–`4` to jump to a tab, `r` to recalculate, `e` to edit the selected input, `q` to
-quit.
+Press `1`–`5` to jump to a tab, `r` to recalculate, `e` to edit the selected input, `d` to
+delete the selected project, `q` to quit.
 
-It opens on **Forecast** when it can compute one, and on **Inputs** when it can't — if a file
-won't load, the tab that fixes it is more useful than the one that can only report the error.
+It opens on **Forecast** when it can compute one, and otherwise on the tab that can fix what's
+wrong: **Projects** when there are several budgets and nothing to auto-select, **Inputs** when
+a file won't load. Landing on a tab that can only report an error helps nobody.
 
 ## Input files
 

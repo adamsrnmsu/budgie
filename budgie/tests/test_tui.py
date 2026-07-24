@@ -6,7 +6,7 @@ import pytest
 
 from budgie.core.plan import load_plan
 from budgie.core.scaffold import init_workspace
-from budgie.core.workspace import forget_workspaces
+from budgie.core.workspace import PROJECTS_DIR, forget_workspaces
 from budgie.tui import BudgieTUI, append_plan_row, open_in_editor, shorten_path
 
 
@@ -187,10 +187,11 @@ async def test_number_keys_switch_tabs(tmp_path, monkeypatch):
     async with app.run_test() as pilot:
         await pilot.pause()
         for key, expected in (
-            ("1", "tab_inputs"),
-            ("2", "tab_plan"),
-            ("3", "tab_forecast"),
-            ("4", "tab_assumptions"),
+            ("1", "tab_projects"),
+            ("2", "tab_inputs"),
+            ("3", "tab_plan"),
+            ("4", "tab_forecast"),
+            ("5", "tab_assumptions"),
         ):
             await pilot.press(key)
             await pilot.pause()
@@ -231,3 +232,179 @@ def test_shorten_path_keeps_the_end_that_identifies_the_file():
     assert short.startswith("…")
     # A path that already fits is returned untouched.
     assert shorten_path("people.csv", width=24) == "people.csv"
+
+
+# -- the project browser ------------------------------------------------
+
+
+def _two_projects(tmp_path):
+    """A container with two projects in it, as `budgie init` would leave them."""
+    container = tmp_path / PROJECTS_DIR
+    init_workspace(container / "fy26", year=2026)
+    init_workspace(container / "fy27", year=2027)
+    forget_workspaces()
+    return container
+
+
+async def test_browser_lists_every_project_under_budget(tmp_path, monkeypatch):
+    _two_projects(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    async with BudgieTUI().run_test() as pilot:
+        await pilot.pause()
+        names = pilot.app.project_names()
+
+    assert names == ["fy26", "fy27"]
+
+
+async def test_browser_opens_first_when_the_project_is_ambiguous(tmp_path, monkeypatch):
+    # Two projects: nothing to auto-select, so land on the tab that settles it
+    # rather than on a forecast built from bundled sample data.
+    _two_projects(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    async with BudgieTUI().run_test() as pilot:
+        await pilot.pause()
+        assert pilot.app.workspace is None
+        assert pilot.app.query_one("#tabs").active == "tab_projects"
+
+
+async def test_switching_project_repoints_the_whole_app(tmp_path, monkeypatch):
+    container = _two_projects(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    async with BudgieTUI().run_test() as pilot:
+        await pilot.pause()
+        message = pilot.app.switch_project("fy27")
+        await pilot.pause()
+
+        assert "fy27" in message
+        assert pilot.app.workspace is not None
+        assert pilot.app.workspace.root == (container / "fy27").resolve()
+        # Every other tab follows: the header names it, and settings come from
+        # the new budgie.yaml rather than the old one.
+        assert "fy27" in _text(pilot.app, "#titlebar")
+        assert pilot.app.workspace.setting("year", None) == 2027
+
+
+async def test_switching_to_an_unknown_project_says_so(tmp_path, monkeypatch):
+    _two_projects(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    async with BudgieTUI().run_test() as pilot:
+        await pilot.pause()
+        message = pilot.app.switch_project("fy99")
+
+        assert "No project called fy99" in message
+        assert pilot.app.workspace is None
+
+
+async def test_browser_marks_the_project_in_play(tmp_path, monkeypatch):
+    _two_projects(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    async with BudgieTUI().run_test() as pilot:
+        await pilot.pause()
+        pilot.app.switch_project("fy26")
+        await pilot.pause()
+        marks = pilot.app.project_marks()
+
+    # Exactly one arrow, against the project actually loaded.
+    assert marks == {"fy26": "→", "fy27": ""}
+
+
+async def test_browser_finds_siblings_from_inside_a_project(tmp_path, monkeypatch):
+    # Started from within budget/fy26, the other budgets are still reachable --
+    # otherwise you would have to quit and cd to look at next year's.
+    container = _two_projects(tmp_path)
+    monkeypatch.chdir(container / "fy26")
+    forget_workspaces()
+
+    async with BudgieTUI().run_test() as pilot:
+        await pilot.pause()
+        assert pilot.app.workspace.root == (container / "fy26").resolve()
+        assert pilot.app.project_names() == ["fy26", "fy27"]
+
+
+async def test_switching_drops_an_explicit_people_override(tmp_path, monkeypatch):
+    # --people named a file for the project you launched against; choosing a new
+    # project is the newer instruction, and keeping the override would make the
+    # switch look like it did nothing.
+    container = _two_projects(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    override = tmp_path / "elsewhere.csv"
+    override.write_text(
+        "name,hourly_cost,hours_low,hours_mode,hours_high\nZed,100,1,2,3\n"
+    )
+
+    async with BudgieTUI(csv_path=override).run_test() as pilot:
+        await pilot.pause()
+        assert pilot.app.people_path == str(override)
+
+        pilot.app.switch_project("fy27")
+        await pilot.pause()
+
+        assert pilot.app.people_path == str(container / "fy27" / "people.csv")
+
+
+# -- deleting a project -------------------------------------------------
+
+
+async def test_delete_needs_two_presses(tmp_path, monkeypatch):
+    container = _two_projects(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    async with BudgieTUI().run_test() as pilot:
+        await pilot.pause()
+        first = pilot.app.action_delete_project()
+        await pilot.pause()
+
+        # Armed, not done: the files are still there.
+        assert "Press d again" in first
+        assert (container / "fy26").is_dir()
+
+        second = pilot.app.action_delete_project()
+        await pilot.pause()
+
+        assert "Deleted fy26" in second
+        assert not (container / "fy26").exists()
+        assert (container / "fy27").is_dir()
+
+
+async def test_another_key_cancels_a_pending_delete(tmp_path, monkeypatch):
+    container = _two_projects(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    async with BudgieTUI().run_test() as pilot:
+        await pilot.pause()
+        pilot.app.action_delete_project()
+        await pilot.press("r")  # anything but d
+        await pilot.pause()
+
+        # Disarmed, so the next d only arms again rather than deleting.
+        message = pilot.app.action_delete_project()
+        assert "Press d again" in message
+        assert (container / "fy26").is_dir()
+
+
+async def test_deleting_the_open_project_falls_back_to_what_is_left(
+    tmp_path, monkeypatch
+):
+    container = _two_projects(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    async with BudgieTUI().run_test() as pilot:
+        await pilot.pause()
+        pilot.app.switch_project("fy26")
+        await pilot.pause()
+        assert pilot.app.workspace.root == (container / "fy26").resolve()
+
+        pilot.app.action_delete_project()
+        pilot.app.action_delete_project()
+        await pilot.pause()
+
+        # The open project went; the single survivor is picked up rather than
+        # leaving the app displaying a directory that no longer exists.
+        assert pilot.app.workspace is not None
+        assert pilot.app.workspace.root == (container / "fy27").resolve()
+        assert pilot.app.project_names() == ["fy27"]
