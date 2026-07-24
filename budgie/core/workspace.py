@@ -175,7 +175,34 @@ def find_workspace(start: str | Path | None = None) -> Workspace | None:
         if config.is_file():
             logger.debug("Using workspace %s", config)
             return load_workspace(config)
+
+    child = _only_child_workspace(here)
+    if child is not None:
+        # `budgie init` puts the project in a subfolder, so the very next thing
+        # a user does is run a command one level above it. Walking up alone
+        # would send them back to the bundled samples, which look like real
+        # output and hide the mistake.
+        logger.info("Using the project in %s/", child.parent.name)
+        return load_workspace(child)
     return None
+
+
+def _only_child_workspace(directory: Path) -> Path | None:
+    """The config of the single project directly below ``directory``.
+
+    Exactly one, or nothing: with two candidates there is no right answer and
+    guessing would silently pick a budget the user didn't mean.
+    """
+    try:
+        children = sorted(directory.iterdir())
+    except OSError:
+        return None
+    configs = [
+        d / CONFIG_NAME
+        for d in children
+        if d.is_dir() and not d.name.startswith(".") and (d / CONFIG_NAME).is_file()
+    ]
+    return configs[0] if len(configs) == 1 else None
 
 
 def forget_workspaces() -> None:

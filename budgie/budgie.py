@@ -91,15 +91,33 @@ def _setting(key: str, override, default):
     return default
 
 
-@click.group()
+@click.group(invoke_without_command=True, add_help_option=False)
 @click.option(
     "-v", "--verbose", is_flag=True, help="Show DEBUG logging from budgie's internals."
 )
-def cli(verbose):
+@click.option(
+    "-h", "--help", "show_help", is_flag=True, help="Show this message and exit."
+)
+@click.pass_context
+def cli(ctx, verbose, show_help):
     """Budgie -- the ultimate budget companion."""
     from budgie.singletons import set_verbose
 
     set_verbose(verbose)
+
+    # Click's own group help is a flat alphabetical list, which tells a new user
+    # nothing about what to run second. `budgie` and `budgie --help` both render
+    # the grouped overview instead; subcommands keep click's normal --help.
+    if show_help or ctx.invoked_subcommand is None:
+        from budgie.core.workspace import find_workspace
+        from budgie.guide_ui import render_overview
+
+        workspace = find_workspace()
+        render_overview(
+            in_project=workspace is not None,
+            project_root=workspace.root if workspace else None,
+        )
+        ctx.exit()
 
 
 @click.command()
@@ -723,7 +741,7 @@ def _print_monthly_table(mf, sim, budget):
 
 
 @click.command()
-@click.argument("directory", default=".", type=click.Path(file_okay=False))
+@click.argument("directory", required=False, type=click.Path(file_okay=False))
 @click.option("--year", default=2026, show_default=True, help="Year to scaffold for.")
 @click.option(
     "--force",
@@ -731,22 +749,33 @@ def _print_monthly_table(mf, sim, budget):
     help="Overwrite files that already exist (off by default -- init never "
     "silently replaces your numbers).",
 )
-def init(directory, year, force):
-    """Create a Budgie project here: a budgie.yaml and starter input files.
+@click.option(
+    "--here",
+    is_flag=True,
+    help="Scaffold into the current directory instead of a subfolder.",
+)
+def init(directory, year, force, here):
+    """Create a Budgie project: a folder with budgie.yaml and starter inputs.
 
-    Every command afterwards finds this project by walking up from wherever you
-    run it, so you can edit the CSVs in place and just re-run `budgie forecast`.
+    Ten files go in a subfolder (default: budget/) rather than the directory you
+    are standing in -- a project is a thing you keep, not clutter alongside
+    whatever else lives here. Pass a name to choose it, or --here if you really
+    do want them loose in the current directory.
     """
-    from budgie.core.scaffold import init_workspace
+    from budgie.core.scaffold import DEFAULT_PROJECT_DIR, init_workspace
     from budgie.core.workspace import CONFIG_NAME, forget_workspaces
     from budgie.singletons import console
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
-    written, skipped = init_workspace(directory, year=year, overwrite=force)
+    if here and directory:
+        raise click.UsageError("give a directory or --here, not both")
+    target = "." if here else (directory or DEFAULT_PROJECT_DIR)
+
+    written, skipped = init_workspace(target, year=year, overwrite=force)
     forget_workspaces()
 
-    root = Path(directory).resolve()
+    root = Path(target).resolve()
     console.print(f"[bold]Project at[/bold] {root}")
     for path in written:
         console.print(f"  [green]+[/green] {path.name}")
@@ -755,10 +784,44 @@ def init(directory, year, force):
     if skipped and not force:
         console.print("[dim]Pass --force to overwrite the existing files.[/dim]")
 
+    if not here:
+        console.print(f"\n[bold cyan]cd {target}[/bold cyan] to work in it.")
+
     console.print(
         f"\nEdit the CSVs, then run [bold]budgie status[/bold] to check them.\n"
         f"Settings like year, PTO and budget live in [bold]{CONFIG_NAME}[/bold]."
     )
+
+
+@click.command()
+@click.argument("topic", required=False)
+def guide(topic):
+    """Walk through building a budget, or explain one input file.
+
+    With no argument: the five phases, in order, from nothing to a forecast you
+    can act on. With a topic (people, allocations, plan, costs, budget, actuals,
+    weekly, scenarios): the columns for that file, an example, and the rules the
+    engine applies to it.
+    """
+    from budgie.core.workspace import find_workspace
+    from budgie.guide_ui import (
+        render_topic,
+        render_unknown_topic,
+        render_walkthrough,
+        topic_for,
+    )
+
+    workspace = find_workspace()
+    if topic is None:
+        render_walkthrough(in_project=workspace is not None)
+        return
+
+    found = topic_for(topic)
+    if found is None:
+        render_unknown_topic(topic)
+        raise SystemExit(1)
+    # Showing the real path turns "here's the format" into "here's your file".
+    render_topic(found, path=workspace.path_for(found.key) if workspace else None)
 
 
 @click.command()
@@ -1027,6 +1090,7 @@ def _print_plan_table(allocation_plan, year, pto):
 
 
 cli.add_command(init)
+cli.add_command(guide)
 cli.add_command(status)
 cli.add_command(forecast)
 cli.add_command(assumptions)

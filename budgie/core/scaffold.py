@@ -20,6 +20,11 @@ from budgie.core.workspace import CONFIG_NAME, INPUTS
 
 logger = logging.getLogger(__name__)
 
+# `budgie init` writes into a subfolder by default. Ten files loose in whatever
+# directory you happened to be standing in is clutter, and a project is a thing
+# you keep -- it deserves its own folder.
+DEFAULT_PROJECT_DIR = "budget"
+
 
 CONFIG_TEMPLATE = """\
 # Budgie project configuration.
@@ -146,8 +151,12 @@ engine cares about:
   of their PTO, not all of it. Set `pto_days` on a person's row to override the
   project default.
 
+Not sure what a column means? `budgie guide <file>` explains any one of them --
+its columns, an example, and what the engine does with it.
+
 ## Next
 
+    budgie guide         # the five phases, in order, from here to a forecast
     budgie status        # what's here and what's missing
     budgie forecast      # what will this cost, with confidence bounds
     budgie hours         # who has how many hours left

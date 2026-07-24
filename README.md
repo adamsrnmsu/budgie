@@ -54,17 +54,27 @@ pip install -e .
 ## Start a project
 
 ```bash
-mkdir my-budget && cd my-budget
-budgie init
+budgie init my-budget
+cd my-budget
 ```
 
-That writes a `budgie.yaml` and a starter CSV for every input, already filled with
-loadable example rows — `budgie forecast` works the moment `init` finishes. Edit the
-CSVs with your own numbers and re-run.
+That creates a `my-budget/` folder holding a `budgie.yaml` and a starter CSV for every
+input, already filled with loadable example rows — `budgie forecast` works the moment
+`init` finishes. Edit the CSVs with your own numbers and re-run.
 
-Every command afterwards finds the project by walking up from wherever you run it, so
-`budgie forecast` works from any subdirectory. `budgie.yaml` also pins the settings you'd
-otherwise retype:
+The files go in their own folder rather than loose in the directory you're standing in.
+Pass a name to choose it (default `budget/`), or `--here` if you really do want them in
+the current directory.
+
+Not sure what to do next? **`budgie`** on its own shows the commands grouped by when
+you'd reach for them, and **`budgie guide`** walks through building a budget in five
+steps. `budgie guide people` (or `allocations`, `plan`, `costs`, `budget`, `actuals`,
+`weekly`, `scenarios`) explains one input file: its columns, an example, and the rules
+the engine applies to it.
+
+Every command finds the project by walking up from wherever you run it — and if there's
+exactly one project directly below you, it uses that, so `budgie status` works from the
+folder you ran `init` in. `budgie.yaml` also pins the settings you'd otherwise retype:
 
 ```yaml
 year: 2026
@@ -81,6 +91,17 @@ inputs:
 An explicit option always wins over the project (`budgie forecast --people other.csv`),
 and with no project at all every command falls back to bundled sample data — so you can
 try everything before committing to anything.
+
+### `budgie guide` — how do I actually build one of these?
+
+```bash
+budgie guide              # the five phases, in order
+budgie guide allocations  # the columns and rules for one input file
+```
+
+Phase 1 creates the project, 2 describes the team, 3 checks the assumptions, 4 reads
+the forecast, 5 keeps it current. Each phase names the files to edit and the command
+that shows you the result.
 
 ### `budgie status` — what's in this project?
 
