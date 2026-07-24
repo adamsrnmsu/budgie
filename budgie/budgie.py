@@ -1017,7 +1017,8 @@ def _print_plan_table(allocation_plan, year, pto):
         hours = allocation_plan.allocated_hours(name, year, pto_days=pto)
         total += hours
         changes = ", ".join(
-            f"{e.effective_date:%b %-d}→{e.fte:g}" for e in allocation_plan._for(name)
+            f"{e.effective_date:%b %-d}→{e.fte:g}"
+            for e in allocation_plan.changes_for(name)
         )
         table.add_row(name, changes, f"{hours:,.0f}")
     table.add_section()

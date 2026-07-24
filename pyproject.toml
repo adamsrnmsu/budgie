@@ -10,6 +10,7 @@ dependencies = [
     "black",
     "click",
     "pytest>=6.2.4",
+    "pytest-asyncio",
     "isort",
     "ruff",
     "pyyaml",
@@ -25,6 +26,11 @@ budgie = "budgie.budgie:cli"
 [build-system]
 requires = ["setuptools>=42"]
 build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+# Textual's App.run_test() is an async context manager, so the TUI tests are
+# async. "auto" means they don't each need an @pytest.mark.asyncio decorator.
+asyncio_mode = "auto"
 
 
 

@@ -62,7 +62,8 @@ class AllocationPlan:
             seen.setdefault(e.name, None)
         return list(seen)
 
-    def _for(self, name: str) -> list[PlanEntry]:
+    def changes_for(self, name: str) -> list[PlanEntry]:
+        """This person's entries, earliest first -- their allocation history."""
         return sorted(
             (e for e in self.entries if e.name == name), key=lambda e: e.effective_date
         )
@@ -70,7 +71,7 @@ class AllocationPlan:
     def fte_on(self, name: str, day: date) -> float:
         """The person's FTE in effect on ``day`` (0 before their first entry)."""
         current = 0.0
-        for entry in self._for(name):
+        for entry in self.changes_for(name):
             if entry.effective_date <= day:
                 current = entry.fte
             else:
@@ -85,7 +86,7 @@ class AllocationPlan:
         onward -- not a full-month or full-year approximation.
         """
         per_day = hours_per_workday(year, pto_days=pto_days)
-        schedule = self._for(name)
+        schedule = self.changes_for(name)
         if not schedule:
             return 0.0
 
@@ -132,7 +133,7 @@ def load_plan(csv_path: str | Path) -> AllocationPlan:
         csv_path,
     )
     for name in plan.names:
-        changes = plan._for(name)
+        changes = plan.changes_for(name)
         logger.debug(
             "  %s: %s",
             name,
