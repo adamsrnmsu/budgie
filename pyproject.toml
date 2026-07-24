@@ -27,6 +27,15 @@ budgie = "budgie.budgie:cli"
 requires = ["setuptools>=42"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+# Pinned rather than left to setuptools' flat-layout auto-discovery, which
+# scans the project root and treats any directory it finds as a candidate
+# package. Budgie's own commands write output into the working directory --
+# `budgie emails --out-dir emails` is in the README -- so running the tool in a
+# checkout would otherwise make `pip install -e .` fail with "Multiple
+# top-level packages discovered in a flat-layout: ['emails', 'budgie']".
+include = ["budgie*"]
+
 [tool.pytest.ini_options]
 # Textual's App.run_test() is an async context manager, so the TUI tests are
 # async. "auto" means they don't each need an @pytest.mark.asyncio decorator.
