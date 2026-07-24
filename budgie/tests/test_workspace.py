@@ -181,3 +181,33 @@ def test_init_then_every_command_runs(tmp_path, monkeypatch):
         forget_workspaces()
         result = CliRunner().invoke(cli, args)
         assert result.exit_code == 0, f"{args} failed:\n{result.output}"
+
+
+def test_emails_uses_the_project_allocations(tmp_path, monkeypatch):
+    # `emails` kept its own sample default, so _input() saw a truthy override
+    # and the project's allocations.csv was never read.
+    init_workspace(tmp_path, year=2026)
+    (tmp_path / "allocations.csv").write_text(
+        "name,fte,hours_spent,email\nSlartibartfast,0.5,100,slarti@example.com\n"
+    )
+
+    result = _run_in(
+        tmp_path,
+        monkeypatch,
+        ["emails", "--out-dir", str(tmp_path / "out"), "--as-of", "2026-06-30"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "out" / "slartibartfast.eml").exists()
+
+
+def test_hours_uses_the_project_allocations(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    (tmp_path / "allocations.csv").write_text(
+        "name,fte,hours_spent\nSlartibartfast,0.5,100\n"
+    )
+
+    result = _run_in(tmp_path, monkeypatch, ["hours"])
+
+    assert result.exit_code == 0, result.output
+    assert "Slartibartfast" in result.output

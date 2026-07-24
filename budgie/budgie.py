@@ -311,14 +311,16 @@ def _print_montecarlo_summary(sim, pct):
 @click.option(
     "--people",
     "people_csv",
-    default=str(THIS_DIR / "tests" / "team.csv"),
-    show_default=True,
-    help="CSV of team members (name, hourly_cost, and util_*/hours_* columns).",
+    default=None,
+    help="CSV of team members (name, hourly_cost, and util_*/hours_* columns) "
+    "[default: the project's, else bundled sample].",
 )
 def tui(people_csv):
     """Launch the interactive TUI to explore forecasts live."""
     from budgie.tui import run
 
+    # No _input() here: the TUI finds the project itself, so passing a resolved
+    # sample path would stop it ever seeing the project's people.csv.
     run(people_csv)
 
 
@@ -359,18 +361,16 @@ def hours(alloc_csv, year, pto):
 @click.option(
     "--allocations",
     "alloc_csv",
-    default=str(THIS_DIR / "tests" / "allocations.csv"),
-    show_default=True,
-    help="CSV of allocations (name, fte, hours_spent, and optional email).",
+    default=None,
+    help="CSV of allocations (name, fte, hours_spent, optional email/pto_days) "
+    "[default: the project's, else bundled sample].",
 )
-@click.option(
-    "--year", default=2026, show_default=True, help="Calendar year for available hours."
-)
+@click.option("--year", default=None, type=int, help="Calendar year [default: 2026].")
 @click.option(
     "--pto",
-    default=0.0,
-    show_default=True,
-    help="PTO/sick days subtracted from the ceiling.",
+    default=None,
+    type=float,
+    help="PTO/sick days subtracted from the ceiling [default: 0].",
 )
 @click.option(
     "--out-dir",
