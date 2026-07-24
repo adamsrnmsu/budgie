@@ -51,10 +51,61 @@ pip install -e .
 > **Note:** make sure the interpreter running `budgie` is the same one `pip` installed into.
 > A bare `python3` on your `PATH` may be a different version than your virtualenv.
 
+## Start a project
+
+```bash
+mkdir my-budget && cd my-budget
+budgie init
+```
+
+That writes a `budgie.yaml` and a starter CSV for every input, already filled with
+loadable example rows — `budgie forecast` works the moment `init` finishes. Edit the
+CSVs with your own numbers and re-run.
+
+Every command afterwards finds the project by walking up from wherever you run it, so
+`budgie forecast` works from any subdirectory. `budgie.yaml` also pins the settings you'd
+otherwise retype:
+
+```yaml
+year: 2026
+pto: 0
+iterations: 10000
+seed: 42
+budget: 720000
+
+inputs:
+  people: people.csv
+  allocations: allocations.csv
+```
+
+An explicit option always wins over the project (`budgie forecast --people other.csv`),
+and with no project at all every command falls back to bundled sample data — so you can
+try everything before committing to anything.
+
+### `budgie status` — what's in this project?
+
+```bash
+budgie status
+```
+
+Lists every input file, whether it exists, how many rows it has, what it's for, and which
+commands consume it. Run this first when you're not sure where a number came from.
+
+### `budgie assumptions` — what is Budgie assuming?
+
+```bash
+budgie assumptions --year 2026 --pto 15
+```
+
+Prints every modelling assumption with its current value and the module that sets it: the
+working week, the holiday count for that year, how PTO interacts with part-time
+allocations, the month weighting, the sampling distributions, and the signal thresholds.
+Nothing about the model is meant to be folklore.
+
 ## Commands
 
-Every command runs against bundled sample data by default, so you can try them all
-immediately. Swap in your own files with the options shown.
+Every command uses your project's files when there is one, and bundled sample data when
+there isn't — so you can try them all immediately.
 
 ### `budgie forecast` — what will this team cost?
 
@@ -141,29 +192,52 @@ anyone over. `0.25 FTE × 1,992 available hours = 498 allocated`.
 ### `budgie emails` — tell each person where they stand
 
 ```bash
-# plain-text drafts
-budgie emails --out-dir emails
+# Outlook-ready .eml drafts with an embedded burn-down chart (the default)
+budgie emails --out-dir emails --actuals actuals.csv --as-of 2026-07-23
 
-# Outlook-ready .eml with an embedded burn-down chart
-budgie emails --html --actuals actuals.csv --as-of 2026-07-23 --out-dir emails
+# plain-text drafts instead
+budgie emails --plain --out-dir emails
 ```
 
-Writes one draft per person. **Budgie never sends anything** — you review the drafts and send
-them yourself.
+Writes one draft per person, plus a burn-down chart per person under `emails/charts/`.
+**Budgie never sends anything** — you review the drafts and send them yourself.
 
-The `--html` drafts are `.eml` files you can open straight into Outlook. They're built for
-Outlook specifically (table layout, inline styles, chart attached by `Content-ID` rather than a
-base64 image, which Outlook won't render). Each contains a burn-down chart showing even pace vs
-actual spend, a projection, and the date that person runs out of hours.
+The `.eml` files open straight into Outlook. They're built for Outlook specifically (table
+layout, inline styles, chart attached by `Content-ID` rather than a base64 image, which
+Outlook won't render). Each contains a burn-down chart showing even pace vs actual spend, a
+projection, and the date that person runs out of hours.
 
-### `budgie tui` — explore forecasts interactively
+Every draft — plain or HTML — restates the remaining hours as a **weekly commitment**,
+because "318 hours left" isn't something anyone can act on:
+
+```
+Hours remaining:  318  (36% used)
+
+Spending the remaining 318 hours evenly over the 109 working days left (22 weeks)
+means about 15 hours a week -- 36% of your time.
+```
+
+The working days left are real ones (Mon–Fri minus federal holidays), so a December
+reading doesn't imply capacity that isn't there. If the remaining hours would need more
+than a full-time week, the draft says so outright.
+
+### `budgie tui` — explore and re-plan interactively
 
 ```bash
 budgie tui
 ```
 
-Edit the year, PTO, iterations, and seed, and watch the forecast table and Monte Carlo
-histogram recompute live. Press `r` to recalculate, `q` to quit.
+Four tabs over your project:
+
+- **Forecast** — edit year, PTO, iterations and seed; the table and Monte Carlo histogram
+  recompute live.
+- **Plan** — the allocation plan, with a form to append a dated change. Re-planning is an
+  appended row, never an edit, so the history stays intact.
+- **Inputs** — every project file, whether it exists, and what feeds what. Select one and
+  press `e` to open it in `$EDITOR`, then `r` to recalculate.
+- **Assumptions** — the same model assumptions `budgie assumptions` prints.
+
+Press `r` to recalculate, `e` to edit the selected input, `q` to quit.
 
 ## Input files
 
@@ -186,12 +260,19 @@ Alice,95,1600,1800,1950
 The three values are a **low / most-likely / high** estimate. The deterministic forecast uses
 the middle one; Monte Carlo samples the whole range.
 
+A `pto_days` column is optional on both shapes and overrides the project's PTO for that
+person.
+
 **Allocations** — `allocations.csv` (for `hours` and `emails`):
 
 ```csv
-name,email,fte,hours_spent
-Alice,alice@example.com,0.25,180
+name,email,fte,hours_spent,pto_days
+Alice,alice@example.com,0.25,180,
+Bob,bob@example.com,0.50,760,20
 ```
+
+`pto_days` is optional — leave it blank and the project's `pto` applies. Bob takes 20 days
+regardless of what the rest of the team is assumed to take.
 
 **Allocation plan** — `plan.csv` (for `plan`; see above for semantics):
 
@@ -274,9 +355,31 @@ scenarios:
 
 ## How the numbers work
 
+Run `budgie assumptions` to see all of this with the current year's numbers filled in.
+
 **Productive hours.** 40 hrs/week × 52 weeks = 2,080 gross, minus the 11 US federal holidays
 (8 hrs each) = **1,992 productive hours/year**. Holidays are counted against the real calendar,
 so weekend-observed shifts land correctly. Subtract PTO with `--pto` to get "available hours".
+
+**PTO is pro-rated by FTE.** This is the question everyone asks, so it's worth stating
+plainly. A person's ceiling is computed **full-time** — 2,080 gross, minus holidays, minus
+their PTO — and *then* multiplied by their FTE:
+
+```
+allocated = fte × (2080 − holidays − pto)
+```
+
+So someone 25% on your project gives up 25% of their PTO to it, not all of it; the other
+75% comes out of whatever else they work on. With 15 PTO days, a 0.25 FTE person gets
+`0.25 × 1,872 = 468` hours. Charging their whole PTO to this project would have given 378 —
+a 90-hour difference on one person, which is why the choice is worth knowing about.
+
+Set `pto` in `budgie.yaml` (or `--pto`) for the team default, and a `pto_days` column for
+anyone who differs.
+
+**Required pace.** `budgie emails` restates remaining hours as hours-per-week and an FTE
+fraction, spread over the **real working days left** in the year rather than a flat count of
+weeks. That's the number someone can actually plan their week around.
 
 **P10 / P50 / P90.** These are percentiles of the *simulation output*, not the input model.
 Budgie runs 10,000 simulated budgets, sorts the totals, and reports:
@@ -311,6 +414,13 @@ budgie -v plan
 
 Verbose affects Budgie's own loggers only; third-party libraries stay quiet.
 
+**"Which files is it actually reading?"** `budgie status` shows the project it found and
+every input path. If it reports no project, you're on the bundled sample data — run
+`budgie init` where you want your numbers to live.
+
+**"Where did that number come from?"** `budgie assumptions` prints every modelling choice
+with its current value and the module that sets it.
+
 ## Development
 
 ```bash
@@ -329,6 +439,11 @@ pytest budgie/tests/test_core.py::test_productive_hours_matches_definition
 **Architecture.** All budgeting math lives in `budgie/core/` and imports no UI — no click, no
 rich, no matplotlib. The CLI, TUI, and plot/email renderers are thin adapters over it. That's
 what keeps the interface decision reversible and the engine testable.
+
+**Startup cost is a feature.** `budgie --help` imports nothing but click, so it returns in
+well under a second. Every engine and rendering import lives inside the command that needs
+it, and the CSV loaders use the stdlib `csv` module rather than pandas. `test_startup.py`
+fails if a heavy import creeps back up to module scope.
 
 ## License
 
