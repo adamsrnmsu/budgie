@@ -20,11 +20,15 @@ be resolved to hours.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pandas as pd
 
 from budgie.core.person import HoursEstimate, Person
+
+logger = logging.getLogger(__name__)
+
 
 _UTIL_COLS = ("util_low", "util_mode", "util_high")
 _HOURS_COLS = ("hours_low", "hours_mode", "hours_high")
@@ -56,10 +60,12 @@ def load_people(
                 "CSV uses utilization columns; a productive_hours ceiling is "
                 "required (pass --year/--pto or compute productive_hours)"
             )
+        shape = "utilization"
         build = lambda row: HoursEstimate.from_utilization(
             productive_hours, row.util_low, row.util_mode, row.util_high
         )
     elif set(_HOURS_COLS) <= cols:
+        shape = "absolute-hours"
         build = lambda row: HoursEstimate(row.hours_low, row.hours_mode, row.hours_high)
     else:
         raise ValueError(
@@ -67,7 +73,9 @@ def load_people(
             f"{_UTIL_COLS} or absolute-hours columns {_HOURS_COLS}"
         )
 
-    return [
+    people = [
         Person(name=str(row.name), hourly_cost=float(row.hourly_cost), hours=build(row))
         for row in frame.itertuples(index=False)
     ]
+    logger.info("Loaded %d people from %s (%s form)", len(people), csv_path, shape)
+    return people

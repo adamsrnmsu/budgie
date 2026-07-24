@@ -8,10 +8,13 @@ the Monte Carlo simulation puts confidence bounds around.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from budgie.core.person import Person
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)

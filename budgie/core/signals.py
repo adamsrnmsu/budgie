@@ -15,12 +15,16 @@ simulated outcomes. BLUE is only possible when a baseline is supplied.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 
 from budgie.core.montecarlo import SimulationResult
 
 # Default thresholds (probability of exceeding budget).
+logger = logging.getLogger(__name__)
+
+
 GREEN_MAX = 0.10
 YELLOW_MAX = 0.40
 # Default "no material change" band vs baseline mean.
@@ -83,6 +87,13 @@ def evaluate(
     """
     prob = probability_over(sim, budget)
     p50 = sim.percentile(50)
+    logger.debug(
+        "signal check: budget=%.0f p50=%.0f p(over)=%.3f baseline=%s",
+        budget,
+        p50,
+        prob,
+        baseline is not None,
+    )
 
     delta: float | None = None
     if baseline is not None and baseline.mean:

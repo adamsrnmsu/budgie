@@ -14,10 +14,14 @@ projects *future cost*, this tracks *consumption against a fixed allocation*.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
+
 
 _REQUIRED_COLS = {"name", "fte", "hours_spent"}
 
@@ -65,6 +69,7 @@ def load_allocations(csv_path: str | Path, available_hours: float) -> list[Alloc
         raise ValueError(f"allocations CSV missing columns: {sorted(missing)}")
 
     has_email = "email" in frame.columns
+    logger.info("Loaded %d allocations from %s", len(frame), csv_path)
     return [
         Allocation(
             name=str(row.name),

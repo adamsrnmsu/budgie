@@ -24,6 +24,7 @@ Config shape (YAML), consumed by the ``budgie scenario`` command::
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +36,8 @@ from budgie.core.forecast import forecast as run_forecast
 from budgie.core.loader import load_people
 from budgie.core.montecarlo import SimulationResult, simulate
 from budgie.core.signals import SignalResult, evaluate
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -83,6 +86,12 @@ def run_scenarios(config_path: str | Path) -> tuple[list[ScenarioResult], float]
         det = run_forecast(people)
         sim = simulate(people, iterations=iterations, seed=seed)
         signal = evaluate(sim, budget, baseline=baseline_sim)
+        logger.info(
+            "Scenario %r: total=%.0f signal=%s",
+            spec.get("name", "?"),
+            det.total_cost,
+            signal.signal.value,
+        )
 
         if baseline_total is None:
             baseline_total = det.total_cost

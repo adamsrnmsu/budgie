@@ -16,6 +16,7 @@ figure produced by :mod:`budgie.core.calendar`.
 from __future__ import annotations
 
 import calendar as _calendar
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -27,6 +28,9 @@ import pandas as pd
 
 from budgie.core.calendar import productive_hours
 from budgie.core.person import Person
+
+logger = logging.getLogger(__name__)
+
 
 MONTH_NAMES = (
     "Jan",
@@ -145,6 +149,7 @@ def monthly_simulation(
     for person in people:
         annual_totals += person.sample_cost(rng, iterations)
 
+    logger.info("Monthly simulation: %d iterations, %d people", iterations, len(people))
     weights = np.array(month_weights(year))
     # (iterations, 1) * (12,) -> (iterations, 12), then accumulate along months.
     monthly = annual_totals[:, None] * weights[None, :]
@@ -169,4 +174,5 @@ def load_monthly_actuals(csv_path: str | Path) -> dict[str, list[float]]:
         if not 1 <= month <= 12:
             raise ValueError(f"month must be 1-12, got {month} for {row.name}")
         actuals.setdefault(str(row.name), [0.0] * 12)[month - 1] += float(row.hours)
+    logger.info("Loaded monthly actuals for %d people from %s", len(actuals), csv_path)
     return actuals

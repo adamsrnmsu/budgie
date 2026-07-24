@@ -9,12 +9,16 @@ and summarise the resulting distribution with percentiles (P10 / P50 / P90).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
 
 from budgie.core.person import Person
+
+logger = logging.getLogger(__name__)
+
 
 DEFAULT_ITERATIONS = 10_000
 DEFAULT_PERCENTILES = (10, 50, 90)
@@ -67,6 +71,12 @@ def simulate(
     if not people:
         raise ValueError("simulate() requires at least one person")
 
+    logger.info(
+        "Simulating %d iterations over %d people (seed=%s)",
+        iterations,
+        len(people),
+        seed,
+    )
     rng = np.random.default_rng(seed)
     totals = np.zeros(iterations, dtype=float)
     for person in people:
