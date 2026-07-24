@@ -10,6 +10,10 @@ dependencies = [
     "rich",
     "black",
     "click",
+    "pytest>=6.2.4",
+    "isort",
+    "ruff",
+    "pyyaml",
 ]
 
 [project.scripts]
@@ -19,10 +23,5 @@ budgie = "budgie.budgie:cli"
 requires = ["setuptools>=42"]
 build-backend = "setuptools.build_meta"
 
-[tool.optional-dependencies]
-dev = [
-    "pytest>=6.2.4",
-    "isort",
-    "ruff",
-    "pyyaml",
-]
+
+
