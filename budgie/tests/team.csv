@@ -1,0 +1,5 @@
+name,hourly_cost,util_low,util_mode,util_high
+Alice,95,0.80,0.90,0.98
+Bob,110,0.70,0.85,0.95
+Charlie,85,0.75,0.88,0.96
+David,130,0.60,0.80,0.92
