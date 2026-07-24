@@ -17,7 +17,7 @@ from budgie.core.loader import load_people
 from budgie.core.montecarlo import simulate
 from budgie.core.scenario import run_scenarios
 from budgie.core.signals import Signal
-from budgie.singletons import console, logger
+from budgie.singletons import console, logger, set_verbose
 from budgie.utils.utils import display_startup_message
 
 # Stoplight glyph + rich color per signal.
@@ -33,8 +33,12 @@ THIS_DIR = THIS_FILE.parent
 
 
 @click.group()
-def cli():
+@click.option(
+    "-v", "--verbose", is_flag=True, help="Show DEBUG logging from budgie's internals."
+)
+def cli(verbose):
     """Budgie -- the ultimate budget companion."""
+    set_verbose(verbose)
 
 
 @click.command()
@@ -234,7 +238,16 @@ def hours(alloc_csv, year, pto):
     type=click.Path(exists=True),
     help="Tidy CSV (name,month,hours) of real monthly spend, for a true burn-down curve.",
 )
-def emails(alloc_csv, year, pto, out_dir, preview, as_html, as_of, actuals_csv):
+@click.option(
+    "--weekly",
+    "weekly_csv",
+    default=None,
+    type=click.Path(exists=True),
+    help="CSV (name,week,hours_to_date) of cumulative hours through an ISO week.",
+)
+def emails(
+    alloc_csv, year, pto, out_dir, preview, as_html, as_of, actuals_csv, weekly_csv
+):
     """Generate a personalized hours-remaining email draft for each person.
 
     Writes draft files only -- nothing is sent.
@@ -246,7 +259,9 @@ def emails(alloc_csv, year, pto, out_dir, preview, as_html, as_of, actuals_csv):
     allocs = load_allocations(alloc_csv, available_hours=ph.available_hours)
 
     if as_html:
-        paths = _write_html_emails(allocs, year, out_dir, as_of, actuals_csv)
+        paths = _write_html_emails(
+            allocs, year, out_dir, as_of, actuals_csv, weekly_csv
+        )
     else:
         paths = write_drafts(allocs, year, out_dir)
 
@@ -261,10 +276,11 @@ def emails(alloc_csv, year, pto, out_dir, preview, as_html, as_of, actuals_csv):
         console.print(render_email(allocs[0], year).as_text())
 
 
-def _write_html_emails(allocs, year, out_dir, as_of, actuals_csv=None):
+def _write_html_emails(allocs, year, out_dir, as_of, actuals_csv=None, weekly_csv=None):
     """Render a burn-down chart per person and write Outlook-ready .eml drafts."""
+    from budgie.core.actuals import load_weekly_actuals, monthly_to_observations
     from budgie.core.burndown import burndown
-    from budgie.core.monthly import cumulative, load_monthly_actuals
+    from budgie.core.monthly import load_monthly_actuals
     from budgie.emails import slug, write_eml_drafts
     from budgie.plots import burndown_chart
 
@@ -272,22 +288,27 @@ def _write_html_emails(allocs, year, out_dir, as_of, actuals_csv=None):
     charts_dir = out / "charts"
     charts_dir.mkdir(parents=True, exist_ok=True)
 
-    # Real monthly spend turns the interpolated burn-down into a true curve.
-    actuals = load_monthly_actuals(actuals_csv) if actuals_csv else {}
+    # Real spend readings turn the interpolated burn-down into a true curve.
+    # Weekly cumulative readings and monthly per-period hours both reduce to
+    # the same (date, cumulative-hours) observations.
+    if weekly_csv:
+        observations = load_weekly_actuals(weekly_csv, year)
+    elif actuals_csv:
+        observations = {
+            name: monthly_to_observations(year, months)
+            for name, months in load_monthly_actuals(actuals_csv).items()
+        }
+    else:
+        observations = {}
 
     as_of_date = as_of.date() if as_of else None
     statuses, charts = [], {}
     for alloc in allocs:
-        months = actuals.get(alloc.name)
-        # Only chart months that have actually happened.
-        if months and as_of_date:
-            months = months[: as_of_date.month]
-        status = burndown(
-            alloc,
-            year,
-            as_of=as_of_date,
-            monthly_spent=cumulative(months) if months else None,
-        )
+        obs = observations.get(alloc.name)
+        # Never chart a reading dated after the as-of date.
+        if obs and as_of_date:
+            obs = [o for o in obs if o[0] <= as_of_date]
+        status = burndown(alloc, year, as_of=as_of_date, observations=obs)
         chart_path = burndown_chart(status, charts_dir / f"{slug(alloc.name)}.png")
         statuses.append(status)
         charts[alloc.name] = chart_path.read_bytes()
@@ -464,7 +485,53 @@ def _print_monthly_table(mf, sim, budget):
     console.print(table)
 
 
+@click.command()
+@click.option(
+    "--plan",
+    "plan_csv",
+    default=str(THIS_DIR / "tests" / "plan.csv"),
+    show_default=True,
+    help="CSV of allocation changes (name, effective_date, fte).",
+)
+@click.option("--year", default=2026, show_default=True, help="Calendar year.")
+@click.option("--pto", default=0.0, show_default=True, help="PTO/sick days per person.")
+def plan(plan_csv, year, pto):
+    """Show allocated hours from a date-resolution allocation plan.
+
+    Each row applies from its effective date until the next row for that person,
+    so joining mid-year, leaving, and re-planning are all just appended rows.
+    """
+    from budgie.core.plan import load_plan
+
+    display_startup_message()
+    allocation_plan = load_plan(plan_csv)
+    _print_plan_table(allocation_plan, year, pto)
+
+
+def _print_plan_table(allocation_plan, year, pto):
+    from rich.table import Table
+
+    table = Table(
+        show_header=True, header_style="bold magenta", title=f"Allocation plan {year}"
+    )
+    table.add_column("Name")
+    table.add_column("Changes")
+    table.add_column("Hours", justify="right")
+    total = 0.0
+    for name in allocation_plan.names:
+        hours = allocation_plan.allocated_hours(name, year, pto_days=pto)
+        total += hours
+        changes = ", ".join(
+            f"{e.effective_date:%b %-d}→{e.fte:g}" for e in allocation_plan._for(name)
+        )
+        table.add_row(name, changes, f"{hours:,.0f}")
+    table.add_section()
+    table.add_row("[bold]Total[/bold]", "", f"[bold]{total:,.0f}[/bold]")
+    console.print(table)
+
+
 cli.add_command(forecast)
+cli.add_command(plan)
 cli.add_command(tui)
 cli.add_command(hours)
 cli.add_command(emails)

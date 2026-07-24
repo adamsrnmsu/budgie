@@ -8,7 +8,7 @@ a window.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 import matplotlib
@@ -109,17 +109,14 @@ def burndown_chart(status: BurndownStatus, out_path: str | Path) -> Path:
         zorder=2,
     )
 
-    # Actual spend to date. Use real monthly data when supplied, else interpolate
-    # from the origin to the one point we actually know (spent-to-date).
-    if status.monthly_spent:
-        xs = [start] + [
-            min(date(status.year, m + 1, 1) - timedelta(days=1), end)
-            for m in range(len(status.monthly_spent))
-        ]
-        ys = [0.0, *status.monthly_spent]
+    # Actual spend to date. Dated cumulative observations give a real curve;
+    # with none we know only the endpoint, so draw a straight line to it.
+    if status.observations:
+        xs = [start, *(when for when, _ in status.observations)]
+        ys = [0.0, *(hours for _, hours in status.observations)]
     else:
         xs = [start, status.as_of]
-        ys = [0.0, alloc.hours_spent]
+        ys = [0.0, status.hours_spent]
     actual_color = RED if status.projected_over else GREEN
     ax.plot(xs, ys, color=actual_color, linewidth=2.4, label="Actual", zorder=4)
 
