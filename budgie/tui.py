@@ -1,13 +1,19 @@
 """
 Budgie Textual TUI.
 
-An interactive front-end over ``budgie.core``, organised around the project
-workspace rather than a single CSV:
+An interactive front-end over ``budgie.core``, laid out as the workflow the CLI
+teaches -- left to right, data to conclusion:
 
-    Forecast     assumptions in, cost + Monte Carlo out, recomputed live
-    Plan         the allocation plan, with re-planning as an appended row
-    Inputs       every project file, whether it exists, and open-in-$EDITOR
-    Assumptions  what the engine assumes, so it isn't folklore
+    1 Inputs       the project's files: what exists, and open one in $EDITOR
+    2 Plan         who is on the project and when; re-plan by appending a row
+    3 Forecast     assumptions in, cost + Monte Carlo out, recomputed live
+    4 Assumptions  what the engine assumes, so it isn't folklore
+
+That order is the point: you cannot read a forecast sensibly without knowing
+what went into it, so the inputs come first and the model's assumptions are one
+keystroke away from the number they produced. The app opens on Forecast when it
+can compute one and on Inputs when it can't, because a broken input is the only
+thing worth looking at until it's fixed.
 
 Like every other front-end this file contains no budgeting math -- it wires
 widgets to the engine. The one thing it *writes* is a plan row, and it appends
@@ -19,7 +25,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import ClassVar
 
@@ -31,7 +37,6 @@ from textual.widgets import (
     Button,
     DataTable,
     Footer,
-    Header,
     Input,
     Label,
     Static,
@@ -49,9 +54,24 @@ from budgie.core.workspace import INPUTS, Workspace, find_workspace
 
 _BLOCKS = " ▁▂▃▄▅▆▇█"
 
+# Tabs in workflow order. The number is shown in the label so the sequence is
+# legible at a glance and the 1-4 keys have something obvious to map onto.
+_TABS: tuple[tuple[str, str], ...] = (
+    ("tab_inputs", "1 Inputs"),
+    ("tab_plan", "2 Plan"),
+    ("tab_forecast", "3 Forecast"),
+    ("tab_assumptions", "4 Assumptions"),
+)
+
 
 def ascii_histogram(values: np.ndarray, bins: int = 42, height: int = 8) -> str:
-    """Render a compact vertical block histogram of ``values`` as text."""
+    """Render a compact vertical block histogram of ``values`` as text.
+
+    ``bins`` is the character width of the result, so callers pass the width
+    they actually have -- a histogram wider than its pane wraps and turns into
+    noise, which is worse than no histogram at all.
+    """
+    bins = max(int(bins), 4)
     counts, _ = np.histogram(values, bins=bins)
     peak = counts.max() or 1
     # Each column is `height` block-rows tall; fill from the bottom up.
@@ -73,6 +93,19 @@ def ascii_histogram(values: np.ndarray, bins: int = 42, height: int = 8) -> str:
 
 def _money(x: float) -> str:
     return f"${x:,.0f}"
+
+
+def shorten_path(path: str | Path, width: int = 60) -> str:
+    """Truncate a path from the LEFT, keeping the part that identifies it.
+
+    The end of a path says which file it is; the start says which disk it's on.
+    Cutting the wrong end is why the old header showed a screenful of
+    /private/tmp/... and never got to the filename.
+    """
+    text = str(path)
+    if len(text) <= width:
+        return text
+    return "…" + text[-(width - 1) :]
 
 
 def open_in_editor(path: Path) -> str:
@@ -113,25 +146,103 @@ class BudgieTUI(App):
     """Interactive explorer over a Budgie project."""
 
     CSS = """
-    #assumptions_bar { height: auto; padding: 1; background: $panel; }
-    #assumptions_bar Input { width: 12; }
-    #assumptions_bar Label { padding: 1 1 0 2; }
+    /* --- Title bar -----------------------------------------------------
+       Textual's stock Header is one dim line, which left the app name, the
+       project and the clock competing for the same row. This is two rows with
+       a clear hierarchy: identity and figures on top, location below. */
+    #titlebar {
+        height: 1;
+        background: $accent;
+        color: $text;
+        text-style: bold;
+        padding: 0 2;
+    }
+    #contextbar {
+        height: 1;
+        background: $panel;
+        color: $text-muted;
+        padding: 0 2;
+    }
+
+    /* --- Tabs ----------------------------------------------------------
+       The stock inactive tab is $foreground 50%, which on a dark background
+       reads as disabled rather than merely unselected. These are legible at
+       rest, and the active one is unmistakable. */
+    Tabs {
+        height: 3;
+        background: $surface;
+    }
+    Tabs Tab {
+        height: 3;
+        padding: 1 3;
+        color: $foreground 75%;
+    }
+    Tabs Tab:hover {
+        color: $foreground;
+        background: $boost;
+    }
+    Tabs Tab.-active {
+        color: $text;
+        background: $accent 25%;
+        text-style: bold;
+    }
+    Underline > .underline--bar {
+        color: $accent;
+        background: $surface;
+    }
+
+    /* --- Shared -------------------------------------------------------- */
+    .banner {
+        height: auto;
+        padding: 1 2;
+        background: $error 20%;
+        color: $text;
+    }
+    .hint { padding: 1 2; color: $text-muted; }
+    .status { padding: 0 2; color: $success; height: 1; }
+    .pane-title { text-style: bold; padding: 0 0 1 0; }
+
+    /* --- Forecast tab --------------------------------------------------
+       The controls were nearly a quarter of the screen for four numbers.
+       A bordered, titled box reads as "controls" rather than content, and
+       keeps them to a single compact row. */
+    #controls {
+        height: auto;
+        border: round $primary;
+        border-title-color: $text-muted;
+        padding: 0 1;
+        margin: 1 1 0 1;
+    }
+    #controls Input { width: 9; border: none; padding: 0 1; height: 1; }
+    #controls Label { padding: 0 1 0 2; color: $text-muted; }
+    #controls Button { height: 1; border: none; margin: 0 0 0 2; }
     #forecast_body { height: 1fr; }
-    #table_pane { width: 3fr; padding: 1; }
-    #mc_pane { width: 2fr; padding: 1; background: $panel; }
-    .pct { text-style: bold; }
-    #hist { color: $success; height: auto; }
-    #plan_form { height: auto; padding: 1; background: $panel; }
-    #plan_form Input { width: 16; }
-    #plan_form Label { padding: 1 1 0 2; }
-    .note { padding: 1 2; color: $text-muted; }
-    .status { padding: 0 2; color: $success; }
-    #inputs_hint { padding: 1 2; color: $text-muted; }
+    #table_pane { width: 3fr; padding: 1 1 0 1; }
+    #mc_pane { width: 2fr; padding: 1 2 0 2; background: $panel; }
+    #hist { color: $success; height: auto; padding: 1 0; }
+    #mc_figures { height: auto; }
+    #source { color: $text-muted; height: auto; padding: 1 0 0 0; }
+
+    /* --- Plan tab ------------------------------------------------------ */
+    #plan_form {
+        height: auto;
+        border: round $primary;
+        border-title-color: $text-muted;
+        padding: 0 1;
+        margin: 1 1 0 1;
+    }
+    #plan_form Input { width: 14; border: none; padding: 0 1; height: 1; }
+    #plan_form Label { padding: 0 1 0 2; color: $text-muted; }
+    #plan_form Button { height: 1; border: none; margin: 0 0 0 2; }
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
         ("r", "recalculate", "Recalculate"),
         ("e", "edit_selected", "Edit input"),
+        ("1", "show_tab('tab_inputs')", "Inputs"),
+        ("2", "show_tab('tab_plan')", "Plan"),
+        ("3", "show_tab('tab_forecast')", "Forecast"),
+        ("4", "show_tab('tab_assumptions')", "Assumptions"),
         ("q", "quit", "Quit"),
     ]
 
@@ -140,6 +251,7 @@ class BudgieTUI(App):
         self.workspace: Workspace | None = find_workspace()
         # An explicit path still wins, exactly like on the command line.
         self._people_override = str(csv_path) if csv_path else None
+        self._load_error: str | None = None
 
     # -- paths -------------------------------------------------------------
 
@@ -157,23 +269,42 @@ class BudgieTUI(App):
     def plan_path(self) -> Path | None:
         return self.workspace.path_for("plan") if self.workspace else None
 
+    @property
+    def project_name(self) -> str:
+        return self.workspace.root.name if self.workspace else "no project"
+
     # -- layout ------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
-        with TabbedContent(initial="tab_forecast"):
-            with TabPane("Forecast", id="tab_forecast"):
-                yield from self._compose_forecast()
-            with TabPane("Plan", id="tab_plan"):
-                yield from self._compose_plan()
-            with TabPane("Inputs", id="tab_inputs"):
+        yield Static(id="titlebar")
+        yield Static(id="contextbar")
+        with TabbedContent(initial=self._initial_tab(), id="tabs"):
+            with TabPane(_TABS[0][1], id="tab_inputs"):
                 yield from self._compose_inputs()
-            with TabPane("Assumptions", id="tab_assumptions"):
+            with TabPane(_TABS[1][1], id="tab_plan"):
+                yield from self._compose_plan()
+            with TabPane(_TABS[2][1], id="tab_forecast"):
+                yield from self._compose_forecast()
+            with TabPane(_TABS[3][1], id="tab_assumptions"):
                 yield VerticalScroll(Static(id="assumptions_text"))
         yield Footer()
 
+    def _initial_tab(self) -> str:
+        """Forecast when there is one to show, Inputs when there isn't.
+
+        Landing on a tab that can only display an error helps nobody; landing
+        on the tab that fixes it does.
+        """
+        try:
+            load_people(self.people_path, productive_hours=productive_hours(2026))
+        except (OSError, ValueError):
+            return "tab_inputs"
+        return "tab_forecast"
+
     def _compose_forecast(self) -> ComposeResult:
-        with Horizontal(id="assumptions_bar"):
+        controls = Horizontal(id="controls")
+        controls.border_title = "Assumptions"
+        with controls:
             yield Label("Year")
             yield Input(
                 value=str(self._setting("year", 2026)), id="year", type="integer"
@@ -189,23 +320,26 @@ class BudgieTUI(App):
             yield Label("Seed")
             yield Input(value=str(self._setting("seed", 42)), id="seed", type="integer")
             yield Button("Recalculate", id="recalc", variant="primary")
+        yield Static(id="forecast_banner", classes="banner")
         with Horizontal(id="forecast_body"):
             with Vertical(id="table_pane"):
                 yield DataTable(id="forecast")
-            with Vertical(id="mc_pane"):
-                yield Label("Monte Carlo", classes="pct")
-                yield Static(id="mc_summary")
+            with VerticalScroll(id="mc_pane"):
+                yield Static("Monte Carlo", classes="pane-title")
+                yield Static(id="mc_figures")
                 yield Static(id="hist")
                 yield Static(id="mc_stats")
+                yield Static(id="source")
 
     def _compose_plan(self) -> ComposeResult:
         yield Static(
             "Re-planning appends a dated row -- it never edits history. "
-            "Add a row below to move someone's FTE from a date onward; "
-            "0 FTE takes them off the project.",
-            classes="note",
+            "0 FTE takes someone off the project.",
+            classes="hint",
         )
-        with Horizontal(id="plan_form"):
+        form = Horizontal(id="plan_form")
+        form.border_title = "Append a change"
+        with form:
             yield Label("Name")
             yield Input(placeholder="Alice", id="plan_name")
             yield Label("From")
@@ -218,9 +352,9 @@ class BudgieTUI(App):
 
     def _compose_inputs(self) -> ComposeResult:
         yield Static(
-            "Select a row and press [b]e[/b] to open it in $EDITOR, "
-            "then [b]r[/b] to recalculate.",
-            id="inputs_hint",
+            "Your project's files. Select one and press [b]e[/b] to open it in "
+            "$EDITOR, then [b]r[/b] to recalculate.",
+            classes="hint",
         )
         yield DataTable(id="inputs_table")
         yield Static(id="inputs_status", classes="status")
@@ -268,17 +402,21 @@ class BudgieTUI(App):
     def action_recalculate(self) -> None:
         self.recalculate()
 
+    def action_show_tab(self, tab_id: str) -> None:
+        self.query_one("#tabs", TabbedContent).active = tab_id
+
     def action_edit_selected(self) -> None:
         """Open the highlighted input file in $EDITOR."""
         table = self.query_one("#inputs_table", DataTable)
         status = self.query_one("#inputs_status", Static)
+        self.action_show_tab("tab_inputs")
         if self.workspace is None:
             status.update("No project here -- run `budgie init` to create one.")
             return
         items = self.workspace.inputs()
         row = table.cursor_row
         if not 0 <= row < len(items):
-            status.update("Select a file on the Inputs tab first.")
+            status.update("Select a file first.")
             return
         with self.suspend():
             message = open_in_editor(items[row].path)
@@ -345,20 +483,57 @@ class BudgieTUI(App):
         seed = self._read_int("seed", 42)
 
         ph = productive_hours(year, pto_days=pto)
-        self._refresh_forecast(ph, year, pto, iterations, seed)
+        self._refresh_chrome(year, pto)
+        self._refresh_forecast(ph, iterations, seed)
         self._refresh_plan(year, pto)
         self._refresh_inputs()
         self._refresh_assumptions(ph, year)
 
     # -- rendering ---------------------------------------------------------
 
-    def _refresh_forecast(self, ph, year, pto, iterations, seed) -> None:
-        people = load_people(self.people_path, productive_hours=ph)
+    def _refresh_chrome(self, year: int, pto: float) -> None:
+        """The two header rows: who/what/when on top, where below."""
+        figures = f"{year}   ·   PTO {pto:g}d   ·   {self._clock()}"
+        self.query_one("#titlebar", Static).update(
+            f"BUDGIE   {self.project_name}{' ' * 4}"
+            f"[not bold]{figures}[/not bold]"
+        )
+        location = (
+            shorten_path(self.workspace.root, 70)
+            if self.workspace
+            else "no project here — run `budgie init` to make one"
+        )
+        self.query_one("#contextbar", Static).update(location)
+
+    @staticmethod
+    def _clock() -> str:
+        # Local time: the point is "did my keypress take effect", not UTC.
+        return datetime.now().strftime("%H:%M:%S")  # noqa: DTZ005
+
+    def _refresh_forecast(self, ph, iterations: int, seed: int) -> None:
+        banner = self.query_one("#forecast_banner", Static)
+        table = self.query_one("#forecast", DataTable)
+        try:
+            people = load_people(self.people_path, productive_hours=ph)
+        except (OSError, ValueError) as exc:
+            # A missing or malformed CSV is a normal state to be in, not a
+            # crash: say which file and what to read to fix it.
+            self._load_error = str(exc)
+            banner.display = True
+            banner.update(
+                f"Can't read {Path(self.people_path).name}: {exc}\n"
+                f"Fix the file, then press r. `budgie guide people` explains "
+                f"the columns."
+            )
+            table.clear()
+            return
+
+        self._load_error = None
+        banner.display = False
         det = run_forecast(people)
         sim = simulate(people, iterations=iterations, seed=seed)
         pct = sim.percentiles()
 
-        table = self.query_one("#forecast", DataTable)
         table.clear()
         for item in det.line_items:
             table.add_row(
@@ -374,17 +549,24 @@ class BudgieTUI(App):
             f"[b]{_money(det.total_cost)}[/b]",
         )
 
-        self.query_one("#mc_summary", Static).update(
-            f"Productive hrs {year}: [b]{ph.productive_hours:,.0f}[/b]"
-            + (f"  |  available: [b]{ph.available_hours:,.0f}[/b]" if pto else "")
-            + f"\n\n[b green]P10[/b green] {_money(pct[10])}    "
-            f"[b]P50[/b] {_money(pct[50])}    "
-            f"[b green]P90[/b green] {_money(pct[90])}"
+        # Percentiles as aligned rows rather than one wrapping line -- three
+        # numbers meant to be compared should sit in a column.
+        self.query_one("#mc_figures", Static).update(
+            f"[green]P10[/green]  {_money(pct[10]):>12}   [dim]optimistic[/dim]\n"
+            f"[b]P50[/b]  {_money(pct[50]):>12}   [dim]expected[/dim]\n"
+            f"[green]P90[/green]  {_money(pct[90]):>12}   [dim]reserve this[/dim]"
         )
-        self.query_one("#hist", Static).update(ascii_histogram(sim.total_costs))
+        hist = self.query_one("#hist", Static)
+        # Fit the histogram to the pane; a wider one wraps into noise.
+        width = max(hist.size.width or 36, 12)
+        hist.update(ascii_histogram(sim.total_costs, bins=width))
         self.query_one("#mc_stats", Static).update(
-            f"{sim.iterations:,} sims   mean {_money(sim.mean)}   std {_money(sim.std)}"
-            f"\n\n[dim]people: {self.people_path}[/dim]"
+            f"{sim.iterations:,} sims   mean {_money(sim.mean)}   "
+            f"std {_money(sim.std)}\n"
+            f"[dim]available hours {ph.available_hours:,.0f} @ 1.0 FTE[/dim]"
+        )
+        self.query_one("#source", Static).update(
+            f"people: {shorten_path(self.people_path, 40)}"
         )
 
     def _refresh_plan(self, year: int, pto: float) -> None:
@@ -395,7 +577,12 @@ class BudgieTUI(App):
             table.add_row("[dim]no plan.csv in this project[/dim]", "", "")
             return
 
-        plan = load_plan(path)
+        try:
+            plan = load_plan(path)
+        except (OSError, ValueError) as exc:
+            table.add_row(f"[red]{path.name}: {exc}[/red]", "", "")
+            return
+
         total = 0.0
         for name in plan.names:
             hours = plan.allocated_hours(name, year, pto_days=pto)
