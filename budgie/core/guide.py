@@ -286,7 +286,7 @@ TOPICS: tuple[Topic, ...] = (
         example=(
             "name,fte,hours_spent,email,pto_days\n"
             "Alice,0.25,180,alice@example.com,\n"
-            "Bob,0.50,760,bob@example.com,20"
+            "Bob,0.50,540,bob@example.com,20"
         ),
         rules=_rules(
             "allocated = fte x (2080 - holidays - PTO). PTO is taken off the "
@@ -320,6 +320,9 @@ TOPICS: tuple[Topic, ...] = (
             "Hours are counted day by day over real working days, so a "
             "mid-month start is charged from the actual day -- Carol above gets "
             "466 hours, not a rounded 502 or a flat 996.",
+            "When this file exists, hours and emails take allocated hours from "
+            "it rather than the flat fte in allocations.csv, and show the year-"
+            "average FTE. Anyone it doesn't mention keeps their flat fte.",
         ),
         optional=True,
     ),
@@ -386,10 +389,13 @@ TOPICS: tuple[Topic, ...] = (
         ),
         example="name,month,hours\nAlice,1,32\nAlice,2,28\nBob,1,80",
         rules=_rules(
-            "These are per-month hours, not running totals. Missing months "
-            "count as zero.",
+            "These are per-month hours, not running totals. A missing month "
+            "counts as zero -- unless it comes after your last month with "
+            "hours, which just hasn't been reported yet.",
             "If your timesheet exports cumulative readings instead, use "
             "weekly.csv -- see `budgie guide weekly`.",
+            "`budgie forecast` reads this too: spent to date plus a forecast "
+            "of the time left. `--ignore-actuals` gives the full-year plan.",
         ),
         optional=True,
     ),
@@ -403,7 +409,7 @@ TOPICS: tuple[Topic, ...] = (
             ("week", "ISO week number"),
             ("hours_to_date", "Total hours booked THROUGH that week"),
         ),
-        example=("name,week,hours_to_date\nAlice,12,150\nAlice,20,180\nBob,20,760"),
+        example=("name,week,hours_to_date\nAlice,12,150\nAlice,20,180\nBob,20,540"),
         rules=_rules(
             "CUMULATIVE, not per-week. Budgie rejects a series that goes down, "
             "because a decrease means per-period values were pasted in.",
@@ -411,6 +417,8 @@ TOPICS: tuple[Topic, ...] = (
             "More rows give a real curve.",
             "The as-of date comes from the latest reading, so the burn rate is "
             "measured over the right window rather than against today.",
+            "`budgie forecast` reads this too: spent to date plus a forecast "
+            "of the time left. `--ignore-actuals` gives the full-year plan.",
         ),
         optional=True,
     ),

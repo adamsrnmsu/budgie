@@ -69,12 +69,12 @@ INPUTS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "allocations": (
         "allocations.csv",
         "FTE allocations and hours spent to date, plus each person's email",
-        ("hours", "emails"),
+        ("hours", "emails", "plan"),
     ),
     "plan": (
         "plan.csv",
         "Dated allocation changes -- joins, departures and re-plans, one row each",
-        ("plan",),
+        ("plan", "hours", "emails"),
     ),
     "costs": (
         "costs.csv",
@@ -89,12 +89,12 @@ INPUTS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "actuals": (
         "actuals.csv",
         "Observed spend: monthly hours per person",
-        ("emails",),
+        ("forecast", "emails"),
     ),
     "weekly": (
         "weekly.csv",
         "Observed spend: cumulative hours through an ISO week",
-        ("emails",),
+        ("forecast", "emails"),
     ),
     "scenarios": (
         "scenarios.yaml",

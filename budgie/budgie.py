@@ -108,6 +108,21 @@ def _workspace_input(key: str):
     return workspace.resolve(key) if workspace else None
 
 
+def _plan_for_allocations(plan_csv):
+    """``(path, plan)`` for hours/emails -- ``(None, None)`` when there's no plan.
+
+    Project file or nothing, never the bundled sample: the sample plan names
+    different people than the sample allocations, so falling back to it would
+    invent a team.
+    """
+    plan_csv = plan_csv or _workspace_input("plan")
+    if not plan_csv:
+        return None, None
+    from budgie.core.plan import load_plan
+
+    return plan_csv, load_plan(plan_csv)
+
+
 def _no_project_message() -> str:
     """What to say when no workspace resolved.
 
@@ -232,11 +247,55 @@ def cli(ctx, verbose, show_help):
     default=None,
     help="Budget to signal against: a number, or a CSV of dated revisions.",
 )
+@click.option(
+    "--actuals",
+    "actuals_csv",
+    default=None,
+    type=click.Path(exists=True),
+    help="Tidy CSV (name,month,hours) of real monthly spend; turns the forecast "
+    "into an estimate at completion [default: the project's, else none].",
+)
+@click.option(
+    "--weekly",
+    "weekly_csv",
+    default=None,
+    type=click.Path(exists=True),
+    help="CSV (name,week,hours_to_date) of cumulative hours through an ISO week; "
+    "wins over --actuals [default: the project's, else none].",
+)
+@click.option(
+    "--as-of",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    default=None,
+    help="Ignore spend readings dated after this [default: use each person's latest].",
+)
+@click.option(
+    "--ignore-actuals",
+    is_flag=True,
+    default=None,
+    help="Forecast the full-year plan even if the project has actuals.",
+)
 @_project_option
 def forecast(
-    people_csv, year, pto, iterations, seed, plots, out_dir, costs_csv, budget_arg
+    people_csv,
+    year,
+    pto,
+    iterations,
+    seed,
+    plots,
+    out_dir,
+    costs_csv,
+    budget_arg,
+    actuals_csv,
+    weekly_csv,
+    as_of,
+    ignore_actuals,
 ):
-    """Forecast team cost with productive-hours + Monte Carlo simulation."""
+    """Forecast team cost with productive-hours + Monte Carlo simulation.
+
+    With spend readings (actuals.csv or weekly.csv) this is an estimate at
+    completion: hours already booked, plus a forecast of only the time left.
+    """
     from budgie.core.calendar import productive_hours
     from budgie.core.costs import load_costs
     from budgie.core.forecast import forecast as run_forecast
@@ -271,11 +330,31 @@ def forecast(
     # rather than interleaving after the tables.
     budget = _budget_from(budget_arg) if budget_arg else None
 
+    # Estimate at completion: with spend readings, the elapsed part of each
+    # person's plan is replaced by what they actually booked. Everything below
+    # just receives the adjusted people. A file named on the command line beats
+    # the project's, whichever kind it is.
+    readings = {}
+    if not ignore_actuals:
+        if not (actuals_csv or weekly_csv):
+            actuals_csv = _workspace_input("actuals")
+            weekly_csv = _workspace_input("weekly")
+        observations = _load_observations(year, actuals_csv, weekly_csv)
+        if observations:
+            from budgie.core.eac import at_completion
+
+            eac = at_completion(
+                people, observations, year, as_of=as_of.date() if as_of else None
+            )
+            people, readings = eac.people, eac.readings
+
     det = run_forecast(people, costs=costs)
     sim = simulate(people, iterations=iterations, seed=seed, costs=costs)
     pct = sim.percentiles()
 
-    _print_forecast_table(det)
+    if readings:
+        _print_eac_note(readings, len(people))
+    _print_forecast_table(det, readings)
     if costs:
         _print_costs_table(det)
     _print_montecarlo_summary(sim, pct)
@@ -292,31 +371,61 @@ def forecast(
         console.print(f"[bold]Wrote[/bold] {hist} and {bars}")
 
 
-def _print_forecast_table(det):
+def _print_eac_note(readings, team_size):
+    """One line saying the table is an estimate at completion, and as of when."""
+    from budgie.singletons import console
+
+    dates = sorted({when for when, _ in readings.values()})
+    as_of = f"{dates[0]}" if len(dates) == 1 else f"{dates[0]} to {dates[-1]}"
+    note = f"[bold]Estimate at completion[/bold] — hours booked as of {as_of}"
+    note += ", plus a forecast of the time left."
+    if len(readings) < team_size:
+        note += (
+            f" [dim]{len(readings)} of {team_size} people have readings;"
+            " the rest are the full-year plan.[/dim]"
+        )
+    console.print(note)
+
+
+def _print_forecast_table(det, readings=None):
+    """The per-person table. ``readings`` (name -> (date, spent)) adds Spent."""
     from rich.table import Table
 
     from budgie.singletons import console
 
+    # With no readings this must render exactly as it did before EAC existed.
+    eac = bool(readings)
     table = Table(
-        show_header=True, header_style="bold magenta", title="Deterministic forecast"
+        show_header=True,
+        header_style="bold magenta",
+        title="Estimate at completion" if eac else "Deterministic forecast",
     )
     table.add_column("Name")
     table.add_column("$/hr", justify="right")
-    table.add_column("Hours", justify="right")
+    if eac:
+        table.add_column("Spent", justify="right")
+    table.add_column("At completion" if eac else "Hours", justify="right")
     table.add_column("Cost", justify="right")
     for item in det.line_items:
+        spent = []
+        if eac:
+            reading = readings.get(item.name)
+            spent = [f"{reading[1]:,.0f}" if reading else "[dim]—[/dim]"]
         table.add_row(
             item.name,
             f"${item.hourly_cost:,.0f}",
+            *spent,
             f"{item.hours:,.0f}",
             f"${item.cost:,.0f}",
         )
     table.add_section()
     # Labor only -- this table's rows are people, so its total must be the sum
     # of those rows. Non-labor is totalled in its own table.
+    total_spent = sum(hours for _, hours in (readings or {}).values())
     table.add_row(
         "[bold]Total[/bold]",
         "",
+        *([f"[bold]{total_spent:,.0f}[/bold]"] if eac else []),
         f"[bold]{det.total_hours:,.0f}[/bold]",
         f"[bold]${det.labor_cost:,.0f}[/bold]",
     )
@@ -423,12 +532,19 @@ def tui(people_csv):
     type=float,
     help="PTO/sick days subtracted from the ceiling [default: 0].",
 )
+@click.option(
+    "--plan",
+    "plan_csv",
+    default=None,
+    help="CSV of allocation changes (name, effective_date, fte); when present it "
+    "sets allocated hours instead of the flat fte [default: the project's, else none].",
+)
 @_project_option
-def hours(alloc_csv, year, pto):
+def hours(alloc_csv, year, pto, plan_csv):
     """Show each person's allocated / spent / remaining hours from their FTE."""
     from budgie.core.allocation import load_allocations
     from budgie.core.calendar import productive_hours
-    from budgie.singletons import logger
+    from budgie.singletons import console, logger
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
@@ -437,9 +553,15 @@ def hours(alloc_csv, year, pto):
     pto = _setting("pto", pto, 0.0)
 
     ph = productive_hours(year, pto_days=pto)
-    allocs = load_allocations(alloc_csv, available_hours=ph)
+    plan_csv, plan = _plan_for_allocations(plan_csv)
+    allocs = load_allocations(alloc_csv, available_hours=ph, plan=plan)
     logger.info(f"Available hours {year}: {ph.available_hours:,.0f} (1.0 FTE)")
     _print_hours_table(allocs)
+    if plan_csv:
+        console.print(
+            f"[dim]Allocated hours come from {Path(plan_csv).name}; "
+            "FTE is the year average.[/dim]"
+        )
 
 
 @click.command()
@@ -495,9 +617,25 @@ def hours(alloc_csv, year, pto):
     type=click.Path(exists=True),
     help="CSV (name,week,hours_to_date) of cumulative hours through an ISO week.",
 )
+@click.option(
+    "--plan",
+    "plan_csv",
+    default=None,
+    help="CSV of allocation changes (name, effective_date, fte); when present it "
+    "sets allocated hours instead of the flat fte [default: the project's, else none].",
+)
 @_project_option
 def emails(
-    alloc_csv, year, pto, out_dir, preview, as_html, as_of, actuals_csv, weekly_csv
+    alloc_csv,
+    year,
+    pto,
+    out_dir,
+    preview,
+    as_html,
+    as_of,
+    actuals_csv,
+    weekly_csv,
+    plan_csv,
 ):
     """Generate a personalized hours-remaining email draft for each person.
 
@@ -513,13 +651,16 @@ def emails(
     alloc_csv = _input("allocations", alloc_csv, "allocations.csv")
     year = _setting("year", year, 2026)
     pto = _setting("pto", pto, 0.0)
-    # Actuals are optional, so only reach for the project's copy when the user
-    # didn't name one -- and only if it's actually there.
-    actuals_csv = actuals_csv or _workspace_input("actuals")
-    weekly_csv = weekly_csv or _workspace_input("weekly")
+    # Actuals are optional, so only reach for the project's copies when the
+    # user named neither -- otherwise `--actuals mine.csv` would silently lose
+    # to the project's weekly.csv, which outranks it. Same rule as `forecast`.
+    if not (actuals_csv or weekly_csv):
+        actuals_csv = _workspace_input("actuals")
+        weekly_csv = _workspace_input("weekly")
 
     ph = productive_hours(year, pto_days=pto)
-    allocs = load_allocations(alloc_csv, available_hours=ph)
+    _, plan = _plan_for_allocations(plan_csv)
+    allocs = load_allocations(alloc_csv, available_hours=ph, plan=plan)
 
     statuses = _burndown_statuses(allocs, year, as_of, actuals_csv, weekly_csv)
 
@@ -553,22 +694,10 @@ def _burndown_statuses(allocs, year, as_of, actuals_csv=None, weekly_csv=None):
     Both mail formats need this now: the plain-text draft carries the required
     pace, which is measured against the working days left after the as-of date.
     """
-    from budgie.core.actuals import load_weekly_actuals, monthly_to_observations
     from budgie.core.burndown import burndown
-    from budgie.core.monthly import load_monthly_actuals
 
     # Real spend readings turn the interpolated burn-down into a true curve.
-    # Weekly cumulative readings and monthly per-period hours both reduce to
-    # the same (date, cumulative-hours) observations.
-    if weekly_csv:
-        observations = load_weekly_actuals(weekly_csv, year)
-    elif actuals_csv:
-        observations = {
-            name: monthly_to_observations(year, months)
-            for name, months in load_monthly_actuals(actuals_csv).items()
-        }
-    else:
-        observations = {}
+    observations = _load_observations(year, actuals_csv, weekly_csv)
 
     as_of_date = as_of.date() if as_of else None
     statuses = []
@@ -579,6 +708,25 @@ def _burndown_statuses(allocs, year, as_of, actuals_csv=None, weekly_csv=None):
             obs = [o for o in obs if o[0] <= as_of_date]
         statuses.append(burndown(alloc, year, as_of=as_of_date, observations=obs))
     return statuses
+
+
+def _load_observations(year, actuals_csv=None, weekly_csv=None):
+    """Spend readings as ``{name: [(date, cumulative hours)]}``; weekly wins.
+
+    Weekly cumulative readings and monthly per-period hours both reduce to the
+    same observations, so everything downstream handles one shape.
+    """
+    from budgie.core.actuals import load_weekly_actuals, monthly_to_observations
+    from budgie.core.monthly import load_monthly_actuals
+
+    if weekly_csv:
+        return load_weekly_actuals(weekly_csv, year)
+    if actuals_csv:
+        return {
+            name: monthly_to_observations(year, months)
+            for name, months in load_monthly_actuals(actuals_csv).items()
+        }
+    return {}
 
 
 def _write_html_emails(statuses, year, out_dir):
@@ -1153,6 +1301,21 @@ def assumptions(year, pto):
             "core/costs.py",
         ),
         _row(
+            "Estimate at completion",
+            "with actuals, forecast replaces the past with each person's latest"
+            " reading; the remainder is their plan x the share of working days"
+            " left after it. Spent hours are costed at the current rate;"
+            " non-labor lines are not adjusted",
+            "core/eac.py, --ignore-actuals",
+        ),
+        _row(
+            "Allocated hours",
+            "from plan.csv when the project has one, walked day by day; the FTE"
+            " shown is the year average, and anyone the plan doesn't mention"
+            " keeps their flat fte from allocations.csv",
+            "core/allocation.py, --plan",
+        ),
+        _row(
             "Burn-down pace",
             "expectation is a straight line from 0 on Jan 1"
             " to the full allocation on Dec 31",
@@ -1226,6 +1389,7 @@ def plan(plan_csv, year, pto):
     Each row applies from its effective date until the next row for that person,
     so joining mid-year, leaving, and re-planning are all just appended rows.
     """
+    from budgie.core.allocation import pto_overrides
     from budgie.core.plan import load_plan
     from budgie.utils.utils import display_startup_message
 
@@ -1234,11 +1398,17 @@ def plan(plan_csv, year, pto):
     year = _setting("year", year, 2026)
     pto = _setting("pto", pto, 0.0)
 
+    # A person's own pto_days lives in allocations.csv. `hours` honours it, so
+    # this view has to as well or the two disagree about the same plan. Project
+    # file only: the bundled sample allocations are a different team.
+    alloc_csv = _workspace_input("allocations")
+    pto_by_name = pto_overrides(alloc_csv) if alloc_csv else {}
+
     allocation_plan = load_plan(plan_csv)
-    _print_plan_table(allocation_plan, year, pto)
+    _print_plan_table(allocation_plan, year, pto, pto_by_name)
 
 
-def _print_plan_table(allocation_plan, year, pto):
+def _print_plan_table(allocation_plan, year, pto, pto_by_name=None):
     from rich.table import Table
 
     from budgie.singletons import console
@@ -1251,7 +1421,8 @@ def _print_plan_table(allocation_plan, year, pto):
     table.add_column("Hours", justify="right")
     total = 0.0
     for name in allocation_plan.names:
-        hours = allocation_plan.allocated_hours(name, year, pto_days=pto)
+        days = (pto_by_name or {}).get(name, pto)
+        hours = allocation_plan.allocated_hours(name, year, pto_days=days)
         total += hours
         changes = ", ".join(
             f"{e.effective_date:%b %-d}→{e.fte:g}"

@@ -80,10 +80,17 @@ def load_weekly_actuals(
 
 
 def monthly_to_observations(year: int, monthly_hours: list[float]) -> list[Observation]:
-    """Convert per-month hours into cumulative month-end observations."""
+    """Convert per-month hours into cumulative month-end observations.
+
+    Stops after the last month that has hours. A trailing empty month is a
+    month nobody has reported yet, not a reading of zero -- emitting it would
+    date the latest observation Dec 31 and leave no year to pace against. An
+    empty month *between* two reported ones is a real reading and is kept.
+    """
+    reported = max((i + 1 for i, h in enumerate(monthly_hours) if h), default=0)
     out: list[Observation] = []
     running = 0.0
-    for index, hours in enumerate(monthly_hours):
+    for index, hours in enumerate(monthly_hours[:reported]):
         running += hours
         out.append((last_day_of_month(year, index + 1), running))
     return out
