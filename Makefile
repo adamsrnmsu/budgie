@@ -11,13 +11,13 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
-venv: ## Create the virtualenv in $(VENV) and install budgie (editable) with deps
+venv: ## Create the virtualenv in $(VENV) and install budgie (editable) with dev tools
 	python3 -m venv $(VENV)
 	$(BIN)/pip install --upgrade pip
-	$(BIN)/pip install -e .
+	$(BIN)/pip install -e '.[dev]'
 
 install: ## Reinstall the package into an existing venv
-	$(BIN)/pip install -e .
+	$(BIN)/pip install -e '.[dev]'
 
 activate: ## Print the command to activate the venv (a target can't alter your shell)
 	@echo "Run this in your shell:  source $(BIN)/activate"

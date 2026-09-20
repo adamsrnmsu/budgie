@@ -166,6 +166,9 @@ montecarlo.png
 forecast.png
 TODO.md
 
+# uv lockfile -- the project installs with pip + Makefile, so this only goes stale
+uv.lock
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db

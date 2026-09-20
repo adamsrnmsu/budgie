@@ -3,21 +3,28 @@ name = "Budgie"
 version = "0.1.0"
 description = "The Ultimate Project Budget Companion"
 authors = [{name = "Ryan Adams", email = "adamsrnmsu@gmail.com"}]
+# 3.10 is the real floor: itertools.pairwise (core/actuals.py) and
+# zip(strict=True) (core/allocation.py) both arrived there.
+requires-python = ">=3.10"
 
+# Runtime only -- what the package imports. Test and lint tools are in `dev`.
 dependencies = [
     "pyfiglet",
     "rich",
-    "black",
     "click",
-    "pytest>=6.2.4",
-    "pytest-asyncio",
-    "isort",
-    "ruff",
     "pyyaml",
     "numpy",
     "holidays",
     "matplotlib",
     "textual",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.2.4",
+    "pytest-asyncio",
+    "isort",
+    "ruff",
 ]
 
 [project.scripts]
