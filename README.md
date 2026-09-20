@@ -37,7 +37,7 @@ Requires Python 3.10+.
 ```bash
 git clone https://github.com/adamsrnmsu/budgie.git
 cd budgie
-make venv                      # creates the venv and installs budgie + deps
+make venv                      # creates the venv and installs budgie + deps + dev tools
 make activate                  # prints the source command for your shell
 ```
 
@@ -49,7 +49,8 @@ Or by hand:
 
 ```bash
 python3 -m venv /path/to/env && source /path/to/env/bin/activate
-pip install -e .
+pip install -e .                # to use it
+pip install -e '.[dev]'          # to work on it: adds pytest, ruff, isort
 ```
 
 > **Note:** make sure the interpreter running `budgie` is the same one `pip` installed into.
@@ -205,6 +206,27 @@ Budget: original $720,000 → current $765,000 (+45,000 over 3 revisions)
 ● BAD — 77% chance of exceeding budget
 ```
 
+Once the project has spend readings (`actuals.csv` or `weekly.csv`), `forecast` stops
+re-forecasting the months that have already happened and prints an **estimate at
+completion** instead: the hours each person has actually booked, plus a forecast of only
+the time left.
+
+```bash
+budgie forecast --weekly weekly.csv --seed 42     # or --actuals actuals.csv
+budgie forecast --as-of 2026-06-30                # ignore readings dated after this
+budgie forecast --ignore-actuals                  # the full-year plan, as before
+```
+
+The rule: **hours at completion = spent + plan × the share of working days left** after
+that person's latest reading. It is applied to the low, most-likely and high estimates
+alike, so the Monte Carlo range narrows as the year goes on and collapses to a single
+number on Dec 31. The table gains a **Spent** column; anyone without a reading stays on
+their full-year plan and shows `—`. If both files exist, weekly wins; a file named on the
+command line beats the project's. `--as-of` only chooses which readings count — the
+elapsed share is always measured at the reading's own date, because hours after it are
+unknown. Spent hours are costed at the person's current rate, and non-labor costs are not
+adjusted (there are no actuals for them).
+
 ### `budgie monthly` — the trend, not just the total
 
 ```bash
@@ -255,6 +277,9 @@ Hours are counted **day by day over real working days**, so a mid-month start is
 the actual day. Carol's July 15 start at 0.50 FTE yields 466 hours — not the 996 a flat annual
 model would give, and not the 502 you'd get by rounding her start to July 1.
 
+Inside a project, anyone with their own `pto_days` in `allocations.csv` is counted with that
+figure rather than the team's `--pto`, so this table and `budgie hours` always agree.
+
 ### `budgie hours` — how much time does everyone have left?
 
 ```bash
@@ -263,6 +288,17 @@ budgie hours --allocations allocations.csv --year 2026
 
 Converts each person's FTE into an hours budget, subtracts what they've spent, and flags
 anyone over. `0.25 FTE × 1,992 available hours = 498 allocated`.
+
+**`--plan`** — when the project has a `plan.csv` (or you pass `--plan FILE`), `hours` and
+`emails` take each person's allocated hours from the plan rather than from the flat `fte`
+column in `allocations.csv`. The plan is walked day by day, so someone who drops to 0 FTE on
+September 1 is allocated only the working days before it. `allocations.csv` still supplies
+`hours_spent`, `email` and `pto_days`. The FTE column then shows the **year average**
+(planned hours ÷ the full-time ceiling), which is why a person planned at 0.50 until
+September reads 0.33. Anyone the plan doesn't mention keeps their flat `fte`, with a
+warning. Anyone in the plan but missing from `allocations.csv` is listed with 0 hours
+spent. There is no sample fallback for this option: with no project and no `--plan`, the
+flat `fte` is used exactly as before.
 
 ### `budgie emails` — tell each person where they stand
 
@@ -295,6 +331,10 @@ means about 15 hours a week -- 36% of your time.
 The working days left are real ones (Mon–Fri minus federal holidays), so a December
 reading doesn't imply capacity that isn't there. If the remaining hours would need more
 than a full-time week, the draft says so outright.
+
+With `--actuals` or `--weekly`, the latest reading **is** the hours-spent figure everywhere
+in the draft; `hours_spent` in `allocations.csv` is only the fallback when there are no
+readings. A file you name beats the project's copies, whichever kind it is.
 
 ### `budgie tui` — explore and re-plan interactively
 
@@ -353,7 +393,7 @@ person.
 ```csv
 name,email,fte,hours_spent,pto_days
 Alice,alice@example.com,0.25,180,
-Bob,bob@example.com,0.50,760,20
+Bob,bob@example.com,0.50,540,20
 ```
 
 `pto_days` is optional — leave it blank and the project's `pto` applies. Bob takes 20 days
