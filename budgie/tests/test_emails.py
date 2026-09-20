@@ -106,3 +106,28 @@ def test_eml_embeds_the_chart_by_content_id(tmp_path):
     # Outlook won't render data: URIs, so the chart must be a cid: attachment.
     assert any(part.get_content_type() == "image/png" for part in msg.walk())
     assert "cid:burndown" in msg.get_body(preferencelist=("html",)).get_content()
+
+
+def test_a_named_actuals_file_beats_the_projects_weekly(tmp_path, monkeypatch):
+    # Weekly outranks monthly, so resolving each flag on its own let the
+    # project's weekly.csv silently override an explicit --actuals.
+    from click.testing import CliRunner
+
+    from budgie.budgie import cli
+    from budgie.core.scaffold import init_workspace
+    from budgie.core.workspace import forget_workspaces
+
+    init_workspace(tmp_path, year=2026)
+    mine = tmp_path / "mine.csv"
+    mine.write_text("name,month,hours\nAlice,1,11\n")
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+    result = CliRunner().invoke(
+        cli, ["emails", "--plain", "--actuals", str(mine), "--out-dir", "out"]
+    )
+    assert result.exit_code == 0, result.output
+    body = (tmp_path / "out" / "alice.txt").read_text()
+    # One spent figure throughout: the reading, not allocations.csv's 180.
+    assert "Hours spent:      11" in body
+    assert "remaining 487 hours" in body

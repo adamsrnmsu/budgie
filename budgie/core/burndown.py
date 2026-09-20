@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 
 from budgie.core.actuals import Observation
@@ -192,6 +192,12 @@ def burndown(
             as_of = date.today()  # noqa: DTZ011
     # Clamp so a past/future year still yields a sane elapsed figure.
     as_of = min(max(as_of, start), end)
+
+    if obs:
+        # A dated reading beats the allocation's undated scalar -- and the
+        # status has to carry ONE spent figure, or a draft quotes the scalar in
+        # its table and the reading in its pace sentence.
+        allocation = replace(allocation, hours_spent=obs[-1][1])
 
     logger.debug(
         "burndown %s: as_of=%s observations=%d", allocation.name, as_of, len(obs)

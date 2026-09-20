@@ -408,3 +408,21 @@ async def test_deleting_the_open_project_falls_back_to_what_is_left(
         assert pilot.app.workspace is not None
         assert pilot.app.workspace.root == (container / "fy27").resolve()
         assert pilot.app.project_names() == ["fy27"]
+
+
+async def test_a_broken_neighbour_is_listed_not_fatal(tmp_path, monkeypatch):
+    # The browser loads every project nearby to count its inputs, so one bad
+    # budgie.yaml next door used to take the whole app down on mount.
+    init_workspace(tmp_path / "budget" / "fy26", year=2026)
+    broken = tmp_path / "budget" / "fy27"
+    broken.mkdir()
+    (broken / "budgie.yaml").write_text("inputs:\n  peeple: people.csv\n")
+    monkeypatch.chdir(tmp_path / "budget" / "fy26")
+    forget_workspaces()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.project_names() == ["fy26", "fy27"]
+        assert "won't load" in app.switch_project("fy27")
+        assert app.workspace.root.name == "fy26"  # still on the one that works

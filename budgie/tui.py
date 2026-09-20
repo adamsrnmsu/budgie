@@ -44,6 +44,7 @@ from textual.widgets import (
     TabPane,
 )
 
+from budgie.core.allocation import pto_overrides
 from budgie.core.calendar import PTO_RULE, explain_pto, productive_hours
 from budgie.core.csvio import parse_date
 from budgie.core.forecast import forecast as run_forecast
@@ -550,7 +551,12 @@ class BudgieTUI(App):
         for project in self.projects():
             if project.name != name:
                 continue
-            self.workspace = project.load()
+            workspace = self._open(project)
+            if workspace is None:
+                return self._projects_status(
+                    f"{name}'s {project.config_path.name} won't load -- fix it first."
+                )
+            self.workspace = workspace
             # A --people path given at launch was an instruction about the old
             # project; picking a new one in the browser is the newer of the two,
             # and leaving it set would make the switch look like it did nothing.
@@ -559,6 +565,18 @@ class BudgieTUI(App):
             self.recalculate()
             return self._projects_status(f"Switched to {name}")
         return self._projects_status(f"No project called {name}")
+
+    @staticmethod
+    def _open(project):
+        """The project's workspace, or None if its config won't load.
+
+        The browser lists every project nearby, so one of them being broken is
+        a normal state -- the same stance as a people.csv that won't parse.
+        """
+        try:
+            return project.load()
+        except (OSError, TypeError, ValueError):
+            return None
 
     def _projects_status(self, message: str) -> str:
         self.query_one("#projects_status", Static).update(message)
@@ -629,7 +647,7 @@ class BudgieTUI(App):
             self._people_override = None
             remaining = self.projects()
             if len(remaining) == 1:
-                self.workspace = remaining[0].load()
+                self.workspace = self._open(remaining[0])
         forget_workspaces()
         self.recalculate()
         return self._projects_status(f"Deleted {name} ({len(removed)} file(s)).")
@@ -665,11 +683,18 @@ class BudgieTUI(App):
         current = self.workspace.root if self.workspace else None
         projects = self.projects()
         for project in projects:
-            present = sum(1 for i in project.load().inputs() if i.exists)
+            # A neighbour's broken budgie.yaml is that project's problem: say
+            # so on its row rather than taking the whole browser down with it.
+            workspace = self._open(project)
+            if workspace is None:
+                inputs = "[red]bad config[/red]"
+            else:
+                present = sum(1 for i in workspace.inputs() if i.exists)
+                inputs = f"{present}/{len(INPUTS)}"
             table.add_row(
                 "→" if project.root == current else "",
                 project.name,
-                f"{present}/{len(INPUTS)}",
+                inputs,
                 shorten_path(project.root, max(self.size.width - 40, 20)),
             )
         if projects:
@@ -795,15 +820,21 @@ class BudgieTUI(App):
             table.add_row("[dim]no plan.csv in this project[/dim]", "", "")
             return
 
+        # A person's own pto_days (allocations.csv) applies here too, or this
+        # tab and `budgie hours` disagree about the same plan.
+        allocations = self.workspace.resolve("allocations") if self.workspace else None
         try:
             plan = load_plan(path)
+            pto_by_name = pto_overrides(allocations) if allocations else {}
         except (OSError, ValueError) as exc:
-            table.add_row(f"[red]{path.name}: {exc}[/red]", "", "")
+            table.add_row(f"[red]{exc}[/red]", "", "")
             return
 
         total = 0.0
         for name in plan.names:
-            hours = plan.allocated_hours(name, year, pto_days=pto)
+            hours = plan.allocated_hours(
+                name, year, pto_days=pto_by_name.get(name, pto)
+            )
             total += hours
             changes = ", ".join(
                 f"{e.effective_date:%b %-d}→{e.fte:g}" for e in plan.changes_for(name)

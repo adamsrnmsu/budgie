@@ -70,7 +70,7 @@ Bob,110,0.70,0.85,0.95
 ALLOCATIONS_CSV = """\
 name,fte,hours_spent,email,pto_days
 Alice,0.25,180,alice@example.com,
-Bob,0.50,760,bob@example.com,20
+Bob,0.50,540,bob@example.com,20
 """
 
 PLAN_CSV = """\
@@ -104,8 +104,8 @@ WEEKLY_CSV = """\
 name,week,hours_to_date
 Alice,12,150
 Alice,20,180
-Bob,12,600
-Bob,20,760
+Bob,12,400
+Bob,20,540
 """
 
 SCENARIOS_YAML = """\
