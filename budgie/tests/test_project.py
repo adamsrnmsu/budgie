@@ -7,8 +7,14 @@ from click.testing import CliRunner
 
 from budgie.budgie import cli
 from budgie.core.allocation import Allocation
-from budgie.core.project import (budget_source, load_observations, load_snapshot,
-                                 readings_files, spent_to_date, with_readings)
+from budgie.core.project import (
+    budget_source,
+    load_observations,
+    load_snapshot,
+    readings_files,
+    spent_to_date,
+    with_readings,
+)
 from budgie.core.scaffold import init_workspace
 from budgie.core.workspace import CONFIG_NAME, forget_workspaces, load_workspace
 

@@ -23,8 +23,11 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
 
-from budgie.core.actuals import (Observation, load_weekly_actuals,
-                                 monthly_to_observations)
+from budgie.core.actuals import (
+    Observation,
+    load_weekly_actuals,
+    monthly_to_observations,
+)
 from budgie.core.allocation import Allocation, load_allocations
 from budgie.core.budget import Budget, coerce_budget
 from budgie.core.calendar import ProductiveHours, productive_hours
