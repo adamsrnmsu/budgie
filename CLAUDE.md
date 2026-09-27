@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Budgie is a CLI budget/forecasting companion — a terminal alternative to spreadsheet budgeting. It forecasts team cost from each person's **hourly cost × productive hours**, and puts confidence bounds around that forecast with a Monte Carlo simulation over uncertain expected hours. Direction is **CLI-first**, with a Textual TUI planned later; the engine is deliberately UI-independent so that choice stays reversible.
+Budgie is a CLI budget/forecasting companion — a terminal alternative to spreadsheet budgeting. It forecasts team cost from each person's **hourly cost × productive hours**, and puts confidence bounds around that forecast with a Monte Carlo simulation over uncertain expected hours. It is **CLI-first**, with a Textual TUI (`budgie tui`) over the same engine; the engine is deliberately UI-independent so either front-end can change without touching the math.
 
 ## Install & Run
 
@@ -127,7 +127,7 @@ Presentation layers (all thin adapters over `core/`):
 
 ## Non-interactive shell commands
 
-`cp`, `mv` and `rm` may be aliased to `-i` on this machine, and an agent waiting on a y/n prompt hangs forever. Use `cp -f`, `mv -f`, `rm -f` / `rm -rf`; `-o BatchMode=yes` for `ssh`/`scp`; `HOMEBREW_NO_AUTO_UPDATE=1` for `brew`.
+The agent's shell has no TTY, so a command that waits for y/n input hangs. Use the non-interactive form where one exists: `-o BatchMode=yes` for `ssh`/`scp`; `HOMEBREW_NO_AUTO_UPDATE=1` for `brew`.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:46cd31e7 -->
 ## Beads Issue Tracker
