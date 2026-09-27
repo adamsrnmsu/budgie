@@ -151,10 +151,9 @@ def _budget_arg(override):
     """Resolve --budget: explicit value > a number in budgie.yaml > budget.csv."""
     if override is not None:
         return override
-    pinned = _setting("budget", None, None)
-    if pinned is not None:
-        return pinned
-    return _workspace_input("budget")
+    from budgie.core.project import budget_source
+
+    return budget_source(_workspace())
 
 
 def _setting(key: str, override, default):
@@ -336,10 +335,10 @@ def forecast(
     # the project's, whichever kind it is.
     readings = {}
     if not ignore_actuals:
-        if not (actuals_csv or weekly_csv):
-            actuals_csv = _workspace_input("actuals")
-            weekly_csv = _workspace_input("weekly")
-        observations = _load_observations(year, actuals_csv, weekly_csv)
+        from budgie.core.project import load_observations, readings_files
+
+        actuals_csv, weekly_csv = readings_files(_workspace(), actuals_csv, weekly_csv)
+        observations = load_observations(year, actuals_csv, weekly_csv)
         if observations:
             from budgie.core.eac import at_completion
 
@@ -552,9 +551,19 @@ def hours(alloc_csv, year, pto, plan_csv):
     year = _setting("year", year, 2026)
     pto = _setting("pto", pto, 0.0)
 
+    from budgie.core.project import (
+        load_observations,
+        readings_files,
+        spent_to_date,
+        with_readings,
+    )
+
     ph = productive_hours(year, pto_days=pto)
     plan_csv, plan = _plan_for_allocations(plan_csv)
     allocs = load_allocations(alloc_csv, available_hours=ph, plan=plan)
+    # The project's latest reading is the spent figure, as in `emails`.
+    readings = load_observations(year, *readings_files(_workspace()))
+    allocs = with_readings(allocs, spent_to_date(readings))
     logger.info(f"Available hours {year}: {ph.available_hours:,.0f} (1.0 FTE)")
     _print_hours_table(allocs)
     if plan_csv:
@@ -651,12 +660,9 @@ def emails(
     alloc_csv = _input("allocations", alloc_csv, "allocations.csv")
     year = _setting("year", year, 2026)
     pto = _setting("pto", pto, 0.0)
-    # Actuals are optional, so only reach for the project's copies when the
-    # user named neither -- otherwise `--actuals mine.csv` would silently lose
-    # to the project's weekly.csv, which outranks it. Same rule as `forecast`.
-    if not (actuals_csv or weekly_csv):
-        actuals_csv = _workspace_input("actuals")
-        weekly_csv = _workspace_input("weekly")
+    from budgie.core.project import readings_files
+
+    actuals_csv, weekly_csv = readings_files(_workspace(), actuals_csv, weekly_csv)
 
     ph = productive_hours(year, pto_days=pto)
     _, plan = _plan_for_allocations(plan_csv)
@@ -695,9 +701,10 @@ def _burndown_statuses(allocs, year, as_of, actuals_csv=None, weekly_csv=None):
     pace, which is measured against the working days left after the as-of date.
     """
     from budgie.core.burndown import burndown
+    from budgie.core.project import load_observations
 
     # Real spend readings turn the interpolated burn-down into a true curve.
-    observations = _load_observations(year, actuals_csv, weekly_csv)
+    observations = load_observations(year, actuals_csv, weekly_csv)
 
     as_of_date = as_of.date() if as_of else None
     statuses = []
@@ -708,25 +715,6 @@ def _burndown_statuses(allocs, year, as_of, actuals_csv=None, weekly_csv=None):
             obs = [o for o in obs if o[0] <= as_of_date]
         statuses.append(burndown(alloc, year, as_of=as_of_date, observations=obs))
     return statuses
-
-
-def _load_observations(year, actuals_csv=None, weekly_csv=None):
-    """Spend readings as ``{name: [(date, cumulative hours)]}``; weekly wins.
-
-    Weekly cumulative readings and monthly per-period hours both reduce to the
-    same observations, so everything downstream handles one shape.
-    """
-    from budgie.core.actuals import load_weekly_actuals, monthly_to_observations
-    from budgie.core.monthly import load_monthly_actuals
-
-    if weekly_csv:
-        return load_weekly_actuals(weekly_csv, year)
-    if actuals_csv:
-        return {
-            name: monthly_to_observations(year, months)
-            for name, months in load_monthly_actuals(actuals_csv).items()
-        }
-    return {}
 
 
 def _write_html_emails(statuses, year, out_dir):

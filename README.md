@@ -289,6 +289,10 @@ budgie hours --allocations allocations.csv --year 2026
 Converts each person's FTE into an hours budget, subtracts what they've spent, and flags
 anyone over. `0.25 FTE × 1,992 available hours = 498 allocated`.
 
+When the project has spend readings (`weekly.csv`, else `actuals.csv`), each person's
+latest reading is their spent figure, the same number `emails` and `forecast` use;
+`hours_spent` in `allocations.csv` only stands for anyone without a reading.
+
 **`--plan`** — when the project has a `plan.csv` (or you pass `--plan FILE`), `hours` and
 `emails` take each person's allocated hours from the plan rather than from the flat `fte`
 column in `allocations.csv`. The plan is walked day by day, so someone who drops to 0 FTE on
