@@ -46,6 +46,8 @@ Note: this project is typically installed into a virtualenv. Be careful that the
 - Lint: `ruff check .` (`make lint` runs the same)
 - Format: `make format` (runs `isort .` then `ruff format .`)
 - Test: `pytest` — single test e.g. `pytest budgie/tests/test_core.py::test_productive_hours_matches_definition`
+- Docs: `make docs` (`sphinx-build -W` into `docs/_build/html`; needs the `docs` extra). CI runs the same build.
+  - The user-guide pages **include `README.md` in pieces** rather than copying it, cut on the exact text of its `## ` headings (`:start-after:` / `:end-before:` in `docs/*.md`). Renaming or reordering a README `## ` section means updating those pages; the `-W` build fails if a cut point goes missing. The CLI reference is sphinx-click over `cli`, and the API reference is autodoc over `budgie.core` (Google-style `Args:` sections via napoleon) — so a new core module needs an `automodule` line in `docs/api.md`.
 
 ## Architecture
 
