@@ -26,6 +26,13 @@ dev = [
     "isort",
     "ruff",
 ]
+# Builds the Sphinx site in docs/ (`make docs`).
+docs = [
+    "sphinx",
+    "myst-parser",
+    "furo",
+    "sphinx-click",
+]
 
 [project.scripts]
 budgie = "budgie.budgie:cli"

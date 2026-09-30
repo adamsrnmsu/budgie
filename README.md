@@ -51,6 +51,7 @@ Or by hand:
 python3 -m venv /path/to/env && source /path/to/env/bin/activate
 pip install -e .                # to use it
 pip install -e '.[dev]'          # to work on it: adds pytest, ruff, isort
+pip install -e '.[dev,docs]'     # ...and Sphinx, to build the docs site
 ```
 
 > **Note:** make sure the interpreter running `budgie` is the same one `pip` installed into.
@@ -561,6 +562,7 @@ with its current value and the module that sets it.
 make test      # pytest
 make lint      # ruff check
 make format    # isort + ruff format
+make docs      # Sphinx site in docs/_build/html
 make help      # list all targets
 ```
 
