@@ -1,8 +1,10 @@
 # Agent Instructions
 
-**Read [CLAUDE.md](CLAUDE.md).** It is the single source of project guidance for every
-agent: install, commands, architecture, testing notes, and the Beads workflow. Edit
-that file, not this one.
+**Read [CLAUDE.md](CLAUDE.md).** It is the root of project guidance for every
+agent: install, commands, the architecture rules, and the Beads workflow. Engine module
+notes are in [budgie/core/CLAUDE.md](budgie/core/CLAUDE.md) and testing notes in
+[budgie/tests/CLAUDE.md](budgie/tests/CLAUDE.md); read them before working in those
+directories. Edit those files, not this one.
 
 This is a pointer rather than a symlink because `bd setup codex` refuses to write
 through a symlink, and the block below is the one it manages here.
