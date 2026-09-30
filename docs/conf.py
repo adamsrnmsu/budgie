@@ -23,6 +23,15 @@ exclude_patterns = ["_build"]
 
 html_theme = "furo"
 html_title = "Budgie"
+# The shared pi_suite terminal skin: see the header of _static/hacker.css.
+html_static_path = ["_static"]
+html_css_files = ["hacker.css"]
+pygments_style = pygments_dark_style = "native"
+html_theme_options = {
+    "source_repository": "https://github.com/adamsrnmsu/budgie",
+    "source_branch": "main",
+    "source_directory": "docs/",
+}
 
 # Anchors for README headings, so in-page links like (#start-a-project) resolve.
 myst_heading_anchors = 3
