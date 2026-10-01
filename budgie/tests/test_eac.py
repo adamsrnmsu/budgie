@@ -42,7 +42,7 @@ def test_monthly_observations_stop_at_the_last_reported_month():
     months = load_monthly_actuals(TESTS_DIR / "actuals.csv")
     obs = monthly_to_observations(2026, next(iter(months.values())))
     # Data runs through July. Before the fix this was Dec 31.
-    assert obs[-1] == (date(2026, 7, 31), 180.0)
+    assert obs[-1] == (date(2026, 7, 31), 1040.0)
 
 
 def test_monthly_observations_keep_an_empty_month_in_the_middle():

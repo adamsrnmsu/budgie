@@ -135,7 +135,7 @@ year: 2026
 pto: 0
 iterations: 10000
 seed: 42
-budget: 720000
+budget: 425000
 
 inputs:
   people: people.csv
@@ -203,8 +203,8 @@ budgie forecast --costs costs.csv --budget budget.csv --seed 42
 Total (labor)                    $712,738
 Non-labor                         $81,500
 Labor + non-labor                $794,238
-Budget: original $720,000 → current $765,000 (+45,000 over 3 revisions)
-● BAD — 77% chance of exceeding budget
+Budget: original $800,000 → current $835,000 (+35,000 over 3 revisions)
+● GOOD — Only 1% chance of exceeding budget -- comfortably covered.
 ```
 
 Once the project has spend readings (`actuals.csv` or `weekly.csv`), `forecast` stops
@@ -231,7 +231,7 @@ adjusted (there are no actuals for them).
 ### `budgie monthly` — the trend, not just the total
 
 ```bash
-budgie monthly --budget 720000 --seed 42 --plots
+budgie monthly --budget 800000 --seed 42 --plots
 ```
 
 Breaks the year into months **weighted by real working days** (February and holiday-heavy
@@ -252,7 +252,7 @@ budgie scenario --config scenarios.yaml
 ```
 
 ```
-● Baseline           $712,738        —   18% over budget → CAUTION
+● Baseline           $712,738        —    0% over budget → GOOD
 ● With 15 PTO days   $669,802  −$42,936    0%            → GOOD
 ● Lean team (3)      $505,570 −$207,168    0%            → GOOD
 ```
@@ -270,19 +270,21 @@ each row applies from its date until the next row for that person.
 
 ```csv
 name,effective_date,fte
-Alice,2026-01-01,0.25
-Bob,2026-01-01,0.50
-Bob,2026-09-01,0.00      # zeroed out — left the project
-Carol,2026-07-15,0.50    # joined mid-July
-Dave,2026-01-01,0.25
-Dave,2026-04-01,0.75     # re-planned upward
+Alice,2026-01-01,0.90
+Bob,2026-01-01,0.85
+Charlie,2026-01-01,0.88
+David,2026-01-01,0.80
 ```
 
+That is the whole sample team at the same FTE as their `util_mode` in `team.csv`, so the plan
+and the forecast tell one story (6,833 hours either way).
+
 Adding a member, zeroing someone out, and re-planning are all the same operation: append a
-row. You never edit history, so the record of what changed and when is preserved.
+row (say `Bob,2026-09-01,0.00` when he leaves, or `Carol,2026-07-15,0.50` for a new hire). You
+never edit history, so the record of what changed and when is preserved.
 
 Hours are counted **day by day over real working days**, so a mid-month start is charged from
-the actual day. Carol's July 15 start at 0.50 FTE yields 466 hours — not the 996 a flat annual
+the actual day. A new hire Carol starting July 15 at 0.50 FTE yields 466 hours — not the 996 a flat annual
 model would give, and not the 502 you'd get by rounding her start to July 1.
 
 Inside a project, anyone with their own `pto_days` in `allocations.csv` is counted with that
@@ -295,7 +297,7 @@ budgie hours --allocations allocations.csv --year 2026
 ```
 
 Converts each person's FTE into an hours budget, subtracts what they've spent, and flags
-anyone over. `0.25 FTE × 1,992 available hours = 498 allocated`.
+anyone over. `0.90 FTE × 1,992 available hours = 1,793 allocated`.
 
 When the project has spend readings (`weekly.csv`, else `actuals.csv`), each person's
 latest reading is their spent figure, the same number `emails` and `forecast` use;
@@ -404,18 +406,21 @@ person.
 
 ```csv
 name,email,fte,hours_spent,pto_days
-Alice,alice@example.com,0.25,180,
-Bob,bob@example.com,0.50,540,20
+Alice,alice@example.com,0.90,660,
+Bob,bob@example.com,0.85,620,
 ```
 
-`pto_days` is optional — leave it blank and the project's `pto` applies. Bob takes 20 days
-regardless of what the rest of the team is assumed to take.
+`pto_days` is optional — leave it blank and the project's `pto` applies; put a number there
+(`20`) and that person gets their own regardless of what the rest of the team is assumed to
+take. Keep `fte` in step with the person's utilization in the team file: 0.90 FTE and
+`util_mode` 0.90 is the same person described twice.
 
 **Allocation plan** — `plan.csv` (for `plan`; see above for semantics):
 
 ```csv
 name,effective_date,fte
-Carol,2026-07-15,0.50
+Alice,2026-01-01,0.90
+Bob,2026-01-01,0.85
 ```
 
 **Actuals** — optional, for true burn-down curves. Two shapes, whichever your data gives you.
@@ -424,8 +429,8 @@ Per-period monthly hours (`actuals.csv`, used with `--actuals`):
 
 ```csv
 name,month,hours
-Alice,1,26
-Alice,2,24
+Alice,1,150
+Alice,2,140
 ```
 
 Or **cumulative hours through an ISO week** (`weekly.csv`, used with `--weekly`) — which is what
@@ -433,9 +438,9 @@ most timesheet exports actually give you:
 
 ```csv
 name,week,hours_to_date
-Alice,12,88
-Alice,20,142
-Alice,29,180
+Alice,12,430
+Alice,20,660
+Alice,29,990
 ```
 
 These are *cumulative totals*, not per-week hours, so nothing is invented about how the time
@@ -462,9 +467,9 @@ monthly and fan charts rather than being smeared across the year.
 
 ```csv
 effective_date,amount,note
-2026-01-01,720000,Original approved budget
-2026-05-01,780000,Q2 increase for extra scope
-2026-10-01,765000,Q4 trim
+2026-01-01,800000,Original approved budget
+2026-05-01,850000,Q2 increase for extra scope
+2026-10-01,835000,Q4 trim
 ```
 
 Each revision holds until the next, same as an allocation plan — you append rather than
@@ -475,7 +480,7 @@ original. A plain number still works anywhere a budget is accepted.
 **Scenarios** — `scenarios.yaml`:
 
 ```yaml
-budget: 720000        # or a list of revisions, or budget.csv
+budget: 800000        # or a list of revisions, or budget.csv
 costs: costs.csv      # optional non-labor lines applied to every scenario
 iterations: 10000
 seed: 42

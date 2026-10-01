@@ -46,7 +46,7 @@ def test_blue_when_unchanged_from_baseline():
 
 def test_run_scenarios_from_config():
     results, budget = run_scenarios(TESTS_DIR / "scenarios.yaml")
-    assert budget == 720000
+    assert budget == 800000
     assert results[0].name == "Baseline"
     assert results[0].cost_delta == 0
     # PTO scenario is cheaper than baseline.

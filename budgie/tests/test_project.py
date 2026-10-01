@@ -45,9 +45,9 @@ def test_weekly_beats_monthly(project):
     both = load_observations(2026, project / "actuals.csv", project / "weekly.csv")
     monthly = load_observations(2026, project / "actuals.csv")
 
-    # The scaffold's weekly Alice ends at 180 in week 20; monthly at 60 in Feb.
-    assert both["Alice"][-1] == (date(2026, 5, 17), 180)
-    assert monthly["Alice"][-1] == (date(2026, 2, 28), 60)
+    # The scaffold's weekly Alice ends at 660 in week 20; monthly at 290 in Feb.
+    assert both["Alice"][-1] == (date(2026, 5, 17), 660)
+    assert monthly["Alice"][-1] == (date(2026, 2, 28), 290)
     assert load_observations(2026) == {}
 
 
@@ -72,10 +72,10 @@ def test_a_reading_beats_hours_spent_and_no_reading_keeps_it():
 
 def test_a_pinned_budget_beats_budget_csv(project):
     config = project / CONFIG_NAME
-    # The scaffold pins `budget: 720000` and also writes a budget.csv.
-    assert budget_source(load_workspace(config)) == 720000
+    # The scaffold pins `budget: 425000` and also writes a budget.csv.
+    assert budget_source(load_workspace(config)) == 425000
 
-    config.write_text(config.read_text().replace("budget: 720000", ""))
+    config.write_text(config.read_text().replace("budget: 425000", ""))
     assert budget_source(load_workspace(config)).endswith("budget.csv")
     assert budget_source(None) is None
 
@@ -85,7 +85,7 @@ def test_snapshot_applies_every_rule(project):
 
     assert snap.year == 2026
     # Weekly readings are the spent figure (they match the scaffold's scalar).
-    assert snap.spent == {"Alice": 180, "Bob": 540}
+    assert snap.spent == {"Alice": 660, "Bob": 620}
     assert {"Alice", "Bob"} <= set(snap.allocated)
     assert snap.budget is not None and snap.budget.latest > 0
 
@@ -107,7 +107,7 @@ def test_snapshot_needs_a_year(tmp_path):
 
 
 def test_hours_and_emails_quote_the_same_spent_hours(project, monkeypatch):
-    # A reading that disagrees with allocations.csv's 180: both commands use it.
+    # A reading that disagrees with allocations.csv's 660: both commands use it.
     (project / "weekly.csv").write_text("name,week,hours_to_date\nAlice,20,300\n")
     monkeypatch.chdir(project)
     runner = CliRunner()
@@ -120,6 +120,6 @@ def test_hours_and_emails_quote_the_same_spent_hours(project, monkeypatch):
     assert hours.exit_code == 0, hours.output
     assert emails.exit_code == 0, emails.output
     alice_row = next(line for line in hours.output.splitlines() if "Alice" in line)
-    assert "300" in alice_row and "180" not in alice_row
+    assert "300" in alice_row and "660" not in alice_row
     draft = next((project / "out").glob("alice*"))
     assert "300" in draft.read_text()

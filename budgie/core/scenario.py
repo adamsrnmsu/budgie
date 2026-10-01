@@ -8,7 +8,7 @@ scenario's cost delta and stoplight signal are measured against it.
 
 Config shape (YAML), consumed by the ``budgie scenario`` command::
 
-    budget: 720000
+    budget: 800000
     iterations: 10000
     seed: 42
     scenarios:

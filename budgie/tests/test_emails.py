@@ -72,9 +72,19 @@ def test_emails_writes_eml_and_charts_by_default(tmp_path):
 
 
 def test_plain_flag_still_writes_text_drafts(tmp_path):
+    # David has booked more than his allocation (0.80 x 1992 = 1594 h).
+    over = tmp_path / "over.csv"
+    over.write_text(
+        "name,email,fte,hours_spent\n"
+        "Alice,alice@example.com,0.90,990\n"
+        "David,david@example.com,0.80,1600\n"
+    )
     result = CliRunner().invoke(
         cli,
-        ["emails", "--plain", "--out-dir", str(tmp_path), "--as-of", "2026-06-30"],
+        [
+            *("emails", "--plain", "--out-dir", str(tmp_path), "--as-of", "2026-06-30"),
+            *("--allocations", str(over)),
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -128,6 +138,6 @@ def test_a_named_actuals_file_beats_the_projects_weekly(tmp_path, monkeypatch):
     )
     assert result.exit_code == 0, result.output
     body = (tmp_path / "out" / "alice.txt").read_text()
-    # One spent figure throughout: the reading, not allocations.csv's 180.
+    # One spent figure throughout: the reading, not allocations.csv's 660.
     assert "Hours spent:      11" in body
-    assert "remaining 487 hours" in body
+    assert "remaining 1,782 hours" in body
