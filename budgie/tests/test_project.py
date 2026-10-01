@@ -1,5 +1,6 @@
 """Input precedence: every rule in core/project.py, and the commands that use it."""
 
+from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -7,7 +8,11 @@ from click.testing import CliRunner
 
 from budgie.budgie import cli
 from budgie.core.allocation import Allocation
+from budgie.core.budget import Budget
+from budgie.core.calendar import productive_hours
+from budgie.core.plan import AllocationPlan, PlanEntry
 from budgie.core.project import (
+    Snapshot,
     budget_source,
     load_observations,
     load_snapshot,
@@ -123,3 +128,93 @@ def test_hours_and_emails_quote_the_same_spent_hours(project, monkeypatch):
     assert "300" in alice_row and "660" not in alice_row
     draft = next((project / "out").glob("alice*"))
     assert "300" in draft.read_text()
+
+
+def test_snapshot_carries_budget_revisions_and_plan(project):
+    cfg = project / CONFIG_NAME  # the scaffold pins a number; drop it for budget.csv
+    cfg.write_text(cfg.read_text().replace("budget: 425000\n", ""))
+
+    snap = load_snapshot(project)
+
+    assert snap.budget_revisions is snap.budget and snap.budget.has_revisions
+    assert snap.plan is not None and "Alice" in snap.plan.names
+
+
+def test_pinned_budget_has_no_revisions_and_no_plan_csv_means_no_plan(project):
+    (project / "plan.csv").unlink()
+    snap = load_snapshot(project)
+
+    assert snap.budget.latest == 425000
+    assert snap.budget_revisions is None and snap.plan is None
+
+
+# 2026 with no PTO: a full-time ceiling of 1,992 h over 250 working days
+# (7.968 h each), and 126 of those days fall from 1 July to 31 December:
+# 126 x 7.968 = 1,003.968 h.
+def _alice(plan=None):
+    ceiling = productive_hours(2026, pto_days=0)
+    return Snapshot(
+        year=2026,
+        pto=0.0,
+        ceiling=ceiling,
+        people=[],
+        allocations=[Allocation("Alice", 1.0, 100.0, 1992.0)],
+        budget=Budget.flat(1000.0),
+        plan=plan,
+    )
+
+
+def test_what_if_budget_only_replaces_the_budget_with_a_flat_one():
+    snap = _alice()
+
+    after = snap.what_if(budget=800.0)
+
+    assert after.budget.latest == 800.0 and after.budget_revisions is None
+    assert after.allocated == snap.allocated == {"Alice": 1992.0}
+
+
+def test_what_if_a_leave_entry_removes_the_hours_after_it():
+    snap = _alice()
+
+    after = snap.what_if(plan_entries=[
+        PlanEntry("Alice", date(2026, 1, 1), 1.0),
+        PlanEntry("Alice", date(2026, 7, 1), 0.0),
+    ])  # fmt: skip
+
+    assert after.allocated == {"Alice": pytest.approx(1992.0 - 1003.968)}
+    assert after.spent == {"Alice": 100.0}
+    assert len(after.plan.entries) == 2
+
+
+def test_what_if_appends_to_the_existing_plan_and_adds_new_people():
+    base = AllocationPlan((PlanEntry("Alice", date(2026, 1, 1), 1.0),))
+
+    after = _alice(base).what_if(plan_entries=[
+        PlanEntry("Alice", date(2026, 7, 1), 0.0),
+        PlanEntry("Bob", date(2026, 7, 1), 0.5),
+    ])  # fmt: skip
+
+    assert after.allocated == {
+        "Alice": pytest.approx(988.032),
+        "Bob": pytest.approx(501.984),
+    }
+    assert after.spent["Bob"] == 0.0
+    assert len(after.plan.entries) == 3
+
+
+def test_what_if_without_a_leave_allocations_and_plan_only_snapshots():
+    only_plan = replace(_alice(), allocations=[])
+
+    after = only_plan.what_if(plan_entries=[PlanEntry("Bob", date(2026, 7, 1), 1.0)])
+
+    assert after.allocated == {"Bob": pytest.approx(1003.968)}
+
+
+def test_what_if_leaves_the_original_untouched():
+    snap = _alice()
+
+    snap.what_if(budget=1.0, plan_entries=[PlanEntry("Alice", date(2026, 7, 1), 0.0)])
+
+    assert snap.budget.latest == 1000.0 and snap.plan is None
+    assert snap.allocated == {"Alice": 1992.0}
+    assert snap.allocations[0].fte == 1.0

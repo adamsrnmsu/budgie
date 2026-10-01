@@ -19,7 +19,7 @@ extensions = [
     "sphinx_click",
 ]
 
-exclude_patterns = ["_build"]
+exclude_patterns = ["_build", "superpowers"]
 
 html_theme = "furo"
 html_title = "Budgie"

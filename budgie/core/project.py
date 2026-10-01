@@ -19,6 +19,7 @@ The CLI resolves its own options and bundled samples, then calls these;
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
@@ -35,7 +36,7 @@ from budgie.core.costs import load_costs, total_cost
 from budgie.core.loader import load_people
 from budgie.core.monthly import load_monthly_actuals
 from budgie.core.person import Person
-from budgie.core.plan import load_plan
+from budgie.core.plan import AllocationPlan, PlanEntry, load_plan
 from budgie.core.workspace import CONFIG_NAME, Workspace, load_workspace
 
 
@@ -120,6 +121,11 @@ class Snapshot:
     budget: Budget | None = None
     iterations: int = 10_000
     seed: int | None = None
+    #: The loaded budget.csv with its dated revisions and notes; None when the
+    #: budget is a flat number (pinned in budgie.yaml) or absent.
+    budget_revisions: Budget | None = None
+    #: The project's own plan.csv (never the bundled sample), or None.
+    plan: AllocationPlan | None = None
 
     @property
     def allocated(self) -> dict[str, float]:
@@ -133,6 +139,61 @@ class Snapshot:
         """Hours spent: the latest reading, else allocations.csv's figure."""
         out = {a.name: a.hours_spent for a in self.allocations}
         out.update(spent_to_date(self.readings))
+        return out
+
+    def what_if(
+        self, budget: float | None = None, plan_entries: Sequence[PlanEntry] = ()
+    ) -> Snapshot:
+        """A copy with a different budget and/or extra plan entries; touches no files.
+
+        ``budget`` replaces the budget with a flat number, so ``budget_revisions``
+        becomes None (the old dated revisions no longer describe it). Extra
+        ``plan_entries`` are appended to the plan (``plan`` is updated to match)
+        and allocated hours are recomputed the way :func:`load_snapshot` does:
+        a planned person's hours come from the plan, not their flat ``fte``;
+        someone only in the new entries is added with nothing spent.
+        """
+        changes: dict = {}
+        if budget is not None:
+            changes.update(budget=Budget.flat(budget), budget_revisions=None)
+        if plan_entries:
+            plan = AllocationPlan(
+                (*(self.plan.entries if self.plan else ()), *plan_entries)
+            )
+            changes["plan"] = plan
+            if self.allocations:
+                changes["allocations"] = self._replanned(plan)
+            else:
+                changes["planned"] = plan.team_hours(self.year, self.pto)
+        return replace(self, **changes)
+
+    def _replanned(self, plan: AllocationPlan) -> list[Allocation]:
+        """``allocations`` with planned people's FTE set to the plan's year average."""
+
+        def fte(name: str, available: float) -> float:
+            # Recover this person's PTO from their ceiling (a pto_days override).
+            pto = (
+                self.ceiling.productive_hours - available
+            ) / self.ceiling.hours_per_day
+            return (
+                plan.allocated_hours(name, self.year, pto) / available
+                if available
+                else 0.0
+            )
+
+        out = [
+            replace(a, fte=fte(a.name, a.available_hours))
+            if a.name in plan.names
+            else a
+            for a in self.allocations
+        ]
+        listed = {a.name for a in out}
+        ceiling = self.ceiling.available_hours
+        out += [
+            Allocation(n, fte(n, ceiling), 0.0, ceiling)
+            for n in plan.names
+            if n not in listed
+        ]
         return out
 
 
@@ -161,6 +222,7 @@ def load_snapshot(project: str | Path) -> Snapshot:
 
     costs_csv = workspace.resolve("costs")
     source = budget_source(workspace)
+    budget = None if source is None else coerce_budget(source)
     return Snapshot(
         year=year,
         pto=pto,
@@ -170,7 +232,9 @@ def load_snapshot(project: str | Path) -> Snapshot:
         allocations=allocations,
         planned=planned,
         non_labor=total_cost(load_costs(costs_csv)) if costs_csv else 0.0,
-        budget=None if source is None else coerce_budget(source),
+        budget=budget,
         iterations=workspace.setting("iterations", 10_000),
         seed=workspace.setting("seed"),
+        budget_revisions=budget if isinstance(source, str) else None,
+        plan=plan,
     )
