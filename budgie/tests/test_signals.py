@@ -51,3 +51,19 @@ def test_run_scenarios_from_config():
     assert results[0].cost_delta == 0
     # PTO scenario is cheaper than baseline.
     assert results[1].cost_delta < 0
+
+
+def test_run_scenarios_per_person_pto(tmp_path):
+    # A pto_days column needs the ProductiveHours breakdown, not a bare number.
+    (tmp_path / "people.csv").write_text(
+        "name,hourly_cost,util_low,util_mode,util_high,pto_days\n"
+        "A,100,0.8,0.9,0.95,10\n"
+        "B,100,0.8,0.9,0.95,30\n"
+    )
+    (tmp_path / "s.yaml").write_text(
+        "budget: 1000000\niterations: 100\nseed: 1\n"
+        "scenarios:\n  - name: Base\n    people: people.csv\n"
+    )
+    (res,), _ = run_scenarios(tmp_path / "s.yaml")
+    a, b = res.forecast.line_items
+    assert a.cost > b.cost  # B's extra PTO shrinks their hours

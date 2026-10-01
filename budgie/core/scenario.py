@@ -90,9 +90,7 @@ def run_scenarios(config_path: str | Path) -> tuple[list[ScenarioResult], float]
         ph = productive_hours(
             int(spec.get("year", 2026)), pto_days=float(spec.get("pto", 0.0))
         )
-        people = load_people(
-            _resolve(spec["people"], base_dir), productive_hours=ph.available_hours
-        )
+        people = load_people(_resolve(spec["people"], base_dir), productive_hours=ph)
         det = run_forecast(people, costs=costs)
         sim = simulate(people, iterations=iterations, seed=seed, costs=costs)
         signal = evaluate(sim, budget, baseline=baseline_sim)
