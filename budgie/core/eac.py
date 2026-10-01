@@ -9,7 +9,10 @@ shifted is still triangular. So there is no second simulator here -- just
 adjusted :class:`Person` objects that the ordinary ``forecast()``,
 ``simulate()`` and ``signals.evaluate()`` consume unchanged::
 
-    hours at completion = spent + planned hours x share of working days left
+    hours at completion = spent + planned hours x share of the plan left
+
+The share left is the person's own plan.csv shape when there is one (someone
+who joins in July has all of it left on Jun 30), else working days.
 
 Stated assumptions: spent hours are costed at the person's *current* rate (no
 rate history exists), and non-labor costs are not adjusted (no actuals exist
@@ -22,10 +25,14 @@ import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date
+from typing import TYPE_CHECKING
 
 from budgie.core.actuals import Observation
 from budgie.core.calendar import workdays_between, workdays_in_year
 from budgie.core.person import HoursEstimate, Person
+
+if TYPE_CHECKING:
+    from budgie.core.plan import AllocationPlan
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +65,15 @@ def at_completion(
     observations: Mapping[str, Sequence[Observation]],
     year: int,
     as_of: date | None = None,
+    plan: AllocationPlan | None = None,
 ) -> Completion:
     """Replace each person's elapsed plan with their latest reading of real spend.
 
     ``as_of`` only filters which readings count. The elapsed share is always
     measured at the *reading's own date*: hours booked after it are unknown, so
     that stretch has to stay forecast rather than be silently treated as zero.
+    ``plan`` makes that share the plan's hours accrued by then, for everyone it
+    has hours for; anyone else keeps the working-day share.
     """
     unknown = sorted(set(observations) - {p.name for p in people})
     if unknown:
@@ -83,7 +93,8 @@ def at_completion(
             adjusted.append(person)
             continue
         when, spent = max(usable, key=lambda o: o[0])
-        left = 1.0 - elapsed_fraction(year, when)
+        done = plan.fraction_through(person.name, year, when) if plan else None
+        left = 1.0 - (elapsed_fraction(year, when) if done is None else done)
         est = person.hours
         readings[person.name] = (when, spent)
         adjusted.append(

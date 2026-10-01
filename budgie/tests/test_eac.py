@@ -16,6 +16,7 @@ from budgie.core.forecast import forecast
 from budgie.core.montecarlo import simulate
 from budgie.core.monthly import load_monthly_actuals
 from budgie.core.person import HoursEstimate, Person
+from budgie.core.plan import AllocationPlan, PlanEntry
 from budgie.core.workspace import forget_workspaces
 
 TESTS_DIR = Path(__file__).resolve().parent
@@ -139,6 +140,44 @@ def test_simulated_spread_narrows_and_percentiles_stay_ordered():
     assert eac.std == pytest.approx(plan.std * (1 - F_JUN30))
 
 
+# --- the share left follows plan.csv (budgie-tzn) ------------------------
+
+
+def _alice_plan(*rows):
+    return AllocationPlan(
+        tuple(PlanEntry("Alice", date.fromisoformat(d), f) for d, f in rows)
+    )
+
+
+def test_july_joiner_has_all_of_their_plan_left_on_june_30():
+    plan = _alice_plan(("2026-07-01", 1.0))
+    eac = at_completion([ALICE], {"Alice": [(JUN30, 0.0)]}, 2026, plan=plan)
+    assert eac.people[0].hours == ALICE.hours  # not 1000 x (1 - 124/250)
+
+
+def test_july_joiner_mid_plan_uses_the_plans_working_days():
+    plan = _alice_plan(("2026-07-01", 1.0))
+    sep30 = date(2026, 9, 30)
+    eac = at_completion([ALICE], {"Alice": [(sep30, 200.0)]}, 2026, plan=plan)
+    # Jul 1-Sep 30 is 64 of the 126 working days Jul 1-Dec 31.
+    assert eac.people[0].hours.mode == pytest.approx(200 + 1000 * 62 / 126)
+
+
+def test_ended_plan_leaves_only_what_was_spent():
+    plan = _alice_plan(("2026-01-01", 1.0), ("2026-09-01", 0.0))
+    oct15 = date(2026, 10, 15)
+    eac = at_completion([ALICE], {"Alice": [(oct15, 1500.0)]}, 2026, plan=plan)
+    hours = eac.people[0].hours
+    assert (hours.low, hours.mode, hours.high) == pytest.approx((1500, 1500, 1500))
+
+
+def test_person_the_plan_does_not_mention_keeps_working_days():
+    plan = _alice_plan(("2026-07-01", 1.0))
+    obs = {"Bob": [(JUN30, 250.0)]}
+    with_plan = at_completion([BOB], obs, 2026, plan=plan)
+    assert with_plan.people == at_completion([BOB], obs, 2026).people
+
+
 # --- CLI -------------------------------------------------------------------
 
 
@@ -181,3 +220,21 @@ def test_cli_picks_up_the_projects_actuals(tmp_path, monkeypatch):
     assert "Estimate at completion" in eac.output
     plan = runner.invoke(cli, ["forecast", "--ignore-actuals"])
     assert "Deterministic forecast" in plan.output
+
+
+def test_cli_forecast_uses_the_projects_plan(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner = CliRunner()
+    assert runner.invoke(cli, ["init", "fy26"]).exit_code == 0
+    forget_workspaces()
+    before = runner.invoke(cli, ["forecast", "--seed", "1"])
+    assert before.exit_code == 0, before.output
+    # Alice's plan ends May 1, before her week-20 reading: nothing left to forecast.
+    (tmp_path / "budget" / "fy26" / "plan.csv").write_text(
+        "name,effective_date,fte\n"
+        "Alice,2026-01-01,0.90\nAlice,2026-05-01,0.0\nBob,2026-01-01,0.85\n"
+    )
+    forget_workspaces()
+    after = runner.invoke(cli, ["forecast", "--seed", "1"])
+    assert after.exit_code == 0, after.output
+    assert after.output != before.output

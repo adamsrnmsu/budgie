@@ -218,8 +218,11 @@ budgie forecast --as-of 2026-06-30                # ignore readings dated after 
 budgie forecast --ignore-actuals                  # the full-year plan, as before
 ```
 
-The rule: **hours at completion = spent + plan × the share of working days left** after
-that person's latest reading. It is applied to the low, most-likely and high estimates
+The rule: **hours at completion = spent + plan × the share of the plan left** after
+that person's latest reading. With a project `plan.csv` that share follows their own plan
+(someone who joins in July still has all of it left on Jun 30; someone whose plan has ended
+has none); without one, or for anyone it doesn't name, it is the share of working days
+left. It is applied to the low, most-likely and high estimates
 alike, so the Monte Carlo range narrows as the year goes on and collapses to a single
 number on Dec 31. The table gains a **Spent** column; anyone without a reading stays on
 their full-year plan and shows `—`. If both files exist, weekly wins; a file named on the
