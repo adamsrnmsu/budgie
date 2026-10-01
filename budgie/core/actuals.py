@@ -2,13 +2,13 @@
 Observed spend to date.
 
 Real timesheet exports rarely give a clean week-by-week series. Far more often
-you get a *cumulative* reading: "as of week 20, this person has booked 480
+you get a *cumulative* reading: "as of week 20, this person has booked 660
 hours." This module models exactly that and nothing more -- a sparse list of
 ``(date, cumulative_hours)`` observations.
 
     name,week,hours_to_date
-    Alice,12,300
-    Alice,20,480
+    Alice,12,430
+    Alice,20,660
 
 One observation is enough (it fixes the endpoint precisely). Several give a real
 burn-down curve without ever needing per-week detail you don't have.

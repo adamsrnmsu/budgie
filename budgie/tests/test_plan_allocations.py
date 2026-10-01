@@ -144,10 +144,10 @@ def test_hours_in_a_scaffolded_project_uses_the_plan(tmp_path, monkeypatch):
     result = runner.invoke(cli, ["hours"])
 
     assert result.exit_code == 0, result.output
-    # Bob drops to 0 FTE on Sep 1. Flat 0.50 FTE at his own 20 PTO days is 916;
-    # the plan, at those same 20 days, is 612 (665 is the figure at 0 PTO).
-    assert "916" not in result.output
-    assert "612" in result.output
+    # The scaffold plans Alice at 0.90 and Bob at 0.85 for the whole year, so
+    # allocated hours are 0.90 x 1992 = 1793 and 0.85 x 1992 = 1693.
+    assert "1,793" in result.output
+    assert "1,693" in result.output
     assert "plan.csv" in result.output
 
 
@@ -161,16 +161,22 @@ def test_hours_without_a_project_never_borrows_the_sample_plan(tmp_path, monkeyp
 
 
 def test_plan_view_uses_the_same_pto_as_hours(tmp_path, monkeypatch):
-    # Scaffolded Bob has his own pto_days. `plan` used to know only the team
-    # figure, so it and `hours` disagreed about the same plan.csv.
+    # A person's own pto_days. `plan` used to know only the team figure, so it
+    # and `hours` disagreed about the same plan.csv.
     from budgie.core.allocation import pto_overrides
 
     init_workspace(tmp_path, year=2026)
+    alloc = tmp_path / "allocations.csv"
+    alloc.write_text(
+        alloc.read_text().replace("bob@example.com,", "bob@example.com,20")
+    )
     assert pto_overrides(tmp_path / "allocations.csv") == {"Bob": 20.0}
 
     monkeypatch.chdir(tmp_path)
     forget_workspaces()
     result = CliRunner().invoke(cli, ["plan"])
     assert result.exit_code == 0, result.output
-    assert "612" in result.output
+    # Bob at 0.85 with his 20 days: 0.85 x 1832 = 1557 (1693 at the team's 0).
+    assert "1,557" in result.output
+    assert "1,693" not in result.output
     assert "665" not in result.output

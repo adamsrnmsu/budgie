@@ -5,12 +5,10 @@ An allocation is not one number for the year -- people join, leave, and get
 re-planned. A plan records *when* each change takes effect:
 
     name,effective_date,fte
-    Alice,2026-01-01,0.25
-    Bob,2026-01-01,0.50
-    Bob,2026-09-01,0.00      # left the project
-    Carol,2026-07-15,0.50    # joined mid-July
-    Dave,2026-01-01,0.25
-    Dave,2026-04-01,0.75     # bumped up
+    Alice,2026-01-01,0.90
+    Bob,2026-01-01,0.85
+    Bob,2026-09-01,0.00      # later: left the project
+    Carol,2026-07-15,0.50    # later: joined mid-July
 
 Each row applies **from that date until the next row for that person**; before
 someone's first row they are simply not on the project (0 FTE). So "add a

@@ -49,7 +49,7 @@ seed: 42          # fixed seed => reproducible numbers; remove for fresh draws
 
 # The budget to signal against: a number here, or point `inputs.budget` at a
 # CSV of dated revisions to keep the history of increases and cuts.
-budget: 720000
+budget: 425000
 
 # Where the inputs live. Paths are relative to this file. Delete a line to use
 # the default filename; every input is optional until a command needs it.
@@ -69,15 +69,14 @@ Bob,110,0.70,0.85,0.95
 
 ALLOCATIONS_CSV = """\
 name,fte,hours_spent,email,pto_days
-Alice,0.25,180,alice@example.com,
-Bob,0.50,540,bob@example.com,20
+Alice,0.90,660,alice@example.com,
+Bob,0.85,620,bob@example.com,
 """
 
 PLAN_CSV = """\
 name,effective_date,fte
-Alice,{year}-01-01,0.25
-Bob,{year}-01-01,0.50
-Bob,{year}-09-01,0.00
+Alice,{year}-01-01,0.90
+Bob,{year}-01-01,0.85
 """
 
 COSTS_CSV = """\
@@ -88,31 +87,31 @@ Cloud hosting,services,{year}-01-01,2000,,,yes
 
 BUDGET_CSV = """\
 effective_date,amount,note
-{year}-01-01,720000,Original
-{year}-05-01,780000,Q2 increase
+{year}-01-01,425000,Original
+{year}-05-01,450000,Q2 increase
 """
 
 ACTUALS_CSV = """\
 name,month,hours
-Alice,1,32
-Alice,2,28
-Bob,1,80
-Bob,2,74
+Alice,1,150
+Alice,2,140
+Bob,1,145
+Bob,2,135
 """
 
 WEEKLY_CSV = """\
 name,week,hours_to_date
-Alice,12,150
-Alice,20,180
-Bob,12,400
-Bob,20,540
+Alice,12,430
+Alice,20,660
+Bob,12,410
+Bob,20,620
 """
 
 SCENARIOS_YAML = """\
 # Named what-if scenarios, compared side by side by `budgie scenario`.
 # The FIRST scenario is the baseline: deltas and the BLUE "no change" signal
 # are both measured against it.
-budget: 720000
+budget: 425000
 iterations: 10000
 seed: 42
 

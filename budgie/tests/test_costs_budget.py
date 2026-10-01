@@ -138,41 +138,41 @@ def test_sample_total_sums_lines():
 
 
 def test_flat_budget_has_no_revisions():
-    b = Budget.flat(720000)
-    assert b.original == b.latest == 720000
+    b = Budget.flat(800000)
+    assert b.original == b.latest == 800000
     assert not b.has_revisions
     assert b.net_change == 0
 
 
 def test_revisions_apply_from_their_date():
     b = load_budget(TESTS_DIR / "budget.csv")
-    assert b.original == 720000
-    assert b.latest == 765000
+    assert b.original == 800000
+    assert b.latest == 835000
     assert b.has_revisions
-    assert b.net_change == 45000
-    assert b.amount_on(date(2026, 4, 30)) == 720000
-    assert b.amount_on(date(2026, 5, 1)) == 780000
-    assert b.amount_on(date(2026, 9, 30)) == 780000
-    assert b.amount_on(date(2026, 12, 31)) == 765000
+    assert b.net_change == 35000
+    assert b.amount_on(date(2026, 4, 30)) == 800000
+    assert b.amount_on(date(2026, 5, 1)) == 850000
+    assert b.amount_on(date(2026, 9, 30)) == 850000
+    assert b.amount_on(date(2026, 12, 31)) == 835000
 
 
 def test_before_first_revision_uses_the_original():
     b = load_budget(TESTS_DIR / "budget.csv")
     # A budget set later still governs the earlier part of the year.
-    assert b.amount_on(date(2020, 1, 1)) == 720000
+    assert b.amount_on(date(2020, 1, 1)) == 800000
 
 
 def test_monthly_amounts_step():
     b = load_budget(TESTS_DIR / "budget.csv")
     months = b.monthly_amounts(2026)
-    assert months[0] == 720000  # Jan
-    assert months[4] == 780000  # May
-    assert months[11] == 765000  # Dec
+    assert months[0] == 800000  # Jan
+    assert months[4] == 850000  # May
+    assert months[11] == 835000  # Dec
 
 
 def test_coerce_accepts_number_list_and_path():
     assert coerce_budget(500).latest == 500
-    assert coerce_budget(TESTS_DIR / "budget.csv").latest == 765000
+    assert coerce_budget(TESTS_DIR / "budget.csv").latest == 835000
     listed = coerce_budget(
         [{"date": "2026-01-01", "amount": 100}, {"date": "2026-06-01", "amount": 150}]
     )

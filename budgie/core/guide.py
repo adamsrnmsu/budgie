@@ -285,14 +285,17 @@ TOPICS: tuple[Topic, ...] = (
         ),
         example=(
             "name,fte,hours_spent,email,pto_days\n"
-            "Alice,0.25,180,alice@example.com,\n"
-            "Bob,0.50,540,bob@example.com,20"
+            "Alice,0.90,660,alice@example.com,\n"
+            "Bob,0.85,620,bob@example.com,"
         ),
         rules=_rules(
             "allocated = fte x (2080 - holidays - PTO). PTO is taken off the "
             "full-time figure first, so a 0.25 FTE person gives this project a "
             "quarter of their PTO, not all of it.",
             "Leave pto_days blank to use the project default from budgie.yaml.",
+            "Keep this telling the same story as people.csv: someone at 0.90 FTE "
+            "should be forecast around 90% utilization, or the forecast and the "
+            "hours left will disagree about the same person.",
         ),
     ),
     Topic(
@@ -305,21 +308,15 @@ TOPICS: tuple[Topic, ...] = (
             ("effective_date", "YYYY-MM-DD, when this FTE starts applying"),
             ("fte", "Their share from that date on; 0 means off the project"),
         ),
-        example=(
-            "name,effective_date,fte\n"
-            "Alice,2026-01-01,0.25\n"
-            "Bob,2026-01-01,0.50\n"
-            "Bob,2026-09-01,0.00\n"
-            "Carol,2026-07-15,0.50"
-        ),
+        example=("name,effective_date,fte\nAlice,2026-01-01,0.90\nBob,2026-01-01,0.85"),
         rules=_rules(
             "APPEND, never edit. Adding someone, zeroing someone out and "
             "re-planning are all the same operation: a new row. That is what "
             "preserves the record of what changed and when.",
             "Before a person's first row they count as 0 FTE.",
             "Hours are counted day by day over real working days, so a "
-            "mid-month start is charged from the actual day -- Carol above gets "
-            "466 hours, not a rounded 502 or a flat 996.",
+            "mid-month start is charged from the actual day -- a Carol "
+            "appended as 2026-07-15 at 0.50 FTE gets 466 hours, not a rounded 502 or a flat 996.",
             "When this file exists, hours and emails take allocated hours from "
             "it rather than the flat fte in allocations.csv, and show the year-"
             "average FTE. Anyone it doesn't mention keeps their flat fte.",
@@ -365,8 +362,8 @@ TOPICS: tuple[Topic, ...] = (
         ),
         example=(
             "effective_date,amount,note\n"
-            "2026-01-01,720000,Original\n"
-            "2026-05-01,780000,Q2 increase"
+            "2026-01-01,425000,Original\n"
+            "2026-05-01,450000,Q2 increase"
         ),
         rules=_rules(
             "Append revisions rather than overwriting the amount, and Budgie "
@@ -387,7 +384,7 @@ TOPICS: tuple[Topic, ...] = (
             ("month", "1-12"),
             ("hours", "Hours booked IN that month"),
         ),
-        example="name,month,hours\nAlice,1,32\nAlice,2,28\nBob,1,80",
+        example="name,month,hours\nAlice,1,150\nAlice,2,140\nBob,1,145",
         rules=_rules(
             "These are per-month hours, not running totals. A missing month "
             "counts as zero -- unless it comes after your last month with "
@@ -409,7 +406,7 @@ TOPICS: tuple[Topic, ...] = (
             ("week", "ISO week number"),
             ("hours_to_date", "Total hours booked THROUGH that week"),
         ),
-        example=("name,week,hours_to_date\nAlice,12,150\nAlice,20,180\nBob,20,540"),
+        example=("name,week,hours_to_date\nAlice,12,430\nAlice,20,660\nBob,20,620"),
         rules=_rules(
             "CUMULATIVE, not per-week. Budgie rejects a series that goes down, "
             "because a decrease means per-period values were pasted in.",
@@ -434,7 +431,7 @@ TOPICS: tuple[Topic, ...] = (
             ("scenarios[].year / pto", "The assumptions for that variation"),
         ),
         example=(
-            "budget: 720000\n"
+            "budget: 425000\n"
             "iterations: 10000\n"
             "seed: 42\n"
             "scenarios:\n"

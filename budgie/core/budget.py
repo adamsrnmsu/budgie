@@ -6,9 +6,9 @@ re-baselined, and you need to know both what it is *now* and what it started
 as. A budget is therefore a list of dated revisions:
 
     effective_date,amount,note
-    2026-01-01,720000,Original
-    2026-05-01,780000,Q2 increase
-    2026-10-01,750000,Q4 trim
+    2026-01-01,425000,Original
+    2026-05-01,450000,Q2 increase
+    2026-10-01,440000,Q4 trim
 
 Each revision holds until the next one, exactly like an allocation plan. History
 is appended, never edited, so the trail of what changed and when is preserved
@@ -123,7 +123,7 @@ def coerce_budget(value: float | dict | list | str | Path) -> Budget:
     """Accept any of the shapes a config might carry and return a Budget.
 
     Supports a bare number, a list of ``{date, amount, note}`` mappings, or a
-    path to a revisions CSV -- so ``budget: 720000`` in an existing scenario
+    path to a revisions CSV -- so ``budget: 425000`` in an existing scenario
     config keeps working unchanged.
     """
     if isinstance(value, Budget):
