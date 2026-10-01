@@ -668,7 +668,7 @@ def emails(
     _, plan = _plan_for_allocations(plan_csv)
     allocs = load_allocations(alloc_csv, available_hours=ph, plan=plan)
 
-    statuses = _burndown_statuses(allocs, year, as_of, actuals_csv, weekly_csv)
+    statuses = _burndown_statuses(allocs, year, as_of, actuals_csv, weekly_csv, plan)
 
     if as_html:
         paths, charts_dir = _write_html_emails(statuses, year, out_dir)
@@ -694,7 +694,9 @@ def emails(
         )
 
 
-def _burndown_statuses(allocs, year, as_of, actuals_csv=None, weekly_csv=None):
+def _burndown_statuses(
+    allocs, year, as_of, actuals_csv=None, weekly_csv=None, plan=None
+):
     """Build a BurndownStatus per person, using real spend readings if given.
 
     Both mail formats need this now: the plain-text draft carries the required
@@ -713,7 +715,9 @@ def _burndown_statuses(allocs, year, as_of, actuals_csv=None, weekly_csv=None):
         # Never chart a reading dated after the as-of date.
         if obs and as_of_date:
             obs = [o for o in obs if o[0] <= as_of_date]
-        statuses.append(burndown(alloc, year, as_of=as_of_date, observations=obs))
+        statuses.append(
+            burndown(alloc, year, as_of=as_of_date, observations=obs, plan=plan)
+        )
     return statuses
 
 

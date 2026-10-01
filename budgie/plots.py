@@ -8,7 +8,7 @@ a window.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import matplotlib
@@ -98,14 +98,16 @@ def burndown_chart(status: BurndownStatus, out_path: str | Path) -> Path:
 
     fig, ax = plt.subplots(figsize=(7.2, 3.4))
 
-    # Even-pace reference line: 0 on Jan 1 -> full allocation on Dec 31.
+    # Pace reference line: even 0 -> allocation, or the plan's shape if planned.
+    days = [start + timedelta(days=d) for d in range(0, (end - start).days, 7)]
+    days.append(end)
     ax.plot(
-        [start, end],
-        [0, allocated],
+        [start, *days],
+        [0, *(status.expected_on(d) for d in days)],
         color=MUTED,
         linestyle="--",
         linewidth=1.4,
-        label="Even pace",
+        label="Planned pace" if status.planned else "Even pace",
         zorder=2,
     )
 

@@ -78,8 +78,17 @@ class AllocationPlan:
                 break
         return current
 
-    def allocated_hours(self, name: str, year: int, pto_days: float = 0.0) -> float:
+    def allocated_hours(
+        self,
+        name: str,
+        year: int,
+        pto_days: float = 0.0,
+        through: date | None = None,
+    ) -> float:
         """Hours this person's plan buys them across ``year``.
+
+        ``through`` stops the count at that date (inclusive), giving the plan's
+        hours accumulated so far rather than the year's total.
 
         Sums each working day at the FTE in effect that day, so someone starting
         2026-07-15 at 0.50 FTE is charged only for the working days from July 15
@@ -92,6 +101,8 @@ class AllocationPlan:
 
         us_holidays = holidays.UnitedStates(years=year)
         start, end = date(year, 1, 1), date(year, 12, 31)
+        if through is not None:
+            end = min(end, through)
         # Never start before the person's first effective date.
         day = max(start, schedule[0].effective_date)
         total = 0.0
@@ -100,6 +111,31 @@ class AllocationPlan:
                 total += self.fte_on(name, day) * per_day
             day += timedelta(days=1)
         return total
+
+    def fraction_through(self, name: str, year: int, day: date) -> float | None:
+        """Share (0..1) of this person's year of plan hours accrued by ``day``.
+
+        PTO scales every day equally, so the ratio needs no PTO figure. ``None``
+        when the plan has no hours for them -- the caller keeps its own default.
+        """
+        total = self.allocated_hours(name, year)
+        if total <= 0:
+            return None
+        return self.allocated_hours(name, year, through=day) / total
+
+    def last_planned_day(self, name: str, year: int) -> date | None:
+        """Last working day in ``year`` on which the plan has them above 0 FTE."""
+        us_holidays = holidays.UnitedStates(years=year)
+        day = date(year, 12, 31)
+        while day.year == year:
+            if (
+                day.weekday() < 5
+                and day not in us_holidays
+                and self.fte_on(name, day) > 0
+            ):
+                return day
+            day -= timedelta(days=1)
+        return None
 
     def team_hours(self, year: int, pto_days: float = 0.0) -> dict[str, float]:
         """Allocated hours for everyone in the plan."""

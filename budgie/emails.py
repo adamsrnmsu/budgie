@@ -80,7 +80,7 @@ def pace_sentence(pace: RequiredPace) -> str:
     """
     if pace.out_of_time:
         return (
-            f"There are no working days left in the year, so the remaining "
+            f"There are no working days left on your plan, so the remaining "
             f"{pace.hours_remaining:,.0f} hours can't be spent."
         )
     if pace.is_exhausted:
