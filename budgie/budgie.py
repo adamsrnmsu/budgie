@@ -98,6 +98,44 @@ def _input(key: str, override, sample: str):
     return _sample(sample)
 
 
+def _actuals_options(func):
+    """The spend-reading options shared by `forecast` and `monthly`."""
+    for option in reversed(
+        [
+            click.option(
+                "--actuals",
+                "actuals_csv",
+                default=None,
+                type=click.Path(exists=True),
+                help="Tidy CSV (name,month,hours) of real monthly spend; turns the forecast "
+                "into an estimate at completion [default: the project's, else none].",
+            ),
+            click.option(
+                "--weekly",
+                "weekly_csv",
+                default=None,
+                type=click.Path(exists=True),
+                help="CSV (name,week,hours_to_date) of cumulative hours through an ISO week; "
+                "wins over --actuals [default: the project's, else none].",
+            ),
+            click.option(
+                "--as-of",
+                type=click.DateTime(formats=["%Y-%m-%d"]),
+                default=None,
+                help="Ignore spend readings dated after this [default: use each person's latest].",
+            ),
+            click.option(
+                "--ignore-actuals",
+                is_flag=True,
+                default=None,
+                help="Forecast the full-year plan even if the project has actuals.",
+            ),
+        ]
+    ):
+        func = option(func)
+    return func
+
+
 def _workspace_input(key: str):
     """The project's file for ``key`` if it exists, else None.
 
@@ -246,34 +284,7 @@ def cli(ctx, verbose, show_help):
     default=None,
     help="Budget to signal against: a number, or a CSV of dated revisions.",
 )
-@click.option(
-    "--actuals",
-    "actuals_csv",
-    default=None,
-    type=click.Path(exists=True),
-    help="Tidy CSV (name,month,hours) of real monthly spend; turns the forecast "
-    "into an estimate at completion [default: the project's, else none].",
-)
-@click.option(
-    "--weekly",
-    "weekly_csv",
-    default=None,
-    type=click.Path(exists=True),
-    help="CSV (name,week,hours_to_date) of cumulative hours through an ISO week; "
-    "wins over --actuals [default: the project's, else none].",
-)
-@click.option(
-    "--as-of",
-    type=click.DateTime(formats=["%Y-%m-%d"]),
-    default=None,
-    help="Ignore spend readings dated after this [default: use each person's latest].",
-)
-@click.option(
-    "--ignore-actuals",
-    is_flag=True,
-    default=None,
-    help="Forecast the full-year plan even if the project has actuals.",
-)
+@_actuals_options
 @_project_option
 def forecast(
     people_csv,
@@ -333,19 +344,9 @@ def forecast(
     # person's plan is replaced by what they actually booked. Everything below
     # just receives the adjusted people. A file named on the command line beats
     # the project's, whichever kind it is.
-    readings = {}
-    if not ignore_actuals:
-        from budgie.core.project import load_observations, readings_files
-
-        actuals_csv, weekly_csv = readings_files(_workspace(), actuals_csv, weekly_csv)
-        observations = load_observations(year, actuals_csv, weekly_csv)
-        if observations:
-            from budgie.core.eac import at_completion
-
-            eac = at_completion(
-                people, observations, year, as_of=as_of.date() if as_of else None
-            )
-            people, readings = eac.people, eac.readings
+    people, readings, _ = _with_actuals(
+        people, year, actuals_csv, weekly_csv, as_of, ignore_actuals
+    )
 
     det = run_forecast(people, costs=costs)
     sim = simulate(people, iterations=iterations, seed=seed, costs=costs)
@@ -368,6 +369,31 @@ def forecast(
         hist = montecarlo_histogram(sim, out / "montecarlo.png")
         bars = forecast_bars(det, out / "forecast.png")
         console.print(f"[bold]Wrote[/bold] {hist} and {bars}")
+
+
+def _with_actuals(people, year, actuals_csv, weekly_csv, as_of, ignore_actuals):
+    """``(people, readings, observations)``: the team adjusted to the estimate at
+    completion, the reading each adjustment used, and the full series.
+
+    With spend readings, the elapsed part of each person's plan is replaced by
+    what they actually booked. A file named on the command line beats the
+    project's, whichever kind it is. No readings (or ``ignore_actuals``) returns
+    the team untouched and empty readings.
+    """
+    if ignore_actuals:
+        return people, {}, {}
+    from budgie.core.project import load_observations, readings_files
+
+    actuals_csv, weekly_csv = readings_files(_workspace(), actuals_csv, weekly_csv)
+    observations = load_observations(year, actuals_csv, weekly_csv)
+    if not observations:
+        return people, {}, {}
+    from budgie.core.eac import at_completion
+
+    eac = at_completion(
+        people, observations, year, as_of=as_of.date() if as_of else None
+    )
+    return eac.people, eac.readings, observations
 
 
 def _print_eac_note(readings, team_size):
@@ -864,11 +890,28 @@ def _print_scenario_table(results, budget):
 @click.option(
     "--out-dir", default=".", show_default=True, help="Directory for figures."
 )
+@_actuals_options
 @_project_option
 def monthly(
-    people_csv, year, pto, iterations, seed, budget_arg, costs_csv, plots, out_dir
+    people_csv,
+    year,
+    pto,
+    iterations,
+    seed,
+    budget_arg,
+    costs_csv,
+    plots,
+    out_dir,
+    actuals_csv,
+    weekly_csv,
+    as_of,
+    ignore_actuals,
 ):
-    """Break the year into months: cost per month and a cumulative fan chart."""
+    """Break the year into months: cost per month and a cumulative fan chart.
+
+    With spend readings (actuals.csv or weekly.csv) the months already past carry
+    the hours actually booked, and only the rest of the year is simulated.
+    """
     from budgie.core.calendar import productive_hours
     from budgie.core.costs import load_costs
     from budgie.core.loader import load_people
@@ -889,9 +932,27 @@ def monthly(
     costs = load_costs(costs_csv) if costs_csv else []
     budget = _budget_from(budget_arg) if budget_arg else None
 
-    mf = monthly_forecast(people, year, pto_days=pto, costs=costs)
+    people, readings, observations = _with_actuals(
+        people, year, actuals_csv, weekly_csv, as_of, ignore_actuals
+    )
+    actuals = None
+    if readings:
+        from budgie.core.monthly import Actuals
+
+        # Project file or nothing, as for `hours`: a sample plan would invent a team.
+        _, plan = _plan_for_allocations(None)
+        actuals = Actuals(readings, observations, plan)
+        _print_eac_note(readings, len(people))
+
+    mf = monthly_forecast(people, year, pto_days=pto, costs=costs, actuals=actuals)
     sim = monthly_simulation(
-        people, year, pto_days=pto, iterations=iterations, seed=seed, costs=costs
+        people,
+        year,
+        pto_days=pto,
+        iterations=iterations,
+        seed=seed,
+        costs=costs,
+        actuals=actuals,
     )
     logger.info(f"{len(people)} people, {year} split into months by working-day share")
     _print_monthly_table(mf, sim, budget.latest if budget else None)

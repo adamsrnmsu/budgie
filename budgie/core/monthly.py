@@ -11,24 +11,36 @@ working days (Mon-Fri, minus federal holidays landing in that month) over the
 year's total, so February and holiday-heavy months carry correspondingly less.
 Weights sum to 1, so the twelve monthly figures always add back up to the annual
 figure produced by :mod:`budgie.core.calendar`.
+
+With :class:`Actuals` (readings of real spend) the months already past are
+*booked*, not forecast: each person's cumulative hours follow their readings up
+to the latest one, and only the hours still to come -- the estimate at completion
+minus what was spent -- are spread over the months from there on, by the plan's
+shape when they have one, else by working days.
 """
 
 from __future__ import annotations
 
 import calendar as _calendar
 import logging
-from collections.abc import Sequence
-from dataclasses import dataclass
-from datetime import date
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import date, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import holidays
 import numpy as np
 
+from budgie.core.actuals import Observation
 from budgie.core.calendar import productive_hours
 from budgie.core.costs import CostItem, monthly_totals, sample_total
 from budgie.core.csvio import as_int, as_required_float, as_str, read_rows
+from budgie.core.eac import elapsed_fraction
 from budgie.core.person import Person
+
+if TYPE_CHECKING:
+    from budgie.core.plan import AllocationPlan
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +95,74 @@ def cumulative(values: Sequence[float]) -> list[float]:
 
 
 @dataclass(frozen=True)
+class Actuals:
+    """Real spend to book into the months already past.
+
+    ``readings`` is name -> the latest ``(date, spent)`` reading used for the
+    estimate at completion (``Completion.readings``); ``observations`` is the
+    full cumulative series, which shapes the booked months; ``plan`` shapes how
+    the remaining hours fall across the rest of the year.
+    """
+
+    readings: Mapping[str, Observation]
+    observations: Mapping[str, Sequence[Observation]] = field(default_factory=dict)
+    plan: AllocationPlan | None = None
+
+
+def _spent_at(series: Sequence[Observation], day: date, year: int) -> float:
+    """Cumulative hours booked by ``day``, interpolating between readings.
+
+    The curve starts at 0 before Jan 1; between two readings we only know the
+    endpoints, so the line between them is an assumption, not measured data.
+    """
+    prev_day, prev_hours = date(year, 1, 1) - timedelta(days=1), 0.0
+    for when, hours in sorted(series):
+        if when >= day:
+            span = (when - prev_day).days
+            return prev_hours + (hours - prev_hours) * (day - prev_day).days / span
+        prev_day, prev_hours = when, hours
+    return prev_hours
+
+
+def _cum_hours(person: Person, year: int, actuals: Actuals, total):
+    """Cumulative hours at each month end for ``total`` hours at completion.
+
+    ``total`` is a float or an array of simulated totals; the result gains a
+    trailing month axis of 12.
+    """
+    total = np.asarray(total, dtype=float)[..., None]
+    reading = actuals.readings.get(person.name)
+    if reading is None:
+        return total * np.cumsum(month_weights(year))
+    when, spent = reading
+    plan = actuals.plan
+    left_by = {}  # share of the year's plan elapsed by a date
+
+    def done(day: date) -> float:
+        if day not in left_by:
+            frac = plan.fraction_through(person.name, year, day) if plan else None
+            left_by[day] = elapsed_fraction(year, day) if frac is None else frac
+        return left_by[day]
+
+    series = actuals.observations.get(person.name, ())
+    booked, share = [], []
+    for m in range(1, 13):
+        end = date(year, m, _calendar.monthrange(year, m)[1])
+        past = end < when
+        booked.append(_spent_at(series, end, year) if past else spent)
+        left = 1.0 - done(when)
+        # Past months hold no forecast. With nothing left of the plan after the
+        # reading, whatever remains lands at once rather than dividing by zero.
+        if past:
+            share.append(0.0)
+        elif left <= 1e-9:
+            share.append(1.0)
+        else:
+            share.append(min(1.0, (done(end) - done(when)) / left))
+    return np.array(booked) + (total - spent) * np.array(share)
+
+
+@dataclass(frozen=True)
 class MonthlyForecast:
     """Deterministic team cost broken out by month."""
 
@@ -104,16 +184,28 @@ def monthly_forecast(
     year: int,
     pto_days: float = 0.0,
     costs: Sequence[CostItem] = (),
+    actuals: Actuals | None = None,
 ) -> MonthlyForecast:
     """Spread the deterministic annual forecast across the months.
 
     Labor is spread by working-day weight; non-labor lines land in the month
-    they are actually incurred rather than being smeared across the year.
+    they are actually incurred rather than being smeared across the year. With
+    ``actuals`` (and ``people`` already adjusted to the estimate at completion)
+    the past months carry real hours and only the remainder is spread.
     """
+    non_labor = monthly_totals(costs, year) if costs else [0.0] * 12
+    if actuals is not None:
+        cum = [_cum_hours(p, year, actuals, p.hours.point) for p in people]
+        hours = np.diff(sum(cum), prepend=0.0)
+        cost = np.diff(sum(p.hourly_cost * c for p, c in zip(people, cum)), prepend=0.0)
+        return MonthlyForecast(
+            year=year,
+            costs=tuple(float(c) + n for c, n in zip(cost, non_labor)),
+            hours=tuple(float(h) for h in hours),
+        )
     weights = month_weights(year)
     total_hours = sum(p.hours.point for p in people)
     total_cost = sum(p.expected_cost() for p in people)
-    non_labor = monthly_totals(costs, year) if costs else [0.0] * 12
     return MonthlyForecast(
         year=year,
         costs=tuple(total_cost * w + n for w, n in zip(weights, non_labor)),
@@ -144,25 +236,35 @@ def monthly_simulation(
     iterations: int = 10_000,
     seed: int | None = None,
     costs: Sequence[CostItem] = (),
+    actuals: Actuals | None = None,
 ) -> MonthlySimulation:
     """Simulate cumulative team cost month by month.
 
     Each iteration draws every person's annual hours once, then distributes that
     draw across the months by working-day weight -- so the uncertainty band
-    widens through the year rather than resetting each month.
+    widens through the year rather than resetting each month. With ``actuals``
+    the past months are booked hours (no spread) and only what remains after the
+    latest reading is simulated.
     """
     if not people:
         raise ValueError("monthly_simulation() requires at least one person")
 
     rng = np.random.default_rng(seed)
-    annual_totals = np.zeros(iterations, dtype=float)
-    for person in people:
-        annual_totals += person.sample_cost(rng, iterations)
-
     logger.info("Monthly simulation: %d iterations, %d people", iterations, len(people))
-    weights = np.array(month_weights(year))
-    # (iterations, 1) * (12,) -> (iterations, 12), then accumulate along months.
-    monthly = annual_totals[:, None] * weights[None, :]
+    if actuals is None:
+        annual_totals = np.zeros(iterations, dtype=float)
+        for person in people:
+            annual_totals += person.sample_cost(rng, iterations)
+        weights = np.array(month_weights(year))
+        # (iterations, 1) * (12,) -> (iterations, 12), accumulated along months.
+        monthly = annual_totals[:, None] * weights[None, :]
+    else:
+        cum = sum(
+            p.hourly_cost
+            * _cum_hours(p, year, actuals, p.hours.sample(rng, iterations))
+            for p in people
+        )
+        monthly = np.diff(cum, axis=1, prepend=0.0)
 
     if costs:
         # Non-labor lines are added in the month they fall, at their own

@@ -238,6 +238,13 @@ Breaks the year into months **weighted by real working days** (February and holi
 months carry less), showing cumulative cost with P10/P90 at each month end. `--plots` writes
 `fan.png` (cumulative cost with a widening uncertainty band) and `monthly.png` (cost per month).
 
+With spend readings (the project's `actuals.csv` / `weekly.csv`, or `--actuals` / `--weekly`;
+`--as-of` and `--ignore-actuals` work as for `forecast`) the months already past carry the hours
+actually booked — between readings the line is interpolated — and only the time after each
+person's latest reading is simulated, so the band is a single line until then and fans out from
+there. The remaining hours are spread by the plan's shape when the project has a `plan.csv`,
+else by working days. Non-labor costs are unchanged. Without readings the output is as before.
+
 ### `budgie scenario` — compare what-ifs with a stoplight
 
 ```bash

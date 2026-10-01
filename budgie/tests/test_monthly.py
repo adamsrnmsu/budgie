@@ -94,3 +94,75 @@ def test_load_monthly_actuals_requires_columns(tmp_path):
     csv.write_text("name,hours\nAlice,10\n")
     with pytest.raises(ValueError):
         load_monthly_actuals(csv)
+
+
+# --- actuals: book the past, fan out only the rest (budgie-dhi) ------------
+
+from datetime import date
+
+from budgie.core.calendar import workdays_between
+from budgie.core.monthly import Actuals
+from budgie.core.plan import AllocationPlan, PlanEntry
+
+# $100/h, 1,000 h at completion of which 400 are booked by Jun 30 (100 by Mar 31).
+_ALICE = Person("Alice", 100, HoursEstimate.constant(1000))
+_SERIES = [(date(2026, 3, 31), 100.0), (date(2026, 6, 30), 400.0)]
+
+
+def _actuals(plan=None):
+    return Actuals({"Alice": _SERIES[-1]}, {"Alice": _SERIES}, plan)
+
+
+def test_past_months_book_real_hours_and_the_rest_is_spread_by_working_days():
+    mf = monthly_forecast([_ALICE], 2026, actuals=_actuals())
+    cum = mf.cumulative_costs
+    assert cum[2] == pytest.approx(100 * 100)  # Mar 31 reading
+    assert cum[5] == pytest.approx(400 * 100)  # Jun 30 reading
+    # Apr/May are interpolated between the two readings (Apr 30 is 30 of 91 days).
+    assert cum[3] == pytest.approx(100 * (100 + 300 * 30 / 91))
+    # 600 h remain; July holds 22 of the 126 working days left.
+    assert workdays_between(date(2026, 7, 1), date(2026, 12, 31)) == 126
+    assert cum[6] == pytest.approx(100 * (400 + 600 * 22 / 126))
+    assert cum[11] == pytest.approx(100 * 1000)
+    assert sum(mf.hours) == pytest.approx(1000)
+
+
+def test_simulation_has_no_spread_before_the_reading():
+    sim = monthly_simulation([_ALICE], 2026, iterations=50, seed=1, actuals=_actuals())
+    assert sim.band(10)[5] == sim.band(90)[5] == pytest.approx(40_000)
+    assert sim.band(50)[11] == pytest.approx(100_000)
+
+
+def test_remaining_hours_follow_the_plan_when_it_ends_early():
+    # Plan stops on Sep 1, so everything left must land by the end of August.
+    plan = AllocationPlan(
+        (
+            PlanEntry("Alice", date(2026, 1, 1), 1.0),
+            PlanEntry("Alice", date(2026, 9, 1), 0.0),
+        )
+    )
+    cum = monthly_forecast([_ALICE], 2026, actuals=_actuals(plan)).cumulative_costs
+    assert cum[7] == pytest.approx(100_000)  # Aug
+    assert cum[8] == pytest.approx(cum[7])  # nothing new in Sep+
+
+
+def test_no_actuals_is_unchanged():
+    assert monthly_forecast(_team(), 2026, actuals=None) == monthly_forecast(
+        _team(), 2026
+    )
+
+
+def test_monthly_cli_books_actuals_only_when_given():
+    from pathlib import Path
+
+    from click.testing import CliRunner
+
+    from budgie.budgie import cli
+
+    here = Path(__file__).parent
+    args = ["monthly", "--people", str(here / "team.csv"), "--seed", "1"]
+    plain = CliRunner().invoke(cli, args)
+    booked = CliRunner().invoke(cli, [*args, "--actuals", str(here / "actuals.csv")])
+    assert plain.exit_code == 0 and booked.exit_code == 0, booked.output
+    assert "Estimate at completion" not in plain.output
+    assert "Estimate at completion" in booked.output
