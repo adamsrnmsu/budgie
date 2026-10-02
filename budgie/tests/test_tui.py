@@ -58,16 +58,20 @@ def test_append_plan_row_handles_a_file_with_no_trailing_newline(tmp_path):
     assert len(load_plan(path).changes_for("Alice")) == 2
 
 
-def test_open_in_editor_without_an_editor_set(tmp_path, monkeypatch):
+def test_open_in_editor_falls_back_to_vim(tmp_path, monkeypatch):
     monkeypatch.delenv("EDITOR", raising=False)
     monkeypatch.delenv("VISUAL", raising=False)
     path = tmp_path / "people.csv"
     path.write_text("name\n")
+    calls = []
+    monkeypatch.setattr(
+        "budgie.tui.subprocess.run", lambda cmd, **kw: calls.append(cmd)
+    )
 
     message = open_in_editor(path)
 
-    assert "$EDITOR" in message
-    assert str(path) in message  # still tells you where the file is
+    assert calls == [["vim", str(path)]]
+    assert "Edited people.csv" in message
 
 
 def test_open_in_editor_reports_a_missing_file(tmp_path, monkeypatch):

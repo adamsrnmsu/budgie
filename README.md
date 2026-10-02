@@ -367,7 +367,7 @@ conclusion last:
    quitting and changing directory. `d` deletes the selected project — twice, deliberately:
    the first press names what would go, the second does it, and any other key cancels.
 2. **Inputs** — every project file, whether it exists, and what feeds what. Select one and
-   press `e` to open it in `$EDITOR`, then `r` to recalculate.
+   press `e` to open it in `$VISUAL`/`$EDITOR` (`vim` if neither is set), then `r` to recalculate.
 3. **Plan** — the allocation plan, with a form to append a dated change. Re-planning is an
    appended row, never an edit, so the history stays intact.
 4. **Forecast** — edit year, PTO, iterations and seed; the table and Monte Carlo histogram

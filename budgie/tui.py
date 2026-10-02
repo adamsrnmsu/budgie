@@ -4,7 +4,7 @@ Budgie Textual TUI.
 An interactive front-end over ``budgie.core``, laid out as the workflow the CLI
 teaches -- left to right, data to conclusion:
 
-    1 Inputs       the project's files: what exists, and open one in $EDITOR
+    1 Inputs       the project's files: what exists, and open one in $EDITOR (default vim)
     2 Plan         who is on the project and when; re-plan by appending a row
     3 Forecast     assumptions in, cost + Monte Carlo out, recomputed live
     4 Assumptions  what the engine assumes, so it isn't folklore
@@ -144,13 +144,11 @@ def _ellipsize(text: str, width: int) -> str:
 def open_in_editor(path: Path) -> str:
     """Open ``path`` in the user's editor, returning a status message.
 
-    Uses ``$VISUAL``/``$EDITOR`` when set. This is the "links to the inputs"
+    Uses ``$VISUAL``, then ``$EDITOR``, then ``vim``. This is the "links to the inputs"
     half of the Inputs tab -- seeing that a file exists doesn't help if you
     then have to go hunting for it in another window.
     """
-    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
-    if not editor:
-        return f"Set $EDITOR to open files from here. Path: {path}"
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vim"
     if not path.exists():
         return f"{path.name} doesn't exist yet."
     try:
@@ -432,7 +430,7 @@ class BudgieTUI(App):
     def _compose_inputs(self) -> ComposeResult:
         yield Static(
             "Your project's files. Select one and press [b]e[/b] to open it in "
-            "$EDITOR, then [b]r[/b] to recalculate.",
+            "$VISUAL/$EDITOR (vim if unset), then [b]r[/b] to recalculate.",
             classes="hint",
         )
         yield DataTable(id="inputs_table")
