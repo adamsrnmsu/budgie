@@ -112,6 +112,7 @@ def people_on_plan(
     year: int,
     pto: float = 0.0,
     pto_by_name: Mapping[str, float] | None = None,
+    flat_fte: Mapping[str, float] | None = None,
 ) -> tuple[list[Person], list[str]]:
     """The team with each person's hours taken from ``plan``, plus warnings.
 
@@ -121,6 +122,11 @@ def people_on_plan(
     many there are. Someone in people.csv with no plan rows gets 0 hours;
     someone in the plan with no rate is not costed. Both are warned about,
     because either one quietly changes the total.
+
+    ``flat_fte`` is allocations.csv's ``fte`` column: someone it gives a
+    non-zero FTE whom the plan doesn't mention is carried at that FTE from
+    Jan 1 -- the rule allocated hours already follow -- so hours and cost
+    agree. That is a warning too.
 
     PTO is the person's own ``pto_days`` from people.csv, else ``pto_by_name``
     (allocations.csv), else ``pto``; when both files give one and they differ,
@@ -138,7 +144,19 @@ def people_on_plan(
             if p.spread is not None and p.hours.high == 0
         ]
 
-    warnings: list[str] = []
+    rated = {p.name for p in people}
+    seeds = [
+        PlanEntry(name, date(year, 1, 1), fte)
+        for name, fte in (flat_fte or {}).items()
+        if fte and name in rated and name not in plan.names
+    ]
+    warnings = [
+        f"{e.name} has no rows in plan.csv; using allocations.csv fte {e.fte:g} "
+        "from Jan 1."
+        for e in seeds
+    ]
+    if seeds:
+        plan = AllocationPlan((*plan.entries, *seeds))
     planned = set(plan.names)
     out = []
     for person in people:
@@ -172,11 +190,11 @@ def people_on_plan(
             )
         )
 
-    rated = {p.name.casefold(): p.name for p in people}
+    folded = {p.name.casefold(): p.name for p in people}
     for name in plan.names:
-        if name in {p.name for p in people}:
+        if name in rated:
             continue
-        near = rated.get(name.casefold())
+        near = folded.get(name.casefold())
         hint = f" (people.csv has {near!r})" if near else ""
         warnings.append(
             f"{name} is in plan.csv but has no rate in people.csv{hint}, so not costed."
@@ -279,24 +297,15 @@ class Snapshot:
         ``fte`` from Jan 1 -- the same rule allocated hours follow -- so hours
         and cost agree; that is still worth a warning.
         """
-        plan, warnings = self.plan, []
-        if plan is not None:
-            seeds = [
-                PlanEntry(a.name, date(self.year, 1, 1), a.fte)
-                for a in self.allocations
-                if a.name not in plan.names and a.fte
-            ]
-            warnings = [
-                f"{e.name} has no rows in plan.csv; using allocations.csv fte "
-                f"{e.fte:g} from Jan 1."
-                for e in seeds
-            ]
-            if seeds:
-                plan = AllocationPlan((*plan.entries, *seeds))
-        people, more = people_on_plan(
-            self.people, plan, self.year, self.pto, self._allocation_pto()
+        people, warnings = people_on_plan(
+            self.people,
+            self.plan,
+            self.year,
+            self.pto,
+            self._allocation_pto(),
+            flat_fte={a.name: a.fte for a in self.allocations},
         )
-        return replace(self, people=people, warnings=warnings + more)
+        return replace(self, people=people, warnings=warnings)
 
     def _allocation_pto(self) -> dict[str, float]:
         """Per-person PTO days allocations.csv gave, recovered from each ceiling."""

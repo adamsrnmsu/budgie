@@ -1,9 +1,12 @@
 """One model: plan.csv sets the hours, people.csv the rate and the spread."""
 
+import re
 from datetime import date
 
 import pytest
+from click.testing import CliRunner
 
+from budgie.budgie import cli
 from budgie.core.calendar import productive_hours
 from budgie.core.forecast import forecast
 from budgie.core.loader import load_people
@@ -199,3 +202,34 @@ def test_without_a_plan_the_numbers_are_unchanged(project):
     people = load_people(project / "people.csv", productive_hours=PH)
     assert snap.people == people
     assert snap.warnings == []
+
+
+# --- the CLI follows the plan ---------------------------------------------
+
+
+def _p50(output):
+    return float(re.search(r"P50 \$([\d,]+)", output).group(1).replace(",", ""))
+
+
+def test_a_plan_row_moves_the_cli_forecast_and_monthly(project, monkeypatch):
+    monkeypatch.chdir(project)
+    runner = CliRunner()
+    args = ["--seed", "1", "--iterations", "2000"]
+    before = runner.invoke(cli, ["forecast", *args])
+    with (project / "plan.csv").open("a") as plan:
+        plan.write(f"Bob,{YEAR}-07-01,0\nZed,{YEAR}-07-01,1\n")
+
+    after = runner.invoke(cli, ["forecast", *args])
+    monthly = runner.invoke(cli, ["monthly", *args])
+
+    assert before.exit_code == after.exit_code == monthly.exit_code == 0, after.output
+    assert _p50(after.output) < _p50(before.output)
+    assert "Zed is in plan.csv but has no rate" in after.output
+    assert "Zed is in plan.csv but has no rate" in monthly.output
+
+
+def test_the_bundled_sample_ignores_plans(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # no project: sample team, no plan applied
+    result = CliRunner().invoke(cli, ["forecast", "--seed", "1"])
+    assert result.exit_code == 0, result.output
+    assert "⚠" not in result.output
