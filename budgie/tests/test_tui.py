@@ -108,13 +108,13 @@ async def test_tui_adds_a_plan_row_from_the_form(tmp_path, monkeypatch):
     app = BudgieTUI()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.query_one("#plan_name").value = "Trillian"
+        app.query_one("#plan_name").value = "Alice"
         app.query_one("#plan_date").value = "2026-07-01"
         app.query_one("#plan_fte").value = "0.5"
         app.add_plan_row()
         await pilot.pause()
 
-        assert "Trillian" in load_plan(tmp_path / "plan.csv").names
+        assert len(load_plan(tmp_path / "plan.csv").changes_for("Alice")) == 2
         # And the form clears, so the same row can't be added twice by accident.
         assert app.query_one("#plan_name").value == ""
 
@@ -635,3 +635,66 @@ async def test_escape_leaves_the_plan_form(tmp_path, monkeypatch):
         await pilot.pause()
         assert app.query_one("#tabs").active == "tab_forecast"
         assert app.query_one("#plan_name").value == ""
+
+
+async def _plan_form(app, pilot, name, fte="0.5"):
+    app.query_one("#plan_name").value = name
+    app.query_one("#plan_date").value = "2026-07-01"
+    app.query_one("#plan_fte").value = fte
+    message = app.add_plan_row()
+    await pilot.pause()
+    return message
+
+
+async def test_plan_form_rejects_fte_above_one(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    before = (tmp_path / "plan.csv").read_text()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        message = await _plan_form(app, pilot, "Alice", fte="5")
+        assert message == "FTE is a share of full time: 0 to 1"
+        assert app.query_one("#plan_status").has_class("error")
+    assert (tmp_path / "plan.csv").read_text() == before
+
+
+async def test_plan_form_rejects_a_mis_cased_name(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    before = (tmp_path / "plan.csv").read_text()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert "Did you mean Alice?" in await _plan_form(app, pilot, "alice")
+        # Pressing again doesn't push it through: it's a typo, not a new person.
+        assert "Did you mean Alice?" in await _plan_form(app, pilot, "alice")
+    assert (tmp_path / "plan.csv").read_text() == before
+
+
+async def test_plan_form_asks_twice_before_adding_an_unknown_name(
+    tmp_path, monkeypatch
+):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    plan = tmp_path / "plan.csv"
+    before = plan.read_text()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        message = await _plan_form(app, pilot, "Zed")
+        assert message == (
+            "Zed isn't in people.csv, so they won't be costed. "
+            "Press Add again to add them anyway."
+        )
+        assert app.query_one("#plan_status").has_class("error")
+        assert plan.read_text() == before
+
+        await _plan_form(app, pilot, "Zed")
+        assert "Zed" in load_plan(plan).names

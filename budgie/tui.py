@@ -23,6 +23,7 @@ is a record, not mutable current state.
 
 from __future__ import annotations
 
+import csv
 import json
 import os
 import subprocess
@@ -320,6 +321,9 @@ class BudgieTUI(App):
         # press and cleared by anything else, so deletion always takes two
         # deliberate keystrokes aimed at the same row.
         self._delete_armed: str | None = None
+        # A plan row naming someone nobody costs, already warned about once.
+        # The same values again mean "yes, really".
+        self._unknown_confirmed: tuple[str, str, str] | None = None
 
     # -- paths -------------------------------------------------------------
 
@@ -631,8 +635,23 @@ class BudgieTUI(App):
             fte = float(raw_fte)
         except ValueError as exc:
             return self._plan_status(str(exc), error=True)
-        if fte < 0:
-            return self._plan_status("FTE cannot be negative.", error=True)
+        if not 0 <= fte <= 1:
+            return self._plan_status("FTE is a share of full time: 0 to 1", error=True)
+
+        known = self._known_names()
+        if name not in known:
+            # "alice" next to "Alice" would become a second person.
+            twin = next((k for k in sorted(known) if k.lower() == name.lower()), None)
+            if twin:
+                return self._plan_status(f"Did you mean {twin}?", error=True)
+            if self._unknown_confirmed != (name, raw_date, raw_fte):
+                self._unknown_confirmed = (name, raw_date, raw_fte)
+                return self._plan_status(
+                    f"{name} isn't in people.csv, so they won't be costed. "
+                    "Press Add again to add them anyway.",
+                    error=True,
+                )
+        self._unknown_confirmed = None
 
         append_plan_row(path, name, effective, fte)
         # Clear the form so the same row can't be added twice by a stray Enter.
@@ -642,6 +661,27 @@ class BudgieTUI(App):
         return self._plan_status(
             f"Added {name} → {fte:g} FTE from {effective} ({path.name})"
         )
+
+    def _known_names(self) -> set[str]:
+        """Everyone named in the project's people file or plan.csv.
+
+        A file that's missing or won't parse just contributes nobody: this is
+        a typo check, not the place to report a broken input.
+        """
+        names: set[str] = set()
+        people = self._people_override or self.workspace.resolve("people")
+        try:
+            if people:
+                with open(people, newline="") as handle:
+                    rows = csv.DictReader(handle)
+                    names |= {r["name"].strip() for r in rows if r.get("name")}
+        except (OSError, ValueError):
+            pass
+        try:
+            names |= set(load_plan(self.plan_path).names)
+        except (OSError, ValueError):
+            pass
+        return names
 
     def _plan_status(self, message: str, error: bool = False) -> str:
         return self._status("#plan_status", message, error)
