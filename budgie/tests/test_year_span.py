@@ -21,6 +21,8 @@ from budgie.core.actuals import (
     monthly_to_observations,
     week_ending,
 )
+from budgie.core.allocation import Allocation
+from budgie.core.burndown import burndown
 from budgie.core.calendar import (
     YearSpan,
     current_year,
@@ -31,6 +33,7 @@ from budgie.core.calendar import (
     year_span,
     year_start_month,
 )
+from budgie.core.eac import elapsed_fraction
 from budgie.core.plan import AllocationPlan, PlanEntry
 from budgie.core.workspace import load_workspace
 
@@ -167,3 +170,30 @@ def test_monthly_hours_run_in_fiscal_order_and_stop_at_the_last_reported():
         (date(2026, 12, 31), 30.0),  # December between two readings: a real 0
         (date(2027, 1, 31), 35.0),
     ]
+
+
+def _full_time(spent=0.0):
+    return Allocation("Ann", 1.0, spent, 1992.0)
+
+
+def test_fy27_even_burn_starts_october_first():
+    st = burndown(_full_time(), FY27, as_of=date(2026, 12, 31))
+    assert st.span == FY27 and (st.days_in_year, st.days_elapsed) == (365, 92)
+    assert st.expected_by_now == pytest.approx(1992 * 92 / 365)
+    assert st.required_pace.workdays_remaining == 188  # through 2027-09-30
+
+
+def test_fy27_exhaustion_date_lands_in_calendar_2027():
+    st = burndown(_full_time(600.0), FY27, as_of=date(2026, 12, 31))
+    assert st.exhaustion_date == date(2027, 8, 2)  # day 305.44 after Oct 1
+
+
+def test_an_edge_week_reading_past_the_span_clamps_to_its_last_day():
+    st = burndown(_full_time(), FY27, observations=[(date(2027, 10, 3), 1900.0)])
+    assert st.as_of == date(2027, 9, 30)
+    assert st.days_elapsed == 365 and st.required_pace.workdays_remaining == 0
+
+
+def test_fy27_elapsed_share_counts_working_days_from_october():
+    assert elapsed_fraction(FY27, date(2026, 12, 31)) == pytest.approx(0.248)
+    assert elapsed_fraction(FY27, date(2026, 9, 30)) == 0.0

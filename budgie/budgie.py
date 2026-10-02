@@ -396,7 +396,11 @@ def _with_actuals(people, year, actuals_csv, weekly_csv, as_of, ignore_actuals):
     # Project file or nothing, as for `hours`: a sample plan would invent a team.
     _, plan = _plan_for_allocations(None)
     eac = at_completion(
-        people, observations, year, as_of=as_of.date() if as_of else None, plan=plan
+        people,
+        observations,
+        year_span(year),  # bridge: budgie-bvd
+        as_of=as_of.date() if as_of else None,
+        plan=plan,
     )
     return eac.people, eac.readings, observations
 
@@ -752,7 +756,13 @@ def _burndown_statuses(
         if obs and as_of_date:
             obs = [o for o in obs if o[0] <= as_of_date]
         statuses.append(
-            burndown(alloc, year, as_of=as_of_date, observations=obs, plan=plan)
+            burndown(
+                alloc,
+                year_span(year),  # bridge: budgie-bvd
+                as_of=as_of_date,
+                observations=obs,
+                plan=plan,
+            )
         )
     return statuses
 

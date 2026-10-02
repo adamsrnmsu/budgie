@@ -8,7 +8,7 @@ a window.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 import matplotlib
@@ -92,8 +92,7 @@ def burndown_chart(status: BurndownStatus, out_path: str | Path) -> Path:
 
     out_path = Path(out_path)
     alloc = status.allocation
-    start = date(status.year, 1, 1)
-    end = date(status.year, 12, 31)
+    start, end = status.span.first, status.span.last
     allocated = alloc.allocated_hours
 
     fig, ax = plt.subplots(figsize=(7.2, 3.4))
@@ -169,7 +168,7 @@ def burndown_chart(status: BurndownStatus, out_path: str | Path) -> Path:
     ax.set_xlim(start, end)
     ax.set_ylim(0, max(allocated, projected_end, alloc.hours_spent) * 1.18)
     ax.set_ylabel("Cumulative hours", fontsize=9)
-    ax.set_title(f"{alloc.name} — {status.year} hours burn-down", fontsize=11)
+    ax.set_title(f"{alloc.name} — {status.span.label} hours burn-down", fontsize=11)
     ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b"))
     ax.tick_params(labelsize=8)

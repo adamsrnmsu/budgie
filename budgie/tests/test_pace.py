@@ -23,7 +23,7 @@ def _alloc(fte=0.25, spent=0.0, available=1992.0):
 
 def test_required_pace_converts_remaining_hours_to_a_weekly_rate():
     # 0.25 FTE of 1992 h = 498 h allocated; 180 spent leaves 318.
-    status = burndown(_alloc(spent=180), 2026, as_of=date(2026, 6, 30))
+    status = burndown(_alloc(spent=180), year_span(2026), as_of=date(2026, 6, 30))
     pace = status.required_pace
 
     assert pace.hours_remaining == pytest.approx(318)
@@ -40,12 +40,14 @@ def test_required_pace_matches_the_allocation_when_nothing_is_spent():
     # Spending nothing all year means the whole allocation is still ahead of
     # you, so the pace needed for the rest of the year is above the FTE you
     # were planned at.
-    status = burndown(_alloc(fte=0.5, spent=0), 2026, as_of=date(2026, 6, 30))
+    status = burndown(
+        _alloc(fte=0.5, spent=0), year_span(2026), as_of=date(2026, 6, 30)
+    )
     assert status.required_pace.fte > 0.5
 
 
 def test_required_pace_is_zero_once_the_allocation_is_gone():
-    status = burndown(_alloc(spent=600), 2026, as_of=date(2026, 6, 30))
+    status = burndown(_alloc(spent=600), year_span(2026), as_of=date(2026, 6, 30))
     pace = status.required_pace
 
     assert pace.is_exhausted
@@ -55,12 +57,14 @@ def test_required_pace_is_zero_once_the_allocation_is_gone():
 
 def test_required_pace_flags_an_impossible_ask():
     # 1.0 FTE with nothing spent by December cannot be recovered.
-    status = burndown(_alloc(fte=1.0, spent=0), 2026, as_of=date(2026, 12, 1))
+    status = burndown(
+        _alloc(fte=1.0, spent=0), year_span(2026), as_of=date(2026, 12, 1)
+    )
     assert status.required_pace.is_impossible
 
 
 def test_required_pace_runs_out_of_days_at_year_end():
-    status = burndown(_alloc(spent=100), 2026, as_of=date(2026, 12, 31))
+    status = burndown(_alloc(spent=100), year_span(2026), as_of=date(2026, 12, 31))
     pace = status.required_pace
 
     assert pace.workdays_remaining == 0
@@ -136,31 +140,39 @@ def test_july_joiner_expects_nothing_before_july_then_the_plans_share():
     plan = _plan(("2026-07-01", 1.0))
     alloc = _alloc(fte=0.5, spent=0)  # 996 h allocated; plan shape is what matters
     assert (
-        burndown(alloc, 2026, as_of=date(2026, 6, 30), plan=plan).expected_by_now == 0
+        burndown(
+            alloc, year_span(2026), as_of=date(2026, 6, 30), plan=plan
+        ).expected_by_now
+        == 0
     )
     # Jul 1-Sep 30 is 64 of the 126 working days Jul 1-Dec 31.
     assert workdays_between(date(2026, 7, 1), date(2026, 9, 30)) == 64
     assert workdays_between(date(2026, 7, 1), date(2026, 12, 31)) == 126
-    st = burndown(alloc, 2026, as_of=date(2026, 9, 30), plan=plan)
+    st = burndown(alloc, year_span(2026), as_of=date(2026, 9, 30), plan=plan)
     assert st.expected_by_now == pytest.approx(996 * 64 / 126)
 
 
 def test_september_drop_to_zero_ends_the_pace_window_on_the_last_planned_day():
     plan = _plan(("2026-01-01", 1.0), ("2026-09-01", 0.0))
-    st = burndown(_alloc(fte=1.0, spent=1000), 2026, as_of=date(2026, 6, 30), plan=plan)
+    st = burndown(
+        _alloc(fte=1.0, spent=1000), year_span(2026), as_of=date(2026, 6, 30), plan=plan
+    )
     assert plan.last_planned_day("Alice", year_span(2026)) == date(2026, 8, 31)
     # Jul 1-Aug 31: 22 + 21 working days (Jul 3 is the observed holiday).
     assert st.required_pace.workdays_remaining == 43
     # The full allocation is accrued by Aug 31, so it is expected from September on.
     assert burndown(
-        _alloc(fte=1.0), 2026, as_of=date(2026, 10, 15), plan=plan
+        _alloc(fte=1.0), year_span(2026), as_of=date(2026, 10, 15), plan=plan
     ).expected_by_now == pytest.approx(1992)
 
 
 def test_ended_plan_with_hours_left_reads_as_out_of_time():
     plan = _plan(("2026-01-01", 1.0), ("2026-09-01", 0.0))
     pace = burndown(
-        _alloc(fte=1.0, spent=1500), 2026, as_of=date(2026, 10, 15), plan=plan
+        _alloc(fte=1.0, spent=1500),
+        year_span(2026),
+        as_of=date(2026, 10, 15),
+        plan=plan,
     ).required_pace
     assert pace.out_of_time
     assert "no working days left on your plan" in pace_sentence(pace)
@@ -168,9 +180,9 @@ def test_ended_plan_with_hours_left_reads_as_out_of_time():
 
 def test_person_the_plan_does_not_mention_keeps_the_even_pace():
     plan = AllocationPlan((PlanEntry("Someone Else", date(2026, 7, 1), 1.0),))
-    st = burndown(_alloc(), 2026, as_of=date(2026, 7, 2), plan=plan)
+    st = burndown(_alloc(), year_span(2026), as_of=date(2026, 7, 2), plan=plan)
     assert not st.planned
     assert (
         st.expected_by_now
-        == burndown(_alloc(), 2026, as_of=date(2026, 7, 2)).expected_by_now
+        == burndown(_alloc(), year_span(2026), as_of=date(2026, 7, 2)).expected_by_now
     )

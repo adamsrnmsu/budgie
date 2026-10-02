@@ -161,7 +161,11 @@ def _cum_hours(person: Person, year: int, actuals: Actuals, total):
                 if plan
                 else None
             )
-            left_by[day] = elapsed_fraction(year, day) if frac is None else frac
+            left_by[day] = (
+                elapsed_fraction(year_span(year), day)  # bridge: budgie-bvd
+                if frac is None
+                else frac
+            )
         return left_by[day]
 
     series = actuals.observations.get(person.name, ())

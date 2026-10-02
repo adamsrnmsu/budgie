@@ -28,7 +28,7 @@ from datetime import date
 from typing import TYPE_CHECKING
 
 from budgie.core.actuals import Observation
-from budgie.core.calendar import workdays_between, workdays_in_year, year_span
+from budgie.core.calendar import YearSpan, workdays_between, workdays_in_year
 from budgie.core.person import HoursEstimate, Person
 
 if TYPE_CHECKING:
@@ -47,25 +47,22 @@ class Completion:
     readings: dict[str, Observation]
 
 
-def elapsed_fraction(year: int, as_of: date) -> float:
-    """Share of ``year``'s working days gone by the end of ``as_of``, in [0, 1].
+def elapsed_fraction(span: YearSpan, as_of: date) -> float:
+    """Share of ``span``'s working days gone by the end of ``as_of``, in [0, 1].
 
     Working days are Mon-Fri minus federal holidays, and ``as_of`` itself counts
     as elapsed -- a reading dated the 30th includes the 30th's hours. Dates
     outside the year clamp to its ends.
     """
-    start, end = date(year, 1, 1), date(year, 12, 31)
-    if as_of < start:
+    if as_of < span.first:
         return 0.0
-    return workdays_between(start, min(as_of, end)) / workdays_in_year(
-        year_span(year)
-    )  # bridge: budgie-bvd
+    return workdays_between(span.first, min(as_of, span.last)) / workdays_in_year(span)
 
 
 def at_completion(
     people: Sequence[Person],
     observations: Mapping[str, Sequence[Observation]],
-    year: int,
+    span: YearSpan,
     as_of: date | None = None,
     plan: AllocationPlan | None = None,
 ) -> Completion:
@@ -95,14 +92,8 @@ def at_completion(
             adjusted.append(person)
             continue
         when, spent = max(usable, key=lambda o: o[0])
-        done = (
-            plan.fraction_through(
-                person.name, year_span(year), when
-            )  # bridge: budgie-bvd
-            if plan
-            else None
-        )
-        left = 1.0 - (elapsed_fraction(year, when) if done is None else done)
+        done = plan.fraction_through(person.name, span, when) if plan else None
+        left = 1.0 - (elapsed_fraction(span, when) if done is None else done)
         est = person.hours
         readings[person.name] = (when, spent)
         adjusted.append(

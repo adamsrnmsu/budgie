@@ -142,7 +142,7 @@ def test_monthly_converts_to_cumulative_observations():
 def test_latest_observation_drives_spent_and_as_of():
     alloc = Allocation(name="Alice", fte=0.25, hours_spent=0, available_hours=1992)
     obs = load_weekly_actuals(TESTS_DIR / "weekly.csv", year_span(2026))["Alice"]
-    st = burndown(alloc, 2026, observations=obs)
+    st = burndown(alloc, year_span(2026), observations=obs)
     # The dated reading wins over the allocation's undated scalar (0).
     assert st.hours_spent == 990
     # as_of defaults to the latest observation, not today.
@@ -152,6 +152,6 @@ def test_latest_observation_drives_spent_and_as_of():
 
 def test_no_observations_falls_back_to_allocation_scalar():
     alloc = Allocation(name="Alice", fte=0.25, hours_spent=180, available_hours=1992)
-    st = burndown(alloc, 2026, as_of=date(2026, 7, 23))
+    st = burndown(alloc, year_span(2026), as_of=date(2026, 7, 23))
     assert st.hours_spent == 180
     assert st.observations == ()
