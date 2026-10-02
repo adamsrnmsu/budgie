@@ -132,6 +132,7 @@ folder you ran `init` in. `budgie.yaml` also pins the settings you'd otherwise r
 
 ```yaml
 year: 2026
+year_start: "01-01"   # "10-01" for a federal fiscal year
 pto: 0
 iterations: 10000
 seed: 42
@@ -145,6 +146,15 @@ inputs:
 An explicit option always wins over the project (`budgie forecast --people other.csv`),
 and with no project at all every command falls back to bundled sample data — so you can
 try everything before committing to anything.
+
+### Fiscal year
+
+A federal budget runs October to September. Set `year_start: "10-01"` beside
+`year:` and the year is named for the calendar year it ends in: `year: 2027`
+is FY27, 2026-10-01 to 2027-09-30. Holidays, working days, the pace line, the
+forecast, the monthly view (October first) and every printed label follow it.
+`year_start` must be a month's first day; the default `"01-01"` is the
+calendar year. `budgie init --year 2027 --year-start 10-01` writes it for you.
 
 ### `budgie guide` — how do I actually build one of these?
 

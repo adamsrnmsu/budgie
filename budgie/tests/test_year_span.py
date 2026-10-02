@@ -17,7 +17,9 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
+from budgie.budgie import cli
 from budgie.core.actuals import (
     load_weekly_actuals,
     monthly_to_observations,
@@ -46,8 +48,9 @@ from budgie.core.monthly import (
 )
 from budgie.core.plan import AllocationPlan, PlanEntry
 from budgie.core.project import load_snapshot
+from budgie.core.scaffold import init_workspace
 from budgie.core.scenario import run_scenarios
-from budgie.core.workspace import load_workspace
+from budgie.core.workspace import forget_workspaces, load_workspace
 
 FY27 = year_span(2027, "10-01")
 CAL26 = year_span(2026)
@@ -308,3 +311,72 @@ def test_a_recurring_cost_runs_to_the_fiscal_years_last_day(tmp_path):
     (item,) = snap.costs
     assert snap.span == FY27
     assert item.total == sum(monthly_totals([item], snap.span))
+
+
+def test_init_writes_a_fiscal_project_dated_from_october(tmp_path):
+    init_workspace(tmp_path, year=2027, year_start="10-01")
+    assert 'year_start: "10-01"' in (tmp_path / "budgie.yaml").read_text()
+    assert (tmp_path / "plan.csv").read_text().splitlines()[
+        1
+    ] == "Alice,2026-10-01,0.90"
+    assert load_snapshot(tmp_path).span == FY27
+
+
+def test_assumptions_in_a_fiscal_project_say_fy27(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2027, year_start="10-01")
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    out = CliRunner().invoke(cli, ["assumptions"], env={"COLUMNS": "200"}).output
+    forget_workspaces()
+    assert "Assumptions in force for FY27" in out
+    assert "11 US federal holidays fall Mon-Fri in FY27" in out
+    assert "250 in FY27" in out
+    assert "(Oct 8.4% ... Nov 7.6%)" in out
+
+
+def test_init_cli_refuses_a_bad_year_start(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(
+        cli, ["init", "--here", "--year", "2027", "--year-start", "10-15"]
+    )
+    assert result.exit_code != 0 and "year_start must be MM-01" in result.output
+
+
+def test_the_cli_default_year_inside_a_project_is_the_one_containing_today(
+    tmp_path, monkeypatch
+):
+    from budgie import budgie as cli_module
+
+    (tmp_path / "budgie.yaml").write_text('year_start: "10-01"\n')
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    monkeypatch.setattr(cli_module, "_today", lambda: date(2026, 9, 30))
+    assert cli_module._span(None) == year_span(2026, "10-01")
+    monkeypatch.setattr(cli_module, "_today", lambda: date(2026, 10, 1))
+    assert cli_module._span(None) == FY27
+    forget_workspaces()
+
+
+def test_forecast_and_monthly_load_costs_through_the_span_end(tmp_path, monkeypatch):
+    """A recurring cost line is booked to the span's last day, so a fiscal
+    year's forecast total agrees with its monthly series."""
+    from budgie.core import costs as costs_module
+
+    init_workspace(tmp_path, year=2027, year_start="10-01")
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    seen = []
+    real = costs_module.load_costs
+    monkeypatch.setattr(
+        costs_module,
+        "load_costs",
+        lambda csv, through=None: seen.append(through) or real(csv, through=through),
+    )
+    for command in ("forecast", "monthly"):
+        # monthly takes no project default for costs, so name the file.
+        result = CliRunner().invoke(
+            cli, [command, "--costs", "costs.csv", "--no-plots"]
+        )
+        assert result.exit_code == 0, result.output
+    forget_workspaces()
+    assert seen == [date(2027, 9, 30)] * 2

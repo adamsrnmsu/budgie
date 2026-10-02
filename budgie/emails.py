@@ -102,7 +102,7 @@ def pace_sentence(pace: RequiredPace) -> str:
 
 def render_email(
     alloc: Allocation,
-    year: int,
+    year: int | str,
     subject_template: str = DEFAULT_SUBJECT,
     body_template: str = DEFAULT_BODY,
     pace: RequiredPace | None = None,
@@ -132,10 +132,13 @@ def render_email(
 
 def write_drafts(
     statuses: list[BurndownStatus],
-    year: int,
+    year: int | str,
     out_dir: str | Path,
 ) -> list[Path]:
-    """Render and write one plain-text draft per person; return the paths."""
+    """Render and write one plain-text draft per person; return the paths.
+
+    ``year`` is printed as given (2026 or FY27).
+    """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     paths = []
@@ -194,8 +197,11 @@ def _row(label: str, value: str, *, bold: bool = False, color: str = _INK) -> st
     )
 
 
-def render_html_email(status: BurndownStatus, year: int) -> str:
-    """Render an Outlook-safe HTML body (tables + inline styles, cid: image)."""
+def render_html_email(status: BurndownStatus, year: int | str) -> str:
+    """Render an Outlook-safe HTML body (tables + inline styles, cid: image).
+
+    ``year`` is printed as given (2026 or FY27).
+    """
     alloc = status.allocation
     color, message = _pace_banner(status)
     pace = status.required_pace
@@ -276,7 +282,7 @@ style="display:block;width:544px;max-width:100%;height:auto;border:0;">
   <tr><td style="padding:8px 28px 26px 28px;">
     <div style="font-family:{_FONT};font-size:13px;color:{_MUTED};line-height:1.5;">\
 The dashed line is an even pace across the year; the dotted line projects your current \
-rate to December. Let me know if anything looks off.</div>
+rate to year end ({status.span.last:%b} {status.span.last.day}). Let me know if anything looks off.</div>
     <div style="font-family:{_FONT};font-size:13px;color:{_INK};padding-top:14px;">\
 Thanks,<br>Budgie</div>
   </td></tr>
@@ -287,7 +293,7 @@ Thanks,<br>Budgie</div>
 
 def build_message(
     status: BurndownStatus,
-    year: int,
+    year: int | str,
     chart_png: bytes | None = None,
 ) -> EmailMessage:
     """Build a multipart email (plain text + Outlook-safe HTML + inline chart).
@@ -318,7 +324,7 @@ def build_message(
 
 def write_eml_drafts(
     statuses: list[BurndownStatus],
-    year: int,
+    year: int | str,
     out_dir: str | Path,
     charts: dict[str, bytes] | None = None,
 ) -> list[Path]:

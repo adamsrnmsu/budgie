@@ -45,7 +45,13 @@ from textual.widgets import (
 )
 
 from budgie.core.allocation import pto_overrides
-from budgie.core.calendar import PTO_RULE, explain_pto, productive_hours, year_span
+from budgie.core.calendar import (
+    PTO_RULE,
+    current_year,
+    explain_pto,
+    productive_hours,
+    year_span,
+)
 from budgie.core.csvio import parse_date
 from budgie.core.forecast import forecast as run_forecast
 from budgie.core.loader import load_people
@@ -352,7 +358,9 @@ class BudgieTUI(App):
         with controls:
             yield Label("Year")
             yield Input(
-                value=str(self._setting("year", 2026)), id="year", type="integer"
+                value=str(self._setting("year", self._default_year())),
+                id="year",
+                type="integer",
             )
             yield Label("PTO days")
             yield Input(value=str(self._setting("pto", 0)), id="pto", type="number")
@@ -442,6 +450,10 @@ class BudgieTUI(App):
         if self.workspace:
             return self.workspace.setting(key, default)
         return default
+
+    def _default_year(self) -> int:
+        """The year containing today, in the project's money year."""
+        return current_year(self._setting("year_start", "01-01"), date.today())  # noqa: DTZ011
 
     # -- events ------------------------------------------------------------
 
@@ -660,18 +672,19 @@ class BudgieTUI(App):
             self._projects_status("Cancelled.")
 
     def recalculate(self) -> None:
-        year = self._read_int("year", 2026)
+        year = self._read_int("year", self._default_year())
+        span = year_span(year, self._setting("year_start", "01-01"))
         pto = self._read_float("pto", 0.0)
         iterations = max(self._read_int("iterations", 10_000), 100)
         seed = self._read_int("seed", 42)
 
-        ph = productive_hours(year_span(year), pto_days=pto)  # bridge: budgie-bvd
-        self._refresh_chrome(year, pto)
+        ph = productive_hours(span, pto_days=pto)
+        self._refresh_chrome(span.label, pto)
         self._refresh_projects()
         self._refresh_forecast(ph, iterations, seed)
-        self._refresh_plan(year, pto)
+        self._refresh_plan(span, pto)
         self._refresh_inputs()
-        self._refresh_assumptions(ph, year)
+        self._refresh_assumptions(ph, span.label)
 
     def _refresh_projects(self) -> None:
         """List the projects, marking the one in play."""
@@ -708,9 +721,9 @@ class BudgieTUI(App):
 
     # -- rendering ---------------------------------------------------------
 
-    def _refresh_chrome(self, year: int, pto: float) -> None:
+    def _refresh_chrome(self, label: str, pto: float) -> None:
         """The two header rows: who/what/when on top, where below."""
-        figures = f"{year}   ·   PTO {pto:g}d   ·   {self._clock()}"
+        figures = f"{label}   ·   PTO {pto:g}d   ·   {self._clock()}"
         self.query_one("#titlebar", Static).update(
             f"BUDGIE   {self.project_name}{' ' * 4}[not bold]{figures}[/not bold]"
         )
@@ -812,7 +825,7 @@ class BudgieTUI(App):
             f"[dim]people:[/dim] {shorten_path(self.people_path, max(width - 10, 12))}"
         )
 
-    def _refresh_plan(self, year: int, pto: float) -> None:
+    def _refresh_plan(self, span, pto: float) -> None:
         table = self.query_one("#plan_table", DataTable)
         table.clear()
         path = self.plan_path
@@ -834,7 +847,7 @@ class BudgieTUI(App):
         for name in plan.names:
             hours = plan.allocated_hours(
                 name,
-                year_span(year),  # bridge: budgie-bvd
+                span,
                 pto_days=pto_by_name.get(name, pto),
             )
             total += hours
@@ -883,9 +896,9 @@ class BudgieTUI(App):
                 used,
             )
 
-    def _refresh_assumptions(self, ph, year: int) -> None:
+    def _refresh_assumptions(self, ph, label: str) -> None:
         lines = [
-            f"[b]Assumptions in force for {year}[/b]\n",
+            f"[b]Assumptions in force for {label}[/b]\n",
             f"Gross hours          {ph.gross_hours:,.0f}  (40 h x 52 weeks)",
             f"Federal holidays    -{ph.holiday_hours:,.0f}",
             f"Productive hours     {ph.productive_hours:,.0f}",
