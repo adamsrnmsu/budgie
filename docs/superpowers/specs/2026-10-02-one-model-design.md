@@ -1,7 +1,7 @@
 # One model: the plan sets the hours, everyone quotes the same number
 
 Date: 2026-10-02
-Status: draft, awaiting the user's review
+Status: approved 2026-10-02 ("B now"); implemented, plan docs/superpowers/plans/2026-10-02-one-model.md
 Review: `2026-10-02-ux-review.md`, step B. Step C (editing the Plan tab in the
 TUI) and step D (teaching) get their own specs once this one is approved;
 they build on the interfaces named under "Hooks for later steps".

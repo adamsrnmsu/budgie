@@ -279,8 +279,11 @@ Charlie,2026-01-01,0.88
 David,2026-01-01,0.80
 ```
 
-That is the whole sample team at the same FTE as their `util_mode` in `team.csv`, so the plan
-and the forecast tell one story (6,833 hours either way).
+Inside a project, **the plan sets everyone's hours** — for `forecast`, `monthly`, `hours`,
+`emails` and the TUI alike — and people.csv only says what an hour costs and how far real
+hours may stray from the plan. Append a row and the forecast moves. Someone in people.csv
+with no plan rows works 0 hours, and someone in plan.csv with no rate isn't costed; both are
+printed as warnings. (The bundled sample, or a `--people` file you name, is costed as given.)
 
 Adding a member, zeroing someone out, and re-planning are all the same operation: append a
 row (say `Bob,2026-09-01,0.00` when he leaves, or `Carol,2026-07-15,0.50` for a new hire). You
@@ -372,8 +375,10 @@ conclusion last:
 3. **Plan** — the allocation plan, with a form to append a dated change. Re-planning is an
    appended row, never an edit, so the history stays intact. FTE runs 0 to 1, and a name
    that isn't in people.csv takes a second Add to confirm. `escape` leaves the form.
-4. **Forecast** — edit year, PTO, iterations and seed; the table and Monte Carlo histogram
-   recompute live. With no project open it shows a bundled sample team, marked SAMPLE DATA.
+4. **Forecast** — leads with one line: budget · spent · forecast P50 · headroom · stoplight.
+   It reads the project exactly as `budgie forecast` does (plan, readings, costs, budget), so
+   the two quote the same P50. Year, PTO, iterations and seed come from `budgie.yaml` (`e` on
+   Projects). With no project open it shows a bundled sample team, marked SAMPLE DATA.
 5. **Assumptions** — the same model assumptions `budgie assumptions` prints.
 
 Press `1`–`5` to jump to a tab, `r` to recalculate, `e` to edit the file the tab shows
@@ -388,25 +393,35 @@ a file won't load. Landing on a tab that can only report an error helps nobody.
 
 All inputs are plain CSV (or YAML for scenarios), so they're easy to export from a spreadsheet.
 
-**Team** — `team.csv`. Either utilization fractions of the productive-hours ceiling:
+**Team** — `people.csv` (`team.csv` in the bundled samples). In a project with a plan, it
+says what an hour costs and how sure the plan's hours are:
+
+```csv
+name,hourly_cost,under,over
+Alice,95,10,5
+```
+
+`under` / `over` are percentages: Alice may work up to 10% fewer hours than planned, or up to
+5% more. That makes a **low / likely / high** range around the plan for Monte Carlo to
+sample; leave them out for no uncertainty.
+
+Two older shapes still load. Utilization fractions of the productive-hours ceiling:
 
 ```csv
 name,hourly_cost,util_low,util_mode,util_high
 Alice,95,0.80,0.90,0.98
 ```
 
-…or absolute hours, if you'd rather state them directly:
+…or absolute hours:
 
 ```csv
 name,hourly_cost,hours_low,hours_mode,hours_high
 Alice,95,1600,1800,1950
 ```
 
-The three values are a **low / most-likely / high** estimate. The deterministic forecast uses
-the middle one; Monte Carlo samples the whole range.
-
-A `pto_days` column is optional on both shapes and overrides the project's PTO for that
-person.
+With a plan, either becomes the range around it (low/mode and high/mode); without one, they
+are the hours, as before. A `pto_days` column is optional on every shape and overrides the
+project's PTO for that person.
 
 **Allocations** — `allocations.csv` (for `hours` and `emails`):
 
@@ -418,8 +433,9 @@ Bob,bob@example.com,0.85,620,
 
 `pto_days` is optional — leave it blank and the project's `pto` applies; put a number there
 (`20`) and that person gets their own regardless of what the rest of the team is assumed to
-take. Keep `fte` in step with the person's utilization in the team file: 0.90 FTE and
-`util_mode` 0.90 is the same person described twice.
+take. `fte` and `hours_spent` are optional: with a plan, the plan sets hours (`fte` only
+covers someone the plan doesn't mention, with a warning), and dated readings supersede
+`hours_spent`. A file of just `name,email` is fine.
 
 **Allocation plan** — `plan.csv` (for `plan`; see above for semantics):
 
