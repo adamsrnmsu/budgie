@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 
 from budgie.core.calendar import productive_hours
@@ -8,6 +10,7 @@ from budgie.core.monthly import (
     monthly_available_hours,
     monthly_forecast,
     monthly_simulation,
+    spent_at,
     workdays_in_month,
 )
 from budgie.core.person import HoursEstimate, Person
@@ -98,7 +101,6 @@ def test_load_monthly_actuals_requires_columns(tmp_path):
 
 # --- actuals: book the past, fan out only the rest (budgie-dhi) ------------
 
-from datetime import date
 
 from budgie.core.calendar import workdays_between
 from budgie.core.monthly import Actuals
@@ -166,3 +168,13 @@ def test_monthly_cli_books_actuals_only_when_given():
     assert plain.exit_code == 0 and booked.exit_code == 0, booked.output
     assert "Estimate at completion" not in plain.output
     assert "Estimate at completion" in booked.output
+
+
+def test_spent_at_is_linear_from_dec_31_and_flat_after_the_last_reading():
+    series = [(date(2026, 1, 31), 310.0), (date(2026, 3, 2), 400.0)]  # 31 days, then 30
+    assert spent_at(series, date(2025, 12, 31), 2026) == 0.0
+    assert spent_at(series, date(2026, 1, 11), 2026) == pytest.approx(110.0)
+    assert spent_at(series, date(2026, 2, 15), 2026) == pytest.approx(
+        355.0
+    )  # 14 of 30 days
+    assert spent_at(series, date(2026, 6, 1), 2026) == 400.0

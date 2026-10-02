@@ -109,11 +109,20 @@ class Actuals:
     plan: AllocationPlan | None = None
 
 
-def _spent_at(series: Sequence[Observation], day: date, year: int) -> float:
+def spent_at(series: Sequence[Observation], day: date, year: int) -> float:
     """Cumulative hours booked by ``day``, interpolating between readings.
 
-    The curve starts at 0 before Jan 1; between two readings we only know the
-    endpoints, so the line between them is an assumption, not measured data.
+    The curve starts at 0 on Dec 31 of the prior year; between two readings we
+    only know the endpoints, so the line between them is an assumption, not
+    measured data. After the last reading it stays flat.
+
+    Args:
+        series: ``(date, cumulative hours)`` readings, in any order.
+        day: The date to read the curve at.
+        year: The budget year (fixes where the curve starts).
+
+    Returns:
+        Cumulative hours at ``day``.
     """
     prev_day, prev_hours = date(year, 1, 1) - timedelta(days=1), 0.0
     for when, hours in sorted(series):
@@ -122,6 +131,9 @@ def _spent_at(series: Sequence[Observation], day: date, year: int) -> float:
             return prev_hours + (hours - prev_hours) * (day - prev_day).days / span
         prev_day, prev_hours = when, hours
     return prev_hours
+
+
+_spent_at = spent_at  # temporary alias until perch imports the public name (budgie-8u1)
 
 
 def _cum_hours(person: Person, year: int, actuals: Actuals, total):
@@ -149,7 +161,7 @@ def _cum_hours(person: Person, year: int, actuals: Actuals, total):
     for m in range(1, 13):
         end = date(year, m, _calendar.monthrange(year, m)[1])
         past = end < when
-        booked.append(_spent_at(series, end, year) if past else spent)
+        booked.append(spent_at(series, end, year) if past else spent)
         left = 1.0 - done(when)
         # Past months hold no forecast. With nothing left of the plan after the
         # reading, whatever remains lands at once rather than dividing by zero.
