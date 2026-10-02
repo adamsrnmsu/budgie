@@ -16,6 +16,11 @@ from datetime import date
 
 import pytest
 
+from budgie.core.actuals import (
+    load_weekly_actuals,
+    monthly_to_observations,
+    week_ending,
+)
 from budgie.core.calendar import (
     YearSpan,
     current_year,
@@ -123,3 +128,42 @@ def test_fraction_through_and_last_planned_day_follow_the_span():
     full = AllocationPlan((PlanEntry("Di", date(2026, 10, 1), 1.0),))
     assert full.fraction_through("Di", FY27, date(2026, 12, 31)) == pytest.approx(0.248)
     assert full.team_hours(FY27) == {"Di": pytest.approx(1992.0)}
+
+
+@pytest.mark.parametrize(
+    "week, ends",
+    [(40, date(2026, 10, 4)), (53, date(2027, 1, 3)), (1, date(2027, 1, 10)),
+     (39, date(2027, 10, 3))],
+)  # fmt: skip
+def test_fy27_week_numbers_map_by_the_start_week(week, ends):
+    assert week_ending(FY27, week) == ends
+
+
+def test_week_53_in_a_year_whose_first_iso_year_has_52_is_refused():
+    fy28 = year_span(2028, "10-01")  # starts 2027-10-01; ISO 2027 has 52 weeks
+    with pytest.raises(ValueError, match="2027 has no ISO week 53"):
+        week_ending(fy28, 53)
+
+
+def test_a_calendar_year_keeps_every_week_number_in_that_year():
+    # Jan 1, 2027 is ISO week 53 of 2026; calendar 2027's week 1 is still 2027's.
+    assert week_ending(year_span(2027), 1) == date(2027, 1, 10)
+
+
+def test_weekly_csv_reads_into_fy27(tmp_path):
+    csv = tmp_path / "weekly.csv"
+    csv.write_text("name,week,hours_to_date\nAnn,40,10\nAnn,1,50\n")
+    assert load_weekly_actuals(csv, FY27) == {
+        "Ann": [(date(2026, 10, 4), 10.0), (date(2027, 1, 10), 50.0)]
+    }
+
+
+def test_monthly_hours_run_in_fiscal_order_and_stop_at_the_last_reported():
+    hours = [0.0] * 12
+    hours[9], hours[10], hours[0] = 10.0, 20.0, 5.0  # Oct, Nov, Jan
+    assert monthly_to_observations(FY27, hours) == [
+        (date(2026, 10, 31), 10.0),
+        (date(2026, 11, 30), 30.0),
+        (date(2026, 12, 31), 30.0),  # December between two readings: a real 0
+        (date(2027, 1, 31), 35.0),
+    ]

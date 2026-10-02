@@ -31,7 +31,7 @@ from budgie.core.actuals import (
 )
 from budgie.core.allocation import Allocation, load_allocations
 from budgie.core.budget import Budget, coerce_budget
-from budgie.core.calendar import ProductiveHours, productive_hours, year_span
+from budgie.core.calendar import ProductiveHours, YearSpan, productive_hours, year_span
 from budgie.core.costs import CostItem, load_costs, total_cost
 from budgie.core.loader import load_people
 from budgie.core.monthly import load_monthly_actuals
@@ -55,7 +55,9 @@ def readings_files(
 
 
 def load_observations(
-    year: int, actuals: str | Path | None = None, weekly: str | Path | None = None
+    span: YearSpan,
+    actuals: str | Path | None = None,
+    weekly: str | Path | None = None,
 ) -> dict[str, list[Observation]]:
     """Spend readings as ``{name: [(date, cumulative hours)]}``; weekly wins.
 
@@ -63,10 +65,10 @@ def load_observations(
     same observations, so everything downstream handles one shape.
     """
     if weekly:
-        return load_weekly_actuals(weekly, year)
+        return load_weekly_actuals(weekly, span)
     if actuals:
         return {
-            name: monthly_to_observations(year, months)
+            name: monthly_to_observations(span, months)
             for name, months in load_monthly_actuals(actuals).items()
         }
     return {}
@@ -231,7 +233,13 @@ def load_snapshot(project: str | Path) -> Snapshot:
     people = load_people(people_csv, productive_hours=ceiling)
 
     actuals, weekly = readings_files(workspace)
-    readings = {n: s for n, s in load_observations(year, actuals, weekly).items() if s}
+    readings = {
+        n: s
+        for n, s in load_observations(
+            year_span(year), actuals, weekly
+        ).items()  # bridge: budgie-bvd
+        if s
+    }
 
     plan_csv = workspace.resolve("plan")
     plan = load_plan(plan_csv) if plan_csv else None

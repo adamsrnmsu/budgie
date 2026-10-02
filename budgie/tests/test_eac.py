@@ -11,6 +11,7 @@ from budgie.budgie import cli
 from budgie.core.actuals import monthly_to_observations
 from budgie.core.allocation import Allocation
 from budgie.core.burndown import burndown
+from budgie.core.calendar import year_span
 from budgie.core.eac import at_completion, elapsed_fraction
 from budgie.core.forecast import forecast
 from budgie.core.montecarlo import simulate
@@ -41,26 +42,28 @@ def _clear_workspace_cache():
 
 def test_monthly_observations_stop_at_the_last_reported_month():
     months = load_monthly_actuals(TESTS_DIR / "actuals.csv")
-    obs = monthly_to_observations(2026, next(iter(months.values())))
+    obs = monthly_to_observations(year_span(2026), next(iter(months.values())))
     # Data runs through July. Before the fix this was Dec 31.
     assert obs[-1] == (date(2026, 7, 31), 1040.0)
 
 
 def test_monthly_observations_keep_an_empty_month_in_the_middle():
-    obs = monthly_to_observations(2026, [10, 0, 5] + [0] * 9)
+    obs = monthly_to_observations(year_span(2026), [10, 0, 5] + [0] * 9)
     assert obs == [
         (date(2026, 1, 31), 10),
         (date(2026, 2, 28), 10),
         (date(2026, 3, 31), 15),
     ]
-    assert monthly_to_observations(2026, [0.0] * 12) == []
+    assert monthly_to_observations(year_span(2026), [0.0] * 12) == []
 
 
 def test_monthly_actuals_no_longer_pin_the_burndown_to_december():
     months = load_monthly_actuals(TESTS_DIR / "actuals.csv")
     name, hours = next(iter(months.items()))
     alloc = Allocation(name=name, fte=0.25, hours_spent=0, available_hours=1992)
-    status = burndown(alloc, 2026, observations=monthly_to_observations(2026, hours))
+    status = burndown(
+        alloc, 2026, observations=monthly_to_observations(year_span(2026), hours)
+    )
     assert status.as_of == date(2026, 7, 31)
     assert status.required_pace.workdays_remaining > 0
 

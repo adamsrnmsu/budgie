@@ -24,6 +24,7 @@ from datetime import date
 from itertools import pairwise
 from pathlib import Path
 
+from budgie.core.calendar import YearSpan
 from budgie.core.csvio import (
     as_int,
     as_required_float,
@@ -40,20 +41,27 @@ Observation = tuple[date, float]
 _WEEKLY_COLS = {"name", "week", "hours_to_date"}
 
 
-def week_ending(year: int, week: int) -> date:
-    """The date that ISO ``week`` of ``year`` ends (its Sunday).
+def week_ending(span: YearSpan, week: int) -> date:
+    """The date ISO ``week`` ends (its Sunday) in the year ``span`` covers.
 
     "Hours up to week N" means through the end of that week, so this is the
-    correct as-of date for such a reading.
+    correct as-of date for such a reading. In a fiscal year a week numbered at
+    or above the ISO week holding the first day belongs to that day's ISO year,
+    a lower one to the last day's: in FY27 weeks 40-53 are 2026, 1-39 are 2027.
+    A calendar year keeps every number in that year, as it always has.
     """
+    iso_year = span.year
+    if span.fiscal:
+        first_year, first_week, _ = span.first.isocalendar()
+        iso_year = first_year if week >= first_week else span.last.isocalendar()[0]
     try:
-        return date.fromisocalendar(year, week, 7)
+        return date.fromisocalendar(iso_year, week, 7)
     except ValueError as exc:  # week 53 in a 52-week year, week 0, etc.
-        raise ValueError(f"{year} has no ISO week {week}") from exc
+        raise ValueError(f"{iso_year} has no ISO week {week}") from exc
 
 
 def load_weekly_actuals(
-    csv_path: str | Path, year: int
+    csv_path: str | Path, span: YearSpan
 ) -> dict[str, list[Observation]]:
     """Load cumulative hours-to-date readings keyed by ISO week number.
 
@@ -62,7 +70,7 @@ def load_weekly_actuals(
     """
     out: dict[str, list[Observation]] = {}
     for row in read_rows(csv_path, required=_WEEKLY_COLS):
-        when = week_ending(year, as_int(row, "week"))
+        when = week_ending(span, as_int(row, "week"))
         out.setdefault(as_str(row, "name"), []).append(
             (when, as_required_float(row, "hours_to_date"))
         )
@@ -79,20 +87,25 @@ def load_weekly_actuals(
     return out
 
 
-def monthly_to_observations(year: int, monthly_hours: list[float]) -> list[Observation]:
-    """Convert per-month hours into cumulative month-end observations.
+def monthly_to_observations(
+    span: YearSpan, monthly_hours: list[float]
+) -> list[Observation]:
+    """Convert per-month hours (index 0 = January) into cumulative month-end
+    observations, in the order the year runs (October first in FY27).
 
     Stops after the last month that has hours. A trailing empty month is a
     month nobody has reported yet, not a reading of zero -- emitting it would
-    date the latest observation Dec 31 and leave no year to pace against. An
-    empty month *between* two reported ones is a real reading and is kept.
+    date the latest observation on the year's last day and leave no year to
+    pace against. An empty month *between* two reported ones is a real reading
+    and is kept.
     """
-    reported = max((i + 1 for i, h in enumerate(monthly_hours) if h), default=0)
+    ordered = [monthly_hours[month - 1] for _, month in span.months]
+    reported = max((i + 1 for i, h in enumerate(ordered) if h), default=0)
     out: list[Observation] = []
     running = 0.0
-    for index, hours in enumerate(monthly_hours[:reported]):
+    for (year, month), hours in zip(span.months[:reported], ordered):
         running += hours
-        out.append((last_day_of_month(year, index + 1), running))
+        out.append((last_day_of_month(year, month), running))
     return out
 
 

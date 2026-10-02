@@ -436,6 +436,8 @@ Alice,1,150
 Alice,2,140
 ```
 
+In a fiscal year (`year_start` in budgie.yaml) a bare week or month number belongs to the calendar year that keeps it inside the money year. FY27 runs 2026-10-01 to 2027-09-30, so weeks 40–53 and months 10–12 are 2026, and weeks 1–39 and months 1–9 are 2027. A calendar year reads every number in that year, as it always has.
+
 Or **cumulative hours through an ISO week** (`weekly.csv`, used with `--weekly`) — which is what
 most timesheet exports actually give you:
 
@@ -450,6 +452,8 @@ These are *cumulative totals*, not per-week hours, so nothing is invented about 
 was distributed between readings. One row per person is enough; more rows give a real curve.
 Budgie takes the as-of date from the latest reading (week 29 of 2026 ends July 19), so the burn
 rate is measured over the right window rather than against today's date.
+
+In a fiscal year (`year_start` in budgie.yaml) a bare week or month number belongs to the calendar year that keeps it inside the money year. FY27 runs 2026-10-01 to 2027-09-30, so weeks 40–53 and months 10–12 are 2026, and weeks 1–39 and months 1–9 are 2027. A calendar year reads every number in that year, as it always has.
 
 **Non-labor costs** — `costs.csv` (materials, licences, hardware, travel):
 

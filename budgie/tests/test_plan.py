@@ -104,18 +104,18 @@ def test_plan_requires_columns(tmp_path):
 
 
 def test_week_ending_is_the_sunday():
-    d = week_ending(2026, 29)
+    d = week_ending(year_span(2026), 29)
     assert d.weekday() == 6  # Sunday
     assert d.year == 2026
 
 
 def test_week_ending_rejects_impossible_week():
     with pytest.raises(ValueError):
-        week_ending(2026, 99)
+        week_ending(year_span(2026), 99)
 
 
 def test_load_weekly_actuals_sorted_and_cumulative():
-    obs = load_weekly_actuals(TESTS_DIR / "weekly.csv", 2026)
+    obs = load_weekly_actuals(TESTS_DIR / "weekly.csv", year_span(2026))
     alice = obs["Alice"]
     assert [h for _, h in alice] == [430, 660, 990]
     assert alice[0][0] < alice[1][0] < alice[2][0]
@@ -126,11 +126,11 @@ def test_weekly_actuals_reject_decreasing_totals(tmp_path):
     # Per-week values pasted where cumulative was expected.
     csv.write_text("name,week,hours_to_date\nA,10,50\nA,20,30\n")
     with pytest.raises(ValueError, match="cumulative"):
-        load_weekly_actuals(csv, 2026)
+        load_weekly_actuals(csv, year_span(2026))
 
 
 def test_monthly_converts_to_cumulative_observations():
-    obs = monthly_to_observations(2026, [10, 20, 30])
+    obs = monthly_to_observations(year_span(2026), [10, 20, 30] + [0] * 9)
     assert [h for _, h in obs] == [10, 30, 60]
     assert obs[0][0] == date(2026, 1, 31)
     assert obs[-1][0] == date(2026, 3, 31)
@@ -141,7 +141,7 @@ def test_monthly_converts_to_cumulative_observations():
 
 def test_latest_observation_drives_spent_and_as_of():
     alloc = Allocation(name="Alice", fte=0.25, hours_spent=0, available_hours=1992)
-    obs = load_weekly_actuals(TESTS_DIR / "weekly.csv", 2026)["Alice"]
+    obs = load_weekly_actuals(TESTS_DIR / "weekly.csv", year_span(2026))["Alice"]
     st = burndown(alloc, 2026, observations=obs)
     # The dated reading wins over the allocation's undated scalar (0).
     assert st.hours_spent == 990

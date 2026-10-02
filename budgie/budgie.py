@@ -382,10 +382,13 @@ def _with_actuals(people, year, actuals_csv, weekly_csv, as_of, ignore_actuals):
     """
     if ignore_actuals:
         return people, {}, {}
+    from budgie.core.calendar import year_span
     from budgie.core.project import load_observations, readings_files
 
     actuals_csv, weekly_csv = readings_files(_workspace(), actuals_csv, weekly_csv)
-    observations = load_observations(year, actuals_csv, weekly_csv)
+    observations = load_observations(
+        year_span(year), actuals_csv, weekly_csv
+    )  # bridge: budgie-bvd
     if not observations:
         return people, {}, {}
     from budgie.core.eac import at_completion
@@ -590,7 +593,9 @@ def hours(alloc_csv, year, pto, plan_csv):
     plan_csv, plan = _plan_for_allocations(plan_csv)
     allocs = load_allocations(alloc_csv, available_hours=ph, plan=plan)
     # The project's latest reading is the spent figure, as in `emails`.
-    readings = load_observations(year, *readings_files(_workspace()))
+    readings = load_observations(
+        year_span(year), *readings_files(_workspace())
+    )  # bridge: budgie-bvd
     allocs = with_readings(allocs, spent_to_date(readings))
     logger.info(f"Available hours {year}: {ph.available_hours:,.0f} (1.0 FTE)")
     _print_hours_table(allocs)
@@ -731,10 +736,13 @@ def _burndown_statuses(
     pace, which is measured against the working days left after the as-of date.
     """
     from budgie.core.burndown import burndown
+    from budgie.core.calendar import year_span
     from budgie.core.project import load_observations
 
     # Real spend readings turn the interpolated burn-down into a true curve.
-    observations = load_observations(year, actuals_csv, weekly_csv)
+    observations = load_observations(
+        year_span(year), actuals_csv, weekly_csv
+    )  # bridge: budgie-bvd
 
     as_of_date = as_of.date() if as_of else None
     statuses = []

@@ -47,13 +47,15 @@ def test_a_named_readings_file_beats_the_projects(project):
 
 
 def test_weekly_beats_monthly(project):
-    both = load_observations(2026, project / "actuals.csv", project / "weekly.csv")
-    monthly = load_observations(2026, project / "actuals.csv")
+    both = load_observations(
+        year_span(2026), project / "actuals.csv", project / "weekly.csv"
+    )
+    monthly = load_observations(year_span(2026), project / "actuals.csv")
 
     # The scaffold's weekly Alice ends at 660 in week 20; monthly at 290 in Feb.
     assert both["Alice"][-1] == (date(2026, 5, 17), 660)
     assert monthly["Alice"][-1] == (date(2026, 2, 28), 290)
-    assert load_observations(2026) == {}
+    assert load_observations(year_span(2026)) == {}
 
 
 def test_the_latest_reading_on_or_before_as_of_is_the_spent_figure():
