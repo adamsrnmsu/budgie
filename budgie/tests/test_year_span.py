@@ -26,6 +26,7 @@ from budgie.core.calendar import (
     year_span,
     year_start_month,
 )
+from budgie.core.plan import AllocationPlan, PlanEntry
 from budgie.core.workspace import load_workspace
 
 FY27 = year_span(2027, "10-01")
@@ -99,3 +100,26 @@ def test_fy27_productive_hours():
     assert ph.span == FY27
     assert (ph.holiday_hours, ph.productive_hours) == (88.0, 1992.0)
     assert hours_per_workday(FY27) == pytest.approx(7.968)
+
+
+def test_a_plan_row_before_the_span_is_in_force_for_all_of_it():
+    plan = AllocationPlan((PlanEntry("Ann", date(2026, 1, 1), 0.5),))
+    assert plan.allocated_hours("Ann", FY27) == pytest.approx(996.0)  # 0.5 x 1992
+
+
+def test_a_mid_year_join_counts_from_its_own_day():
+    plan = AllocationPlan((PlanEntry("Ben", date(2027, 4, 1), 1.0),))
+    assert plan.allocated_hours("Ben", FY27) == pytest.approx(1011.936)  # 127 x 7.968
+
+
+def test_fraction_through_and_last_planned_day_follow_the_span():
+    plan = AllocationPlan(
+        (
+            PlanEntry("Cy", date(2026, 10, 1), 1.0),
+            PlanEntry("Cy", date(2027, 3, 1), 0.0),
+        )
+    )
+    assert plan.last_planned_day("Cy", FY27) == date(2027, 2, 26)  # a Friday
+    full = AllocationPlan((PlanEntry("Di", date(2026, 10, 1), 1.0),))
+    assert full.fraction_through("Di", FY27, date(2026, 12, 31)) == pytest.approx(0.248)
+    assert full.team_hours(FY27) == {"Di": pytest.approx(1992.0)}

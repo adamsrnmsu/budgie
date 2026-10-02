@@ -178,7 +178,9 @@ class Snapshot:
             if self.allocations:
                 changes["allocations"] = self._replanned(plan)
             else:
-                changes["planned"] = plan.team_hours(self.year, self.pto)
+                changes["planned"] = plan.team_hours(
+                    year_span(self.year), self.pto
+                )  # bridge: budgie-bvd
         return replace(self, **changes)
 
     def _replanned(self, plan: AllocationPlan) -> list[Allocation]:
@@ -190,7 +192,10 @@ class Snapshot:
                 self.ceiling.productive_hours - available
             ) / self.ceiling.hours_per_day
             return (
-                plan.allocated_hours(name, self.year, pto) / available
+                plan.allocated_hours(
+                    name, year_span(self.year), pto
+                )  # bridge: budgie-bvd
+                / available
                 if available
                 else 0.0
             )
@@ -232,7 +237,11 @@ def load_snapshot(project: str | Path) -> Snapshot:
     plan = load_plan(plan_csv) if plan_csv else None
     alloc_csv = workspace.resolve("allocations")
     allocations = load_allocations(alloc_csv, ceiling, plan=plan) if alloc_csv else []
-    planned = plan.team_hours(year, pto_days=pto) if plan and not allocations else {}
+    planned = (
+        plan.team_hours(year_span(year), pto_days=pto)  # bridge: budgie-bvd
+        if plan and not allocations
+        else {}
+    )
 
     costs_csv = workspace.resolve("costs")
     costs = load_costs(costs_csv) if costs_csv else []

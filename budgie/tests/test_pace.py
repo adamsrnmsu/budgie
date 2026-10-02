@@ -148,7 +148,7 @@ def test_july_joiner_expects_nothing_before_july_then_the_plans_share():
 def test_september_drop_to_zero_ends_the_pace_window_on_the_last_planned_day():
     plan = _plan(("2026-01-01", 1.0), ("2026-09-01", 0.0))
     st = burndown(_alloc(fte=1.0, spent=1000), 2026, as_of=date(2026, 6, 30), plan=plan)
-    assert plan.last_planned_day("Alice", 2026) == date(2026, 8, 31)
+    assert plan.last_planned_day("Alice", year_span(2026)) == date(2026, 8, 31)
     # Jul 1-Aug 31: 22 + 21 working days (Jul 3 is the observed holiday).
     assert st.required_pace.workdays_remaining == 43
     # The full allocation is accrued by Aug 31, so it is expected from September on.

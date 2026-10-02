@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 
 from budgie.core.actuals import Observation
 from budgie.core.allocation import Allocation
-from budgie.core.calendar import HOURS_PER_WEEK, workdays_between
+from budgie.core.calendar import HOURS_PER_WEEK, workdays_between, year_span
 
 if TYPE_CHECKING:
     from budgie.core.plan import AllocationPlan
@@ -99,7 +99,11 @@ class BurndownStatus:
         """Whether the plan has hours for this person (else pace is an even burn)."""
         return (
             self.plan is not None
-            and self.plan.fraction_through(self.allocation.name, self.year, self.as_of)
+            and self.plan.fraction_through(
+                self.allocation.name,
+                year_span(self.year),  # bridge: budgie-bvd
+                self.as_of,
+            )
             is not None
         )
 
@@ -112,7 +116,13 @@ class BurndownStatus:
         day = min(max(day, date(self.year, 1, 1)), date(self.year, 12, 31))
         name = self.allocation.name
         fraction = (
-            self.plan.fraction_through(name, self.year, day) if self.plan else None
+            self.plan.fraction_through(
+                name,
+                year_span(self.year),  # bridge: budgie-bvd
+                day,
+            )
+            if self.plan
+            else None
         )
         if fraction is None:
             fraction = ((day - date(self.year, 1, 1)).days + 1) / self.days_in_year
@@ -173,7 +183,13 @@ class BurndownStatus:
         """
         end = date(self.year, 12, 31)
         if self.planned:
-            end = self.plan.last_planned_day(self.allocation.name, self.year) or end
+            end = (
+                self.plan.last_planned_day(
+                    self.allocation.name,
+                    year_span(self.year),  # bridge: budgie-bvd
+                )
+                or end
+            )
         return RequiredPace(
             hours_remaining=self.allocation.allocated_hours - self.hours_spent,
             workdays_remaining=workdays_between(self.as_of + timedelta(days=1), end),

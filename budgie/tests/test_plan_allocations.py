@@ -48,7 +48,9 @@ def test_plan_overrides_the_flat_fte(tmp_path):
     planned = load_allocations(path, ph, plan=plan)[0]
 
     assert flat.allocated_hours == pytest.approx(996)
-    assert planned.allocated_hours == pytest.approx(plan.allocated_hours("Bob", YEAR))
+    assert planned.allocated_hours == pytest.approx(
+        plan.allocated_hours("Bob", year_span(YEAR))
+    )
     assert round(planned.allocated_hours) == 665
     assert planned.fte < flat.fte
     # The invariant Allocation is built on still holds.

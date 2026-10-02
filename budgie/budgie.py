@@ -1467,6 +1467,7 @@ def plan(plan_csv, year, pto):
 def _print_plan_table(allocation_plan, year, pto, pto_by_name=None):
     from rich.table import Table
 
+    from budgie.core.calendar import year_span
     from budgie.singletons import console
 
     table = Table(
@@ -1478,7 +1479,11 @@ def _print_plan_table(allocation_plan, year, pto, pto_by_name=None):
     total = 0.0
     for name in allocation_plan.names:
         days = (pto_by_name or {}).get(name, pto)
-        hours = allocation_plan.allocated_hours(name, year, pto_days=days)
+        hours = allocation_plan.allocated_hours(
+            name,
+            year_span(year),
+            pto_days=days,  # bridge: budgie-bvd
+        )
         total += hours
         changes = ", ".join(
             f"{e.effective_date:%b %-d}→{e.fte:g}"

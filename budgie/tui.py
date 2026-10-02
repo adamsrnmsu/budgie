@@ -833,7 +833,9 @@ class BudgieTUI(App):
         total = 0.0
         for name in plan.names:
             hours = plan.allocated_hours(
-                name, year, pto_days=pto_by_name.get(name, pto)
+                name,
+                year_span(year),  # bridge: budgie-bvd
+                pto_days=pto_by_name.get(name, pto),
             )
             total += hours
             changes = ", ".join(

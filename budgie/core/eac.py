@@ -95,7 +95,13 @@ def at_completion(
             adjusted.append(person)
             continue
         when, spent = max(usable, key=lambda o: o[0])
-        done = plan.fraction_through(person.name, year, when) if plan else None
+        done = (
+            plan.fraction_through(
+                person.name, year_span(year), when
+            )  # bridge: budgie-bvd
+            if plan
+            else None
+        )
         left = 1.0 - (elapsed_fraction(year, when) if done is None else done)
         est = person.hours
         readings[person.name] = (when, spent)

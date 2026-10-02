@@ -154,7 +154,13 @@ def _cum_hours(person: Person, year: int, actuals: Actuals, total):
 
     def done(day: date) -> float:
         if day not in left_by:
-            frac = plan.fraction_through(person.name, year, day) if plan else None
+            frac = (
+                plan.fraction_through(
+                    person.name, year_span(year), day
+                )  # bridge: budgie-bvd
+                if plan
+                else None
+            )
             left_by[day] = elapsed_fraction(year, day) if frac is None else frac
         return left_by[day]
 

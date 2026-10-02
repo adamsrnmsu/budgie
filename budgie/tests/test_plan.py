@@ -47,13 +47,15 @@ def _plan_file(tmp_path, rows):
 def test_full_year_allocation_matches_flat_model():
     plan = load_plan(TESTS_DIR / "plan.csv")
     # The sample team is at 0.90 FTE all year -> 0.9 * 1992.
-    assert plan.allocated_hours("Alice", 2026) == pytest.approx(1793, abs=0.5)
+    assert plan.allocated_hours("Alice", year_span(2026)) == pytest.approx(
+        1793, abs=0.5
+    )
     assert plan.names == ["Alice", "Bob", "Charlie", "David"]
 
 
 def test_mid_year_join_is_charged_from_the_actual_day(tmp_path):
     plan = _plan_file(tmp_path, ["Carol,2026-07-15,0.50"])
-    carol = plan.allocated_hours("Carol", 2026)
+    carol = plan.allocated_hours("Carol", year_span(2026))
     # Joining Jul 15 at 0.5 must be well under a full year at 0.5 (996)...
     assert carol < 996 * 0.6
     # ...and under a Jul 1 start (502), since she misses two weeks of July.
@@ -67,7 +69,7 @@ def test_zeroing_someone_out_stops_accrual(tmp_path):
     assert plan.fte_on("Bob", date(2026, 9, 1)) == 0.0
     assert plan.fte_on("Bob", date(2026, 12, 31)) == 0.0
     # Eight months at 0.5 is less than a full year at 0.5.
-    assert plan.allocated_hours("Bob", 2026) < 996
+    assert plan.allocated_hours("Bob", year_span(2026)) < 996
 
 
 def test_replan_midyear_raises_allocation(tmp_path):
@@ -75,13 +77,13 @@ def test_replan_midyear_raises_allocation(tmp_path):
     assert plan.fte_on("Dave", date(2026, 3, 31)) == 0.25
     assert plan.fte_on("Dave", date(2026, 4, 1)) == 0.75
     # Between a flat 0.25 (498) and a flat 0.75 (1494) year.
-    assert 498 < plan.allocated_hours("Dave", 2026) < 1494
+    assert 498 < plan.allocated_hours("Dave", year_span(2026)) < 1494
 
 
 def test_before_first_entry_is_zero(tmp_path):
     plan = _plan_file(tmp_path, ["Carol,2026-07-15,0.50"])
     assert plan.fte_on("Carol", date(2026, 1, 1)) == 0.0
-    assert plan.allocated_hours("Nobody", 2026) == 0.0
+    assert plan.allocated_hours("Nobody", year_span(2026)) == 0.0
 
 
 def test_plan_rejects_negative_fte(tmp_path):
