@@ -698,3 +698,39 @@ async def test_plan_form_asks_twice_before_adding_an_unknown_name(
 
         await _plan_form(app, pilot, "Zed")
         assert "Zed" in load_plan(plan).names
+
+
+SAMPLE = "SAMPLE DATA — no project open."
+
+
+async def test_sample_data_is_labelled_as_such(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one("#forecast_banner").display is True
+        assert SAMPLE in _text(app, "#forecast_banner")
+        assert "SAMPLE DATA" in _text(app, "#titlebar")
+
+
+async def test_with_several_projects_it_says_pick_one_not_init(tmp_path, monkeypatch):
+    _two_projects(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        context = _text(app, "#contextbar")
+        inputs_row = " ".join(map(str, app.query_one("#inputs_table").get_row_at(0)))
+        assert "pick a project on the Projects tab" in context
+        assert "budgie init" not in context
+        assert "pick a project on the Projects tab" in inputs_row
+        assert "budgie init" not in inputs_row
+        assert SAMPLE in _text(app, "#forecast_banner")
+
+        app.switch_project("fy26")
+        await pilot.pause()
+        # A real project: the banner goes, and so does the label.
+        assert app.query_one("#forecast_banner").display is False
+        assert "SAMPLE DATA" not in _text(app, "#titlebar")

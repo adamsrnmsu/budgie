@@ -84,6 +84,10 @@ _FILE_COL = 16  # longest scaffolded filename is `allocations.csv`
 _ROWS_COL = 4
 _CELL_PADDING = 2  # DataTable's default, one space either side
 
+SAMPLE_BANNER = (
+    "SAMPLE DATA — no project open. Pick one on Projects or run `budgie init NAME`."
+)
+
 # `#mc_pane` is `padding: 1 2`, so four columns of its width are not content.
 _MC_PANE_PADDING = 4
 
@@ -338,6 +342,11 @@ class BudgieTUI(App):
         return str(Path(__file__).parent / "tests" / "team.csv")
 
     @property
+    def on_sample(self) -> bool:
+        """True when the forecast is the bundled sample team, not a project."""
+        return self.workspace is None and not self._people_override
+
+    @property
     def plan_path(self) -> Path | None:
         return self.workspace.path_for("plan") if self.workspace else None
 
@@ -563,7 +572,7 @@ class BudgieTUI(App):
                 return self.workspace.config_path
             return "Open this project first (enter), then e edits its budgie.yaml."
         if tab == "tab_forecast":
-            if self.workspace is None and not self._people_override:
+            if self.on_sample:
                 return f"That's the bundled sample team -- {self._no_project_hint()}."
             return Path(self.people_path)
         if self.workspace is None:
@@ -864,13 +873,14 @@ class BudgieTUI(App):
     def _refresh_chrome(self, year: int, pto: float) -> None:
         """The two header rows: who/what/when on top, where below."""
         figures = f"{year}   ·   PTO {pto:g}d   ·   {self._clock()}"
+        name = self.project_name + ("  ·  SAMPLE DATA" if self.on_sample else "")
         self.query_one("#titlebar", Static).update(
-            f"BUDGIE   {self.project_name}{' ' * 4}[not bold]{figures}[/not bold]"
+            f"BUDGIE   {name}{' ' * 4}[not bold]{figures}[/not bold]"
         )
         location = (
             shorten_path(self.workspace.root, 70)
             if self.workspace
-            else "no project here — run `budgie init` to make one"
+            else f"no project open — {self._no_project_hint()}"
         )
         self.query_one("#contextbar", Static).update(location)
 
@@ -908,7 +918,9 @@ class BudgieTUI(App):
             return
 
         self._load_error = None
-        banner.display = False
+        # Numbers from the bundled sample look exactly like real ones.
+        banner.display = self.on_sample
+        banner.update(SAMPLE_BANNER)
         det = run_forecast(people)
         sim = simulate(people, iterations=iterations, seed=seed)
         pct = sim.percentiles()
@@ -1021,7 +1033,7 @@ class BudgieTUI(App):
 
         if self.workspace is None:
             table.add_row(
-                "", "[dim]no budgie.yaml[/dim]", "", "Run `budgie init` to start", ""
+                "", "[dim]no budgie.yaml[/dim]", "", self._no_project_hint(), ""
             )
             return
         for item, used in zip(items, used_by):
