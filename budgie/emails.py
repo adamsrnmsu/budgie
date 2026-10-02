@@ -110,7 +110,7 @@ def render_email(
     """Render a personalized :class:`EmailDraft` for one allocation.
 
     Pass ``pace`` (from :attr:`BurndownStatus.required_pace`) to include the
-    what-this-means-per-week sentence.
+    what-this-means-per-week sentence. ``year`` is printed as given (2026 or FY27).
     """
     fields = {
         "name": alloc.name,
@@ -300,6 +300,7 @@ def build_message(
 
     The chart is attached with a Content-ID and referenced as ``cid:`` from the
     HTML, because Outlook will not render base64 ``data:`` image URIs.
+    ``year`` is printed as given (2026 or FY27).
     """
     alloc = status.allocation
     # The text/plain part carries the same pace sentence as the HTML, so a
@@ -329,6 +330,8 @@ def write_eml_drafts(
     charts: dict[str, bytes] | None = None,
 ) -> list[Path]:
     """Write one ``.eml`` per person (openable straight into Outlook).
+
+    ``year`` is printed as given (2026 or FY27).
 
     Drafts only -- nothing is sent.
     """

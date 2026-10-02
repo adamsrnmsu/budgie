@@ -179,6 +179,10 @@ def append_plan_row(plan_path: Path, name: str, effective: date, fte: float) -> 
         handle.write(f"{prefix}{name},{effective:%Y-%m-%d},{fte:g}\n")
 
 
+def _today() -> date:
+    return date.today()  # noqa: DTZ011
+
+
 class BudgieTUI(App):
     """Interactive explorer over a Budgie project."""
 
@@ -453,7 +457,7 @@ class BudgieTUI(App):
 
     def _default_year(self) -> int:
         """The year containing today, in the project's money year."""
-        return current_year(self._setting("year_start", "01-01"), date.today())  # noqa: DTZ011
+        return current_year(self._setting("year_start", "01-01"), _today())
 
     # -- events ------------------------------------------------------------
 

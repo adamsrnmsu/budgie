@@ -380,3 +380,26 @@ def test_forecast_and_monthly_load_costs_through_the_span_end(tmp_path, monkeypa
         assert result.exit_code == 0, result.output
     forget_workspaces()
     assert seen == [date(2027, 9, 30)] * 2
+
+
+def test_outside_a_project_the_default_span_is_the_samples_year(tmp_path, monkeypatch):
+    from budgie import budgie as cli_module
+
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    monkeypatch.setattr(cli_module, "_today", lambda: date(2027, 3, 1))
+    assert cli_module._span(None) == year_span(2026)
+    forget_workspaces()
+
+
+def test_the_html_email_names_the_span_end():
+    from budgie.emails import render_html_email
+
+    fy = render_html_email(
+        burndown(_full_time(), FY27, as_of=date(2026, 12, 31)), "FY27"
+    )
+    cal = render_html_email(
+        burndown(_full_time(), CAL26, as_of=date(2026, 6, 30)), 2026
+    )
+    assert "rate to year end (Sep 30)" in fy
+    assert "rate to year end (Dec 31)" in cal
