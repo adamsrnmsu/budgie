@@ -585,8 +585,8 @@ Every target runs against the virtualenv at `~/Documents/tools/budgie` (see
 [Install](#install)), not one inside the repo — pass `VENV=/path/to/env` to point them
 elsewhere. The working tree holds no build artifacts.
 
-Once Pages is enabled, every push to `main` publishes the docs to
-https://adamsrnmsu.github.io/budgie/.
+Once Pages is enabled and the `PAGES_ENABLED` repo variable is set to `true`, every push
+to `main` publishes the docs to https://adamsrnmsu.github.io/budgie/.
 
 Run a single test:
 

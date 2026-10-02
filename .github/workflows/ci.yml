@@ -25,7 +25,8 @@ jobs:
 
   deploy:
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Off until Pages is enabled on the repo: set the PAGES_ENABLED repo variable to true.
+    if: vars.PAGES_ENABLED == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
       pages: write
