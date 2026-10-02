@@ -154,13 +154,25 @@ class Snapshot:
         and allocated hours are recomputed the way :func:`load_snapshot` does:
         a planned person's hours come from the plan, not their flat ``fte``;
         someone only in the new entries is added with nothing spent.
+
+        Someone named in ``plan_entries`` who is in allocations.csv but not the
+        plan is first carried at their flat ``fte`` from Jan 1 (seeded ahead of
+        the new entries, so a Jan 1 entry of their own still wins); otherwise a
+        leave date would zero their whole year.
         """
         changes: dict = {}
         if budget is not None:
             changes.update(budget=Budget.flat(budget), budget_revisions=None)
         if plan_entries:
+            planned = self.plan.names if self.plan else ()
+            flat = {a.name: a.fte for a in self.allocations}
+            seeds = [
+                PlanEntry(n, date(self.year, 1, 1), flat[n])
+                for n in dict.fromkeys(e.name for e in plan_entries)
+                if n in flat and n not in planned
+            ]
             plan = AllocationPlan(
-                (*(self.plan.entries if self.plan else ()), *plan_entries)
+                (*(self.plan.entries if self.plan else ()), *seeds, *plan_entries)
             )
             changes["plan"] = plan
             if self.allocations:

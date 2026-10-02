@@ -194,7 +194,7 @@ def test_what_if_a_leave_entry_removes_the_hours_after_it():
 
     assert after.allocated == {"Alice": pytest.approx(1992.0 - 1003.968)}
     assert after.spent == {"Alice": 100.0}
-    assert len(after.plan.entries) == 2
+    assert len(after.plan.entries) == 3  # Alice's flat-FTE seed + her two entries
 
 
 def test_what_if_appends_to_the_existing_plan_and_adds_new_people():
@@ -219,6 +219,38 @@ def test_what_if_without_a_leave_allocations_and_plan_only_snapshots():
     after = only_plan.what_if(plan_entries=[PlanEntry("Bob", date(2026, 7, 1), 1.0)])
 
     assert after.allocated == {"Bob": pytest.approx(1003.968)}
+
+
+def _bob(plan=None):
+    # Bob is only in allocations.csv: flat 0.5 FTE of the 1,992 h ceiling.
+    return replace(
+        _alice(plan),
+        allocations=[Allocation("Bob", 0.5, 0.0, 1992.0)],
+    )
+
+
+def test_what_if_carries_an_allocation_only_person_at_flat_fte_until_the_change():
+    after = _bob().what_if(plan_entries=[PlanEntry("Bob", date(2026, 7, 1), 0.0)])
+
+    # Jan 1 - Jun 30 is 124 working days: 0.5 x 124 x 7.968 = 494.016 h kept.
+    assert after.allocated == {"Bob": pytest.approx(494.016)}
+    assert len(after.plan.entries) == 2
+
+
+def test_what_if_does_not_seed_someone_already_in_the_plan():
+    base = AllocationPlan((PlanEntry("Bob", date(2026, 3, 1), 1.0),))
+
+    after = _bob(base).what_if(plan_entries=[PlanEntry("Bob", date(2026, 7, 1), 0.0)])
+
+    assert len(after.plan.entries) == 2  # no Jan 1 seed
+    # Plan only: nothing before Mar 1, then 1.0 FTE to Jun 30 (85 working days).
+    assert after.allocated == {"Bob": pytest.approx(85 * 7.968)}
+
+
+def test_what_if_a_jan_1_change_overrides_the_seed():
+    after = _bob().what_if(plan_entries=[PlanEntry("Bob", date(2026, 1, 1), 1.0)])
+
+    assert after.allocated == {"Bob": pytest.approx(1992.0)}
 
 
 def test_what_if_leaves_the_original_untouched():
