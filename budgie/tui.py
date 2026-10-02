@@ -23,8 +23,10 @@ is a record, not mutable current state.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
+import sys
 from datetime import date, datetime
 from pathlib import Path
 from typing import ClassVar
@@ -173,6 +175,29 @@ def append_plan_row(plan_path: Path, name: str, effective: date, fte: float) -> 
         handle.write(f"{prefix}{name},{effective:%Y-%m-%d},{fte:g}\n")
 
 
+SUITE = "PI_SUITE"  # set by `perch tui`: app -> {"cwd", "argv"}
+NO_SUITE = "start from perch tui to switch apps"
+
+
+def suite_entry(name: str) -> dict | None:
+    """$PI_SUITE's entry for ``name``; None when unset, malformed or absent."""
+    try:
+        entry = json.loads(os.environ.get(SUITE, ""))[name]
+        cwd, argv = str(entry["cwd"]), [str(a) for a in entry["argv"]]
+    except (ValueError, KeyError, TypeError):
+        return None
+    return {"cwd": cwd, "argv": argv} if argv else None
+
+
+def switch(entry: dict) -> None:
+    """Become the other app. Call only once the terminal is restored."""
+    try:
+        os.chdir(entry["cwd"])
+        os.execvp(entry["argv"][0], entry["argv"])
+    except OSError as exc:
+        sys.exit(f"switch failed: {exc}")
+
+
 class BudgieTUI(App):
     """Interactive explorer over a Budgie project."""
 
@@ -279,6 +304,8 @@ class BudgieTUI(App):
         ("3", "show_tab('tab_plan')", "Plan"),
         ("4", "show_tab('tab_forecast')", "Forecast"),
         ("5", "show_tab('tab_assumptions')", "Assumptions"),
+        ("P", "switch('perch')", "perch"),
+        ("G", "switch('gitboard')", "gitboard"),
         ("q", "quit", "Quit"),
     ]
 
@@ -317,6 +344,13 @@ class BudgieTUI(App):
         """The budgets on offer: siblings of the current one, else whatever is
         below the working directory."""
         return available_projects(self.workspace.root if self.workspace else Path.cwd())
+
+    def action_switch(self, target: str) -> None:
+        """Hand the terminal to perch or gitboard; nothing written is lost."""
+        if suite_entry(target) is None:
+            self.notify(NO_SUITE, severity="warning")
+            return
+        self.exit(target)
 
     # -- layout ------------------------------------------------------------
 
@@ -904,4 +938,6 @@ class BudgieTUI(App):
 
 
 def run(csv_path: str | Path | None = None) -> None:
-    BudgieTUI(csv_path).run()
+    target = BudgieTUI(csv_path).run()
+    if target:
+        switch(suite_entry(target))

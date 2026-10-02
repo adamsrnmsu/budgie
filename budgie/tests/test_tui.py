@@ -1,9 +1,12 @@
 """TUI behaviour: tabs, workspace awareness, and appending plan rows."""
 
+import json
+import os
 from datetime import date
 
 import pytest
 
+from budgie import tui as tui_mod
 from budgie.core.plan import load_plan
 from budgie.core.scaffold import init_workspace
 from budgie.core.workspace import PROJECTS_DIR, forget_workspaces
@@ -426,3 +429,57 @@ async def test_a_broken_neighbour_is_listed_not_fatal(tmp_path, monkeypatch):
         assert app.project_names() == ["fy26", "fy27"]
         assert "won't load" in app.switch_project("fy27")
         assert app.workspace.root.name == "fy26"  # still on the one that works
+
+
+# -- switching to perch and gitboard (PI_SUITE, set by perch tui) ------------
+
+SUITE = {
+    "perch": {"cwd": "/ws", "argv": ["perch", "tui"]},
+    "gitboard": {"cwd": "/gb", "argv": ["gitboard", "tui", "grp/a"]},
+}
+
+
+async def test_p_and_g_exit_with_the_target(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PI_SUITE", json.dumps(SUITE))
+    for key, target in (("P", "perch"), ("G", "gitboard")):
+        app = BudgieTUI()
+        async with app.run_test() as pilot:
+            await pilot.press(key)
+            await pilot.pause()
+        assert app.return_value == target
+
+
+async def test_without_pi_suite_a_switch_key_says_where_to_start(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PI_SUITE", raising=False)
+    app = BudgieTUI()
+    said = []
+    monkeypatch.setattr(app, "notify", lambda msg, **kw: said.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.press("P")
+        await pilot.pause()
+        assert app.is_running
+    assert said == ["start from perch tui to switch apps"]
+
+
+def test_a_malformed_map_is_no_entry(monkeypatch):
+    for bad in (
+        "not json",
+        "[]",
+        '{"perch": 3}',
+        '{"perch": {"cwd": "/", "argv": []}}',
+    ):
+        monkeypatch.setenv("PI_SUITE", bad)
+        assert tui_mod.suite_entry("perch") is None
+
+
+def test_run_execs_the_target_after_the_app_exits(monkeypatch):
+    monkeypatch.setenv("PI_SUITE", json.dumps(SUITE))
+    monkeypatch.setattr(BudgieTUI, "run", lambda self: "perch")
+    calls = []
+    monkeypatch.setattr(os, "chdir", lambda d: calls.append(("chdir", d)))
+    monkeypatch.setattr(os, "execvp", lambda f, a: calls.append(("exec", f, a)))
+    tui_mod.run()
+    assert calls == [("chdir", "/ws"), ("exec", "perch", ["perch", "tui"])]
