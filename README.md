@@ -364,18 +364,21 @@ conclusion last:
 
 1. **Projects** — every budget under `budget/`, how many of its inputs exist, and which one
    is currently loaded. Select one and press `enter` to point every other tab at it, without
-   quitting and changing directory. `d` deletes the selected project — twice, deliberately:
-   the first press names what would go, the second does it, and any other key cancels.
+   quitting and changing directory. `d` deletes the selected project, and only on this tab —
+   twice, deliberately: the first press names what would go, the second does it, and any
+   other key cancels.
 2. **Inputs** — every project file, whether it exists, and what feeds what. Select one and
    press `e` to open it in `$VISUAL`/`$EDITOR` (`vim` if neither is set), then `r` to recalculate.
 3. **Plan** — the allocation plan, with a form to append a dated change. Re-planning is an
-   appended row, never an edit, so the history stays intact.
+   appended row, never an edit, so the history stays intact. FTE runs 0 to 1, and a name
+   that isn't in people.csv takes a second Add to confirm. `escape` leaves the form.
 4. **Forecast** — edit year, PTO, iterations and seed; the table and Monte Carlo histogram
-   recompute live.
+   recompute live. With no project open it shows a bundled sample team, marked SAMPLE DATA.
 5. **Assumptions** — the same model assumptions `budgie assumptions` prints.
 
-Press `1`–`5` to jump to a tab, `r` to recalculate, `e` to edit the selected input, `d` to
-delete the selected project, `q` to quit.
+Press `1`–`5` to jump to a tab, `r` to recalculate, `e` to edit the file the tab shows
+(Plan → plan.csv, Forecast → people.csv, Inputs → the selected file, Projects → the open
+project's budgie.yaml), `d` on Projects to delete the selected project, `q` to quit.
 
 It opens on **Forecast** when it can compute one, and otherwise on the tab that can fix what's
 wrong: **Projects** when there are several budgets and nothing to auto-select, **Inputs** when
