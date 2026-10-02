@@ -252,7 +252,11 @@ def load_snapshot(project: str | Path) -> Snapshot:
     )
 
     costs_csv = workspace.resolve("costs")
-    costs = load_costs(costs_csv) if costs_csv else []
+    costs = (
+        load_costs(costs_csv, through=year_span(year).last)  # bridge: budgie-bvd
+        if costs_csv
+        else []
+    )
     source = budget_source(workspace)
     budget = None if source is None else coerce_budget(source)
     return Snapshot(

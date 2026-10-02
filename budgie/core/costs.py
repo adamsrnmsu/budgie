@@ -52,6 +52,8 @@ class CostItem:
     low: float | None = None
     high: float | None = None
     recurring: bool = False
+    #: Last day a recurring line is booked; None means December 31 of ``when.year``.
+    through: date | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -69,7 +71,12 @@ class CostItem:
     @property
     def months_charged(self) -> int:
         """How many months this line is booked in (1 unless recurring)."""
-        return 13 - self.when.month if self.recurring else 1
+        if not self.recurring:
+            return 1
+        if self.through is None:
+            return 13 - self.when.month
+        t, w = self.through, self.when
+        return max(0, (t.year - w.year) * 12 + t.month - w.month + 1)
 
     @property
     def total(self) -> float:
@@ -132,10 +139,11 @@ def by_category(items: Sequence[CostItem]) -> dict[str, float]:
     return out
 
 
-def load_costs(csv_path: str | Path) -> list[CostItem]:
+def load_costs(csv_path: str | Path, through: date | None = None) -> list[CostItem]:
     """Load non-labor cost lines from CSV.
 
     Required columns ``name,amount,date``; optional ``category,low,high,recurring``.
+    ``through`` is the year's last day, where recurring lines stop being booked.
     """
     items = []
     for row in read_rows(csv_path, required=_REQUIRED_COLS):
@@ -148,6 +156,7 @@ def load_costs(csv_path: str | Path) -> list[CostItem]:
                 low=as_float(row, "low"),
                 high=as_float(row, "high"),
                 recurring=as_str(row, "recurring").lower() in _TRUTHY,
+                through=through,
             )
         )
     logger.info(

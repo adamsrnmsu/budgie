@@ -234,3 +234,23 @@ def test_budget_steps_follow_fiscal_month_ends():
         )
     )
     assert budget.monthly_amounts(FY27) == [1000.0] * 6 + [1200.0] * 6
+
+
+def test_recurring_total_agrees_with_monthly_totals_in_fy27(tmp_path):
+    item = CostItem(
+        "cloud", 100.0, date(2026, 11, 1), recurring=True, through=FY27.last
+    )
+    assert item.months_charged == 11
+    assert item.total == 1100.0
+    assert item.total == sum(monthly_totals([item], FY27))
+    late = CostItem("x", 5.0, date(2027, 10, 1), recurring=True, through=FY27.last)
+    assert late.months_charged == 0
+
+
+def test_loader_sets_through(tmp_path):
+    from budgie.core.costs import load_costs
+
+    csv = tmp_path / "costs.csv"
+    csv.write_text("name,amount,date,recurring\ncloud,100,2026-11-01,yes\n")
+    (item,) = load_costs(csv, through=FY27.last)
+    assert item.total == sum(monthly_totals([item], FY27)) == 1100.0
