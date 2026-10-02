@@ -112,7 +112,7 @@ def budget_source(workspace: Workspace | None) -> float | str | None:
 class Snapshot:
     """A project as it stands: the inputs, with every precedence rule applied."""
 
-    year: int
+    span: YearSpan
     pto: float
     ceiling: ProductiveHours
     people: list[Person]
@@ -158,8 +158,8 @@ class Snapshot:
         someone only in the new entries is added with nothing spent.
 
         Someone named in ``plan_entries`` who is in allocations.csv but not the
-        plan is first carried at their flat ``fte`` from Jan 1 (seeded ahead of
-        the new entries, so a Jan 1 entry of their own still wins); otherwise a
+        plan is first carried at their flat ``fte`` from the year's first day (seeded
+        ahead of the new entries, so a first-day entry of their own still wins); otherwise a
         leave date would zero their whole year.
         """
         changes: dict = {}
@@ -169,7 +169,7 @@ class Snapshot:
             planned = self.plan.names if self.plan else ()
             flat = {a.name: a.fte for a in self.allocations}
             seeds = [
-                PlanEntry(n, date(self.year, 1, 1), flat[n])
+                PlanEntry(n, self.span.first, flat[n])
                 for n in dict.fromkeys(e.name for e in plan_entries)
                 if n in flat and n not in planned
             ]
@@ -180,9 +180,7 @@ class Snapshot:
             if self.allocations:
                 changes["allocations"] = self._replanned(plan)
             else:
-                changes["planned"] = plan.team_hours(
-                    year_span(self.year), self.pto
-                )  # bridge: budgie-bvd
+                changes["planned"] = plan.team_hours(self.span, self.pto)
         return replace(self, **changes)
 
     def _replanned(self, plan: AllocationPlan) -> list[Allocation]:
@@ -194,10 +192,7 @@ class Snapshot:
                 self.ceiling.productive_hours - available
             ) / self.ceiling.hours_per_day
             return (
-                plan.allocated_hours(
-                    name, year_span(self.year), pto
-                )  # bridge: budgie-bvd
-                / available
+                plan.allocated_hours(name, self.span, pto) / available
                 if available
                 else 0.0
             )
@@ -224,8 +219,9 @@ def load_snapshot(project: str | Path) -> Snapshot:
     year = workspace.setting("year")
     if year is None:
         raise ValueError(f"{workspace.config_path}: `year` is not set")
+    span = year_span(year, workspace.setting("year_start", "01-01"))
     pto = workspace.setting("pto", 0.0)
-    ceiling = productive_hours(year_span(year), pto_days=pto)  # bridge: budgie-bvd
+    ceiling = productive_hours(span, pto_days=pto)
 
     people_csv = workspace.resolve("people")
     if people_csv is None:
@@ -233,34 +229,20 @@ def load_snapshot(project: str | Path) -> Snapshot:
     people = load_people(people_csv, productive_hours=ceiling)
 
     actuals, weekly = readings_files(workspace)
-    readings = {
-        n: s
-        for n, s in load_observations(
-            year_span(year), actuals, weekly
-        ).items()  # bridge: budgie-bvd
-        if s
-    }
+    readings = {n: s for n, s in load_observations(span, actuals, weekly).items() if s}
 
     plan_csv = workspace.resolve("plan")
     plan = load_plan(plan_csv) if plan_csv else None
     alloc_csv = workspace.resolve("allocations")
     allocations = load_allocations(alloc_csv, ceiling, plan=plan) if alloc_csv else []
-    planned = (
-        plan.team_hours(year_span(year), pto_days=pto)  # bridge: budgie-bvd
-        if plan and not allocations
-        else {}
-    )
+    planned = plan.team_hours(span, pto_days=pto) if plan and not allocations else {}
 
     costs_csv = workspace.resolve("costs")
-    costs = (
-        load_costs(costs_csv, through=year_span(year).last)  # bridge: budgie-bvd
-        if costs_csv
-        else []
-    )
+    costs = load_costs(costs_csv, through=span.last) if costs_csv else []
     source = budget_source(workspace)
     budget = None if source is None else coerce_budget(source)
     return Snapshot(
-        year=year,
+        span=span,
         pto=pto,
         ceiling=ceiling,
         people=people,

@@ -12,7 +12,9 @@ as of 2026-12-31: 1992 x 92/365. 600 h by then runs out at day 305.44,
 2027-08-02.
 """
 
+import shutil
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -43,6 +45,8 @@ from budgie.core.monthly import (
     spent_at,
 )
 from budgie.core.plan import AllocationPlan, PlanEntry
+from budgie.core.project import load_snapshot
+from budgie.core.scenario import run_scenarios
 from budgie.core.workspace import load_workspace
 
 FY27 = year_span(2027, "10-01")
@@ -254,3 +258,53 @@ def test_loader_sets_through(tmp_path):
     csv.write_text("name,amount,date,recurring\ncloud,100,2026-11-01,yes\n")
     (item,) = load_costs(csv, through=FY27.last)
     assert item.total == sum(monthly_totals([item], FY27)) == 1100.0
+
+
+TESTS_DIR = Path(__file__).resolve().parent
+
+
+def _fy27_project(tmp_path):
+    (tmp_path / "budgie.yaml").write_text('year: 2027\nyear_start: "10-01"\nseed: 1\n')
+    shutil.copy(TESTS_DIR / "team.csv", tmp_path / "people.csv")
+    (tmp_path / "weekly.csv").write_text(
+        "name,week,hours_to_date\nAlice,40,10\nAlice,1,50\n"
+    )
+    return tmp_path
+
+
+def test_load_snapshot_reads_a_fiscal_year(tmp_path):
+    snap = load_snapshot(_fy27_project(tmp_path))
+    assert snap.span == FY27
+    assert snap.ceiling.productive_hours == 1992.0
+    assert snap.readings["Alice"] == [
+        (date(2026, 10, 4), 10.0),
+        (date(2027, 1, 10), 50.0),
+    ]
+
+
+def test_what_if_seeds_a_flat_fte_at_the_spans_first_day(tmp_path):
+    project = _fy27_project(tmp_path)
+    (project / "allocations.csv").write_text("name,fte,hours_spent\nAlice,0.5,0\n")
+    after = load_snapshot(project).what_if(
+        plan_entries=[PlanEntry("Alice", date(2027, 4, 1), 0.0)]
+    )
+    assert after.plan.entries[0] == PlanEntry("Alice", date(2026, 10, 1), 0.5)
+
+
+def test_a_scenario_without_a_year_is_an_error(tmp_path):
+    shutil.copy(TESTS_DIR / "team.csv", tmp_path / "team.csv")
+    config = tmp_path / "scenarios.yaml"
+    config.write_text("budget: 1000\nscenarios:\n  - name: A\n    people: team.csv\n")
+    with pytest.raises(ValueError, match="scenario 'A' has no year"):
+        run_scenarios(config)
+
+
+def test_a_recurring_cost_runs_to_the_fiscal_years_last_day(tmp_path):
+    project = _fy27_project(tmp_path)
+    (project / "costs.csv").write_text(
+        "name,amount,date,recurring\nLicence,100,2026-11-01,yes\n"
+    )
+    snap = load_snapshot(project)
+    (item,) = snap.costs
+    assert snap.span == FY27
+    assert item.total == sum(monthly_totals([item], snap.span))

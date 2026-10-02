@@ -90,7 +90,7 @@ def test_a_pinned_budget_beats_budget_csv(project):
 def test_snapshot_applies_every_rule(project):
     snap = load_snapshot(project)
 
-    assert snap.year == 2026
+    assert snap.span.year == 2026
     # Weekly readings are the spent figure (they match the scaffold's scalar).
     assert snap.spent == {"Alice": 660, "Bob": 620}
     assert {"Alice", "Bob"} <= set(snap.allocated)
@@ -167,7 +167,7 @@ def test_pinned_budget_has_no_revisions_and_no_plan_csv_means_no_plan(project):
 def _alice(plan=None):
     ceiling = productive_hours(year_span(2026), pto_days=0)
     return Snapshot(
-        year=2026,
+        span=year_span(2026),
         pto=0.0,
         ceiling=ceiling,
         people=[],

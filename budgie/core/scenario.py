@@ -77,7 +77,7 @@ def run_scenarios(config_path: str | Path) -> tuple[list[ScenarioResult], float]
     iterations = int(config.get("iterations", 10_000))
     seed = config.get("seed")
     cost_spec = config.get("costs")
-    costs = load_costs(_resolve(cost_spec, base_dir)) if cost_spec else []
+    year_start = str(config.get("year_start", "01-01"))
     specs = config["scenarios"]
     if not specs:
         raise ValueError("config must define at least one scenario")
@@ -87,9 +87,16 @@ def run_scenarios(config_path: str | Path) -> tuple[list[ScenarioResult], float]
     baseline_sim: SimulationResult | None = None
 
     for spec in specs:
-        ph = productive_hours(
-            year_span(int(spec.get("year", 2026))),  # bridge: budgie-bvd
-            pto_days=float(spec.get("pto", 0.0)),
+        if "year" not in spec:
+            raise ValueError(
+                f"{config_path}: scenario {spec.get('name', '?')!r} has no year"
+            )
+        span = year_span(int(spec["year"]), str(spec.get("year_start", year_start)))
+        ph = productive_hours(span, pto_days=float(spec.get("pto", 0.0)))
+        costs = (
+            load_costs(_resolve(cost_spec, base_dir), through=span.last)
+            if cost_spec
+            else []
         )
         people = load_people(_resolve(spec["people"], base_dir), productive_hours=ph)
         det = run_forecast(people, costs=costs)
