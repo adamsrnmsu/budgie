@@ -76,6 +76,18 @@ def test_clamped_cells_hand_their_share_to_the_rest():
     assert c.cost(_applied(c, sol.fte)) == pytest.approx(c.cost() + 10_000)
 
 
+def test_proportional_says_why_zero_people_stayed_at_zero():
+    c = _costing(
+        PlanEntry("Alice", date(YEAR, 1, 1), 1.0),
+        PlanEntry("Carol", date(YEAR, 1, 1), 0.0),
+    )
+    cells = {(n, m) for n in ("Alice", "Carol") for m in H2}
+    sol = solve(c, cells, c.cost() + 10_000)
+    assert sol.gap == pytest.approx(10_000)
+    assert "even" in sol.note
+    assert solve(c, cells, c.cost() + 10_000, mode="even").gap == pytest.approx(0)
+
+
 def test_proportional_from_zero_falls_back_to_even():
     c = _costing(PlanEntry("Carol", date(YEAR, 1, 1), 0.0))
     sol = solve(c, {("Carol", m) for m in H2}, 50_000)

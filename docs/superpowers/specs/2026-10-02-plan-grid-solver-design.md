@@ -1,6 +1,6 @@
 # Plan grid and cost solver
 
-Date: 2026-10-02 · Epic: budgie-w3l · Status: solver approved and building;
+Date: 2026-10-02 · Epic: budgie-w3l · Status: solver built (branch worktree-plan-solver);
 grid waits on step B.
 
 ## Why

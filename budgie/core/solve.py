@@ -221,8 +221,11 @@ def solve(
             new[c] = v
             left -= (v - current[c]) * rate[c]
             free.discard(c)
-        if mode == "proportional" and not any(current[c] for c in free):
-            break  # what's left can't be scaled up from zero
+        if mode == "proportional" and free and not any(current[c] for c in free):
+            note = (
+                "The rest are at 0 FTE, which scaling can't raise; try the even spread."
+            )
+            break
 
     return Solution(fte=new, cost=target - left, gap=left, note=note)
 
