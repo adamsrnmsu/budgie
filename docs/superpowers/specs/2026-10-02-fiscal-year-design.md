@@ -178,3 +178,23 @@ boundary from an integer.
 - A per-project `year_start` that differs within one workspace.
 - Fiscal labels in gitboard (gitboard has no money year).
 - Earned value itself, which is perch-w1d and is built on top of this.
+
+## Changes during planning
+
+The plan (`docs/superpowers/plans/2026-10-02-fiscal-year.md`) settled six
+points the spec left open or got wrong:
+
+1. `year_start` must be the first of a month (`MM-01`). Monthly buckets, the
+   month-number rule and quarters all need that. `10-15` and `02-29` are
+   refused, with an error naming the key and the file.
+2. The CLI falls back to the year containing today only inside a project.
+   Outside one, it keeps 2026, because the bundled sample files are dated
+   2026.
+3. `YearSpan.label` prints the year: "2026" for a calendar year, "FY27" for a
+   fiscal one. Email functions take the label.
+4. The quarterly heading keeps its existing form, `FY27-Q1 runs Oct 1 – Dec
+   31`, so the printed name works as input to `--quarter`.
+5. Quarters are `YearSpan.quarters`, in Budgie, so perch does no month
+   arithmetic.
+6. A scenario without a year is an error, not a silent 2026. Scenarios gain
+   an optional `year_start`.
