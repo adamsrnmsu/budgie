@@ -94,9 +94,7 @@ def run_scenarios(config_path: str | Path) -> tuple[list[ScenarioResult], float]
         span = year_span(int(spec["year"]), str(spec.get("year_start", year_start)))
         ph = productive_hours(span, pto_days=float(spec.get("pto", 0.0)))
         costs = (
-            load_costs(_resolve(cost_spec, base_dir), through=span.last)
-            if cost_spec
-            else []
+            load_costs(_resolve(cost_spec, base_dir), span=span) if cost_spec else []
         )
         people = load_people(_resolve(spec["people"], base_dir), productive_hours=ph)
         det = run_forecast(people, costs=costs)

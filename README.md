@@ -446,8 +446,6 @@ Alice,1,150
 Alice,2,140
 ```
 
-In a fiscal year (`year_start` in budgie.yaml) a bare week or month number belongs to the calendar year that keeps it inside the money year. FY27 runs 2026-10-01 to 2027-09-30, so weeks 40–53 and months 10–12 are 2026, and weeks 1–39 and months 1–9 are 2027. A calendar year reads every number in that year, as it always has.
-
 Or **cumulative hours through an ISO week** (`weekly.csv`, used with `--weekly`) — which is what
 most timesheet exports actually give you:
 
@@ -476,8 +474,9 @@ Travel,travel,2026-06-01,8000,6000,11000,no
 
 `amount` is the most-likely figure; `low`/`high` are optional and make the line participate in
 the Monte Carlo just like uncertain hours do. `recurring: yes` books the amount **every month
-from its own month through December**, so one row covers a subscription (the cloud line above
-totals $24,000). Costs land in the month they're incurred, so they show up as a step in the
+from its own month through the year's last month** (a line dated before the year starts in the
+year's first month; one dated after it is not charged), so one row covers a subscription (the
+cloud line above totals $24,000). Costs land in the month they're incurred, so they show up as a step in the
 monthly and fan charts rather than being smeared across the year.
 
 **Budget revisions** — `budget.csv`. Budgets get increased, cut, and re-baselined:

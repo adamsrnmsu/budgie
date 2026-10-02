@@ -238,7 +238,7 @@ def load_snapshot(project: str | Path) -> Snapshot:
     planned = plan.team_hours(span, pto_days=pto) if plan and not allocations else {}
 
     costs_csv = workspace.resolve("costs")
-    costs = load_costs(costs_csv, through=span.last) if costs_csv else []
+    costs = load_costs(costs_csv, span=span) if costs_csv else []
     source = budget_source(workspace)
     budget = None if source is None else coerce_budget(source)
     return Snapshot(

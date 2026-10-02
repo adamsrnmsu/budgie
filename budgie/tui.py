@@ -456,7 +456,12 @@ class BudgieTUI(App):
         return default
 
     def _default_year(self) -> int:
-        """The year containing today, in the project's money year."""
+        """The year containing today in the project's money year; outside a
+        project the samples' year, as the CLI does."""
+        if not self.workspace:
+            from budgie.budgie import SAMPLE_YEAR
+
+            return SAMPLE_YEAR
         return current_year(self._setting("year_start", "01-01"), _today())
 
     # -- events ------------------------------------------------------------

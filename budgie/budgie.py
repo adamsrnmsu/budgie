@@ -361,7 +361,7 @@ def forecast(
     )
 
     people = load_people(people_csv, productive_hours=ph)
-    costs = load_costs(costs_csv, through=span.last) if costs_csv else []
+    costs = load_costs(costs_csv, span=span) if costs_csv else []
     # Loaded up front so its log line lands with the other loading messages
     # rather than interleaving after the tables.
     budget = _budget_from(budget_arg) if budget_arg else None
@@ -985,7 +985,7 @@ def monthly(
 
     ph = productive_hours(span, pto_days=pto)
     people = load_people(people_csv, productive_hours=ph)
-    costs = load_costs(costs_csv, through=span.last) if costs_csv else []
+    costs = load_costs(costs_csv, span=span) if costs_csv else []
     budget = _budget_from(budget_arg) if budget_arg else None
 
     people, readings, observations = _with_actuals(

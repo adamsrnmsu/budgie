@@ -244,22 +244,38 @@ def test_budget_steps_follow_fiscal_month_ends():
 
 
 def test_recurring_total_agrees_with_monthly_totals_in_fy27(tmp_path):
-    item = CostItem(
-        "cloud", 100.0, date(2026, 11, 1), recurring=True, through=FY27.last
-    )
+    item = CostItem("cloud", 100.0, date(2026, 11, 1), recurring=True, span=FY27)
     assert item.months_charged == 11
     assert item.total == 1100.0
     assert item.total == sum(monthly_totals([item], FY27))
-    late = CostItem("x", 5.0, date(2027, 10, 1), recurring=True, through=FY27.last)
+    late = CostItem("x", 5.0, date(2027, 10, 1), recurring=True, span=FY27)
     assert late.months_charged == 0
 
 
-def test_loader_sets_through(tmp_path):
+@pytest.mark.parametrize(
+    "span, when, months",
+    [
+        (CAL26, date(2025, 1, 1), 12),
+        (CAL26, date(2026, 3, 1), 10),
+        (CAL26, date(2027, 3, 1), 0),
+        (FY27, date(2026, 1, 1), 12),
+        (FY27, date(2026, 8, 1), 12),
+        (FY27, date(2026, 11, 1), 11),
+        (FY27, date(2027, 10, 1), 0),
+    ],
+)
+def test_a_recurring_line_is_charged_inside_the_year_only(span, when, months):
+    item = CostItem("x", 10.0, when, recurring=True, span=span)
+    assert item.months_charged == months
+    assert item.total == sum(monthly_totals([item], span)) == 10.0 * months
+
+
+def test_loader_sets_the_span(tmp_path):
     from budgie.core.costs import load_costs
 
     csv = tmp_path / "costs.csv"
     csv.write_text("name,amount,date,recurring\ncloud,100,2026-11-01,yes\n")
-    (item,) = load_costs(csv, through=FY27.last)
+    (item,) = load_costs(csv, span=FY27)
     assert item.total == sum(monthly_totals([item], FY27)) == 1100.0
 
 
@@ -306,11 +322,13 @@ def test_a_recurring_cost_runs_to_the_fiscal_years_last_day(tmp_path):
     project = _fy27_project(tmp_path)
     (project / "costs.csv").write_text(
         "name,amount,date,recurring\nLicence,100,2026-11-01,yes\n"
+        "Hosting,50,2026-01-01,yes\n"
     )
     snap = load_snapshot(project)
-    (item,) = snap.costs
+    licence, hosting = snap.costs
     assert snap.span == FY27
-    assert item.total == sum(monthly_totals([item], snap.span))
+    assert licence.total == sum(monthly_totals([licence], snap.span)) == 1100.0
+    assert hosting.total == sum(monthly_totals([hosting], snap.span)) == 600.0
 
 
 def test_init_writes_a_fiscal_project_dated_from_october(tmp_path):
@@ -370,7 +388,7 @@ def test_forecast_and_monthly_load_costs_through_the_span_end(tmp_path, monkeypa
     monkeypatch.setattr(
         costs_module,
         "load_costs",
-        lambda csv, through=None: seen.append(through) or real(csv, through=through),
+        lambda csv, span=None: seen.append(span.last) or real(csv, span=span),
     )
     for command in ("forecast", "monthly"):
         # monthly takes no project default for costs, so name the file.
@@ -390,6 +408,31 @@ def test_outside_a_project_the_default_span_is_the_samples_year(tmp_path, monkey
     monkeypatch.setattr(cli_module, "_today", lambda: date(2027, 3, 1))
     assert cli_module._span(None) == year_span(2026)
     forget_workspaces()
+
+
+def test_the_tui_default_year_outside_a_project_is_the_samples_year(
+    tmp_path, monkeypatch
+):
+    from budgie import tui
+
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    monkeypatch.setattr(tui, "_today", lambda: date(2027, 3, 1))
+    app = tui.BudgieTUI.__new__(tui.BudgieTUI)
+    app.workspace = None
+    assert app._default_year() == 2026
+    forget_workspaces()
+
+
+def test_a_fiscal_scaffold_dates_its_readings_from_the_first_month(tmp_path):
+    from budgie.core.scaffold import scaffold_files
+
+    cal = scaffold_files(2026)
+    assert "Alice,12,430\nAlice,20,660" in cal["weekly.csv"]
+    assert "Alice,1,150\nAlice,2,140" in cal["actuals.csv"]
+    fy = scaffold_files(2027, "10-01")
+    assert "Alice,51,430\nAlice,6,660" in fy["weekly.csv"]
+    assert "Alice,10,150\nAlice,11,140" in fy["actuals.csv"]
 
 
 def test_the_html_email_names_the_span_end():

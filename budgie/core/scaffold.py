@@ -14,7 +14,7 @@ loadable data -- ``budgie forecast`` works the moment ``init`` finishes.
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from budgie.core.calendar import year_span
@@ -96,18 +96,18 @@ effective_date,amount,note
 
 ACTUALS_CSV = """\
 name,month,hours
-Alice,1,150
-Alice,2,140
-Bob,1,145
-Bob,2,135
+Alice,{m1},150
+Alice,{m2},140
+Bob,{m1},145
+Bob,{m2},135
 """
 
 WEEKLY_CSV = """\
 name,week,hours_to_date
-Alice,12,430
-Alice,20,660
-Bob,12,410
-Bob,20,620
+Alice,{w1},430
+Alice,{w2},660
+Bob,{w1},410
+Bob,{w2},620
 """
 
 SCENARIOS_YAML = """\
@@ -180,6 +180,12 @@ def _file_list() -> str:
     )
 
 
+def _week(span, weeks_in: int) -> int:
+    if not span.fiscal:
+        return weeks_in + 1
+    return (span.first + timedelta(weeks=weeks_in)).isocalendar()[1]
+
+
 def scaffold_files(year: int, year_start: str = "01-01") -> dict[str, str]:
     """Filename -> contents for a fresh workspace, dated inside its year."""
     span = year_span(year, year_start)
@@ -188,6 +194,12 @@ def scaffold_files(year: int, year_start: str = "01-01") -> dict[str, str]:
         "start": span.first.isoformat(),
         "third_month_15": date(*months[2], 15).isoformat(),
         "fifth_month": date(*months[4], 1).isoformat(),
+        "m1": months[0][1],
+        "m2": months[1][1],
+        # Calendar year: weeks 12 and 20, as ever. A fiscal year counts the same
+        # 11 and 19 weeks from its first day.
+        "w1": _week(span, 11),
+        "w2": _week(span, 19),
     }
     return {
         CONFIG_NAME: CONFIG_TEMPLATE.format(year=year, year_start=year_start),
@@ -197,8 +209,8 @@ def scaffold_files(year: int, year_start: str = "01-01") -> dict[str, str]:
         "plan.csv": PLAN_CSV.format(**dates),
         "costs.csv": COSTS_CSV.format(**dates),
         "budget.csv": BUDGET_CSV.format(**dates),
-        "actuals.csv": ACTUALS_CSV,
-        "weekly.csv": WEEKLY_CSV,
+        "actuals.csv": ACTUALS_CSV.format(**dates),
+        "weekly.csv": WEEKLY_CSV.format(**dates),
         "scenarios.yaml": SCENARIOS_YAML.format(year=year, year_start=year_start),
     }
 

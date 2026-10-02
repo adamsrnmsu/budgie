@@ -334,7 +334,10 @@ TOPICS: tuple[Topic, ...] = (
             ("date", "When it is incurred"),
             ("amount", "The most-likely figure"),
             ("low / high", "Optional. Supply both and it samples like hours do"),
-            ("recurring", "yes = charged every month from its own through Dec"),
+            (
+                "recurring",
+                "yes = charged every month from its own month through the year end",
+            ),
         ),
         example=(
             "name,category,date,amount,low,high,recurring\n"
