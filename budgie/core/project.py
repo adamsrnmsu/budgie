@@ -32,7 +32,7 @@ from budgie.core.actuals import (
 from budgie.core.allocation import Allocation, load_allocations
 from budgie.core.budget import Budget, coerce_budget
 from budgie.core.calendar import ProductiveHours, productive_hours
-from budgie.core.costs import load_costs, total_cost
+from budgie.core.costs import CostItem, load_costs, total_cost
 from budgie.core.loader import load_people
 from budgie.core.monthly import load_monthly_actuals
 from budgie.core.person import Person
@@ -118,6 +118,8 @@ class Snapshot:
     allocations: list[Allocation] = field(default_factory=list)
     planned: dict[str, float] = field(default_factory=dict)
     non_labor: float = 0.0
+    #: The cost lines behind ``non_labor`` (with any low/high), for ``simulate(costs=)``.
+    costs: list[CostItem] = field(default_factory=list)
     budget: Budget | None = None
     iterations: int = 10_000
     seed: int | None = None
@@ -221,6 +223,7 @@ def load_snapshot(project: str | Path) -> Snapshot:
     planned = plan.team_hours(year, pto_days=pto) if plan and not allocations else {}
 
     costs_csv = workspace.resolve("costs")
+    costs = load_costs(costs_csv) if costs_csv else []
     source = budget_source(workspace)
     budget = None if source is None else coerce_budget(source)
     return Snapshot(
@@ -231,7 +234,8 @@ def load_snapshot(project: str | Path) -> Snapshot:
         readings=readings,
         allocations=allocations,
         planned=planned,
-        non_labor=total_cost(load_costs(costs_csv)) if costs_csv else 0.0,
+        non_labor=total_cost(costs),
+        costs=costs,
         budget=budget,
         iterations=workspace.setting("iterations", 10_000),
         seed=workspace.setting("seed"),

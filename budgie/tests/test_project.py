@@ -95,6 +95,17 @@ def test_snapshot_applies_every_rule(project):
     assert snap.budget is not None and snap.budget.latest > 0
 
 
+def test_snapshot_carries_the_cost_lines_and_non_labor_is_their_total(project):
+    (project / "costs.csv").write_text(
+        "name,amount,date,low,high\nLicence,1000,2026-03-01,800,1500\n"
+    )
+
+    snap = load_snapshot(project)
+
+    assert [(c.name, c.low, c.high) for c in snap.costs] == [("Licence", 800, 1500)]
+    assert snap.non_labor == 1000.0
+
+
 def test_snapshot_without_allocations_takes_hours_from_the_plan(project):
     (project / "allocations.csv").unlink()
 
