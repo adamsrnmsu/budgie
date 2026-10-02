@@ -51,10 +51,13 @@ from textual.widgets import (
 from budgie.core.allocation import pto_overrides
 from budgie.core.calendar import PTO_RULE, explain_pto, productive_hours
 from budgie.core.csvio import parse_date
+from budgie.core.eac import at_completion
 from budgie.core.forecast import forecast as run_forecast
 from budgie.core.loader import load_people
 from budgie.core.montecarlo import simulate
 from budgie.core.plan import load_plan
+from budgie.core.project import load_snapshot
+from budgie.core.signals import evaluate
 from budgie.core.workspace import (
     INPUTS,
     PROJECTS_DIR,
@@ -122,6 +125,34 @@ def ascii_histogram(values: np.ndarray, bins: int = 42, height: int = 8) -> str:
 
 def _money(x: float) -> str:
     return f"${x:,.0f}"
+
+
+def _headline(snap, people, p50: float, sim) -> str:
+    """Budget · spent · forecast · headroom · stoplight, as one line.
+
+    Spent is each person's booked hours at their rate. Budget, headroom and the
+    stoplight need a budget, so a project without one shows the first two.
+    """
+    rate = {p.name: p.hourly_cost for p in people}
+    spent = sum(rate.get(n, 0.0) * h for n, h in snap.spent.items())
+    parts = [f"spent {_money(spent)}", f"forecast P50 [b]{_money(p50)}[/b]"]
+    if snap.budget is None:
+        return "   ·   ".join(parts) + "   [dim](no budget set)[/dim]"
+    from budgie.budgie import _SIGNAL_STYLE
+
+    budget = snap.budget.latest
+    result = evaluate(sim, budget)
+    glyph, color, word = _SIGNAL_STYLE[result.signal.name]
+    light = f"[{color}]{glyph} {word}[/{color}]"
+    odds = f"({result.prob_over_budget:.0%} chance over)"
+    return "   ·   ".join(
+        [
+            f"Budget {_money(budget)}",
+            *parts,
+            f"headroom {_money(budget - p50)}",
+            f"{light} {odds}",
+        ]
+    )
 
 
 def shorten_path(path: str | Path, width: int = 60) -> str:
@@ -268,19 +299,9 @@ class BudgieTUI(App):
     .pane-title { text-style: bold; padding: 0 0 1 0; }
 
     /* --- Forecast tab --------------------------------------------------
-       The controls were nearly a quarter of the screen for four numbers.
-       A bordered, titled box reads as "controls" rather than content, and
-       keeps them to a single compact row. */
-    #controls {
-        height: auto;
-        border: round $primary;
-        border-title-color: $text-muted;
-        padding: 0 1;
-        margin: 1 1 0 1;
-    }
-    #controls Input { width: 9; border: none; padding: 0 1; height: 1; }
-    #controls Label { padding: 0 1 0 2; color: $text-muted; }
-    #controls Button { height: 1; border: none; margin: 0 0 0 2; }
+       Year, PTO, iterations and seed live in budgie.yaml (e on Projects).
+       The tab leads with the one line that answers "are we OK?". */
+    #forecast_headline { height: auto; padding: 1 2 0 2; }
     #forecast_body { height: 1fr; }
     #table_pane { width: 3fr; padding: 1 1 0 1; }
     #mc_pane { width: 2fr; padding: 1 2 0 2; background: $panel; }
@@ -399,24 +420,7 @@ class BudgieTUI(App):
         yield Static(id="projects_status", classes="status")
 
     def _compose_forecast(self) -> ComposeResult:
-        controls = Horizontal(id="controls")
-        controls.border_title = "Assumptions"
-        with controls:
-            yield Label("Year")
-            yield Input(
-                value=str(self._setting("year", 2026)), id="year", type="integer"
-            )
-            yield Label("PTO days")
-            yield Input(value=str(self._setting("pto", 0)), id="pto", type="number")
-            yield Label("Iterations")
-            yield Input(
-                value=str(self._setting("iterations", 10_000)),
-                id="iterations",
-                type="integer",
-            )
-            yield Label("Seed")
-            yield Input(value=str(self._setting("seed", 42)), id="seed", type="integer")
-            yield Button("Recalculate", id="recalc", variant="primary")
+        yield Static(id="forecast_headline")
         yield Static(id="forecast_banner", classes="banner")
         with Horizontal(id="forecast_body"):
             with Vertical(id="table_pane"):
@@ -498,16 +502,12 @@ class BudgieTUI(App):
     # -- events ------------------------------------------------------------
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "recalc":
-            self.recalculate()
-        elif event.button.id == "add_plan_row":
+        if event.button.id == "add_plan_row":
             self.add_plan_row()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id and event.input.id.startswith("plan_"):
             self.add_plan_row()
-        else:
-            self.recalculate()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         # Three tables share this event; only the project browser acts on it.
@@ -523,7 +523,7 @@ class BudgieTUI(App):
     def action_leave_input(self) -> None:
         """Escape out of a form field, so the 1-5 keys switch tabs again."""
         if isinstance(self.focused, Input):
-            # Both tabs with a form (Plan, Forecast) have a table under it.
+            # The Plan tab's form has a table under it.
             pane = self.query_one("#tabs", TabbedContent).active_pane
             pane.query(DataTable).first().focus()
 
@@ -606,20 +606,6 @@ class BudgieTUI(App):
             self._status(selector, message, error)
         else:
             self.notify(message, severity="error" if error else "information")
-
-    # -- reading the form --------------------------------------------------
-
-    def _read_int(self, widget_id: str, default: int) -> int:
-        try:
-            return int(self.query_one(f"#{widget_id}", Input).value)
-        except (ValueError, TypeError):
-            return default
-
-    def _read_float(self, widget_id: str, default: float) -> float:
-        try:
-            return float(self.query_one(f"#{widget_id}", Input).value)
-        except (ValueError, TypeError):
-            return default
 
     # -- actions -----------------------------------------------------------
 
@@ -826,10 +812,12 @@ class BudgieTUI(App):
             self._projects_status("Cancelled.")
 
     def recalculate(self) -> None:
-        year = self._read_int("year", 2026)
-        pto = self._read_float("pto", 0.0)
-        iterations = max(self._read_int("iterations", 10_000), 100)
-        seed = self._read_int("seed", 42)
+        # budgie.yaml is the one place these live, so the TUI and the CLI
+        # quote the same numbers for the same project.
+        year = int(self._setting("year", 2026))
+        pto = float(self._setting("pto", 0.0))
+        iterations = max(int(self._setting("iterations", 10_000)), 100)
+        seed = self._setting("seed", 42)
 
         ph = productive_hours(year, pto_days=pto)
         self._refresh_chrome(year, pto)
@@ -921,18 +909,48 @@ class BudgieTUI(App):
             table.clear()
             return
 
+        # An open project is read the way the CLI and perch read it: hours
+        # from plan.csv, readings, cost lines and the budget. The bundled
+        # sample or a --people file is just that team, as before.
+        snap = None
+        if (
+            self.workspace is not None
+            and not self._people_override
+            and not self.on_sample
+        ):
+            try:
+                snap = load_snapshot(self.workspace.root)
+            except (OSError, ValueError) as exc:
+                self._load_error = f"Can't read the project's inputs: {exc}"
+                banner.display = True
+                banner.update(f"{self._load_error}\nFix the file, then press r.")
+                table.clear()
+                return
+            people = snap.people
+            if snap.readings:
+                people = at_completion(
+                    people, snap.readings, snap.year, plan=snap.plan
+                ).people
+        costs = snap.costs if snap else []
+
         self._load_error = None
         # Numbers from the bundled sample look exactly like real ones.
-        banner.display = self.on_sample
-        banner.update(
-            SAMPLE_BANNER
-            if self.workspace is None
-            else "SAMPLE DATA — this project has no people.csv yet. Add one "
-            "(see the Inputs tab), then press r."
-        )
-        det = run_forecast(people)
-        sim = simulate(people, iterations=iterations, seed=seed)
+        if self.on_sample:
+            banner.update(
+                SAMPLE_BANNER
+                if self.workspace is None
+                else "SAMPLE DATA — this project has no people.csv yet. Add one "
+                "(see the Inputs tab), then press r."
+            )
+        elif snap and snap.warnings:
+            banner.update("\n".join(f"⚠ {w}" for w in snap.warnings))
+        banner.display = self.on_sample or bool(snap and snap.warnings)
+        det = run_forecast(people, costs=costs)
+        sim = simulate(people, iterations=iterations, seed=seed, costs=costs)
         pct = sim.percentiles()
+        self.query_one("#forecast_headline", Static).update(
+            _headline(snap, people, pct[50], sim) if snap else ""
+        )
 
         table.clear()
         for item in det.line_items:
@@ -942,6 +960,10 @@ class BudgieTUI(App):
                 f"{item.hours:,.0f}",
                 _money(item.cost),
             )
+        if costs:
+            # The table's total is labor + non-labor, so show the non-labor
+            # line too or the rows won't add up to it.
+            table.add_row("Non-labor", "", "", _money(det.non_labor_cost))
         table.add_row(
             "[b]Total[/b]",
             "",

@@ -756,3 +756,63 @@ async def test_a_project_without_people_csv_is_sample_data_too(tmp_path, monkeyp
         assert "people.csv" in _text(app, "#forecast_banner")
 
     assert opened == []
+
+
+# --- one model: the Forecast tab reads the project the way the CLI does ----
+
+
+def _p50(text: str) -> float:
+    import re
+
+    return float(re.search(r"P50 \$([\d,]+)", text).group(1).replace(",", ""))
+
+
+async def test_forecast_headline_matches_the_cli(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+
+    from budgie.budgie import cli
+
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    cli_out = CliRunner().invoke(cli, ["forecast"]).output
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        headline = _text(app, "#forecast_headline")
+        # Same project, same seed and iterations from budgie.yaml: same P50.
+        assert _p50(headline) == _p50(cli_out)
+        assert headline.startswith("Budget $425,000")
+        assert "headroom" in headline and "chance over" in headline
+
+
+async def test_a_plan_row_moves_the_forecast_tab(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        before = _p50(_text(app, "#forecast_headline"))
+        append_plan_row(tmp_path / "plan.csv", "Bob", date(2026, 7, 1), 0.0)
+        append_plan_row(tmp_path / "plan.csv", "Zed", date(2026, 7, 1), 1.0)
+        await pilot.press("r")
+        await pilot.pause()
+        assert _p50(_text(app, "#forecast_headline")) < before
+        banner = _text(app, "#forecast_banner")
+        assert app.query_one("#forecast_banner").display is True
+        assert "Zed is in plan.csv but has no rate" in banner
+
+
+async def test_the_forecast_tab_has_no_unsaved_setting_boxes(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        for gone in ("#year", "#pto", "#iterations", "#seed", "#recalc"):
+            assert not app.query(gone)
