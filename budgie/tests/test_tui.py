@@ -614,3 +614,24 @@ async def test_failures_are_red_and_successes_are_not(tmp_path, monkeypatch):
         app.query_one("#plan_date").value = "2026-07-01"
         app.add_plan_row()
         assert not status.has_class("error")
+
+
+async def test_escape_leaves_the_plan_form(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("3")
+        app.query_one("#plan_name").focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.focused is app.query_one("#plan_table")
+        # The digit keys switch tabs again instead of typing into the form.
+        await pilot.press("4")
+        await pilot.pause()
+        assert app.query_one("#tabs").active == "tab_forecast"
+        assert app.query_one("#plan_name").value == ""

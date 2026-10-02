@@ -33,7 +33,7 @@ from typing import ClassVar
 
 import numpy as np
 from textual.app import App, ComposeResult
-from textual.binding import BindingType
+from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.widgets import (
@@ -307,6 +307,7 @@ class BudgieTUI(App):
         ("P", "switch('perch')", "perch"),
         ("G", "switch('gitboard')", "gitboard"),
         ("q", "quit", "Quit"),
+        Binding("escape", "leave_input", "Leave field", show=False),
     ]
 
     def __init__(self, csv_path: str | Path | None = None, **kwargs) -> None:
@@ -501,6 +502,13 @@ class BudgieTUI(App):
 
     def action_show_tab(self, tab_id: str) -> None:
         self.query_one("#tabs", TabbedContent).active = tab_id
+
+    def action_leave_input(self) -> None:
+        """Escape out of a form field, so the 1-5 keys switch tabs again."""
+        if isinstance(self.focused, Input):
+            # Both tabs with a form (Plan, Forecast) have a table under it.
+            pane = self.query_one("#tabs", TabbedContent).active_pane
+            pane.query(DataTable).first().focus()
 
     def _active_tab(self) -> str | None:
         try:
