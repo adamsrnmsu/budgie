@@ -84,6 +84,7 @@ _FILE_COL = 16  # longest scaffolded filename is `allocations.csv`
 _ROWS_COL = 4
 _CELL_PADDING = 2  # DataTable's default, one space either side
 
+SAMPLE_PEOPLE = Path(__file__).parent / "tests" / "team.csv"
 SAMPLE_BANNER = (
     "SAMPLE DATA — no project open. Pick one on Projects or run `budgie init NAME`."
 )
@@ -339,12 +340,15 @@ class BudgieTUI(App):
             resolved = self.workspace.resolve("people")
             if resolved:
                 return resolved
-        return str(Path(__file__).parent / "tests" / "team.csv")
+        return str(SAMPLE_PEOPLE)
 
     @property
     def on_sample(self) -> bool:
-        """True when the forecast is the bundled sample team, not a project."""
-        return self.workspace is None and not self._people_override
+        """True when the forecast is the bundled sample team, not a project.
+
+        That's no project at all, or one with no people.csv yet.
+        """
+        return Path(self.people_path) == SAMPLE_PEOPLE
 
     @property
     def plan_path(self) -> Path | None:
@@ -573,7 +577,7 @@ class BudgieTUI(App):
             return "Open this project first (enter), then e edits its budgie.yaml."
         if tab == "tab_forecast":
             if self.on_sample:
-                return f"That's the bundled sample team -- {self._no_project_hint()}."
+                return "This is the bundled sample team; there's no people.csv to open."
             return Path(self.people_path)
         if self.workspace is None:
             return f"No project open -- {self._no_project_hint()}."
@@ -920,7 +924,12 @@ class BudgieTUI(App):
         self._load_error = None
         # Numbers from the bundled sample look exactly like real ones.
         banner.display = self.on_sample
-        banner.update(SAMPLE_BANNER)
+        banner.update(
+            SAMPLE_BANNER
+            if self.workspace is None
+            else "SAMPLE DATA — this project has no people.csv yet. Add one "
+            "(see the Inputs tab), then press r."
+        )
         det = run_forecast(people)
         sim = simulate(people, iterations=iterations, seed=seed)
         pct = sim.percentiles()

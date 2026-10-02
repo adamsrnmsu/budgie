@@ -734,3 +734,25 @@ async def test_with_several_projects_it_says_pick_one_not_init(tmp_path, monkeyp
         # A real project: the banner goes, and so does the label.
         assert app.query_one("#forecast_banner").display is False
         assert "SAMPLE DATA" not in _text(app, "#titlebar")
+
+
+async def test_a_project_without_people_csv_is_sample_data_too(tmp_path, monkeypatch):
+    # people_path falls back to the bundled team when the project has no
+    # people.csv: `e` must not open the package's own file, and the numbers
+    # must be labelled.
+    init_workspace(tmp_path, year=2026)
+    (tmp_path / "people.csv").unlink()
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    opened = _record_edits(monkeypatch)
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("4", "e")
+        await pilot.pause()
+        assert app.query_one("#forecast_banner").display is True
+        assert "SAMPLE DATA" in _text(app, "#forecast_banner")
+        assert "people.csv" in _text(app, "#forecast_banner")
+
+    assert opened == []
