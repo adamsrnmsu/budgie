@@ -19,7 +19,7 @@ The CLI resolves its own options and bundled samples, then calls these;
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
@@ -35,7 +35,7 @@ from budgie.core.calendar import ProductiveHours, productive_hours
 from budgie.core.costs import CostItem, load_costs, total_cost
 from budgie.core.loader import load_people
 from budgie.core.monthly import load_monthly_actuals
-from budgie.core.person import Person
+from budgie.core.person import HoursEstimate, Person
 from budgie.core.plan import AllocationPlan, PlanEntry, load_plan
 from budgie.core.workspace import CONFIG_NAME, Workspace, load_workspace
 
@@ -106,6 +106,84 @@ def budget_source(workspace: Workspace | None) -> float | str | None:
     return pinned if pinned is not None else workspace.resolve("budget")
 
 
+def people_on_plan(
+    people: Sequence[Person],
+    plan: AllocationPlan | None,
+    year: int,
+    pto: float = 0.0,
+    pto_by_name: Mapping[str, float] | None = None,
+) -> tuple[list[Person], list[str]]:
+    """The team with each person's hours taken from ``plan``, plus warnings.
+
+    A planned person's likely hours are ``plan.allocated_hours`` and their low
+    and high are that figure scaled by ``Person.spread``, so people.csv says
+    what an hour costs and how far real hours may stray, and the plan says how
+    many there are. Someone in people.csv with no plan rows gets 0 hours;
+    someone in the plan with no rate is not costed. Both are warned about,
+    because either one quietly changes the total.
+
+    PTO is the person's own ``pto_days`` from people.csv, else ``pto_by_name``
+    (allocations.csv), else ``pto``; when both files give one and they differ,
+    people.csv wins and that is a warning too. Without a plan the team is
+    returned unchanged.
+
+    The warnings are sentences for a person to read, not log records.
+    """
+    pto_by_name = pto_by_name or {}
+    if plan is None:
+        return list(people), [
+            f"{p.name} has a rate but no hours: people.csv gives none and "
+            "there is no plan.csv."
+            for p in people
+            if p.spread is not None and p.hours.high == 0
+        ]
+
+    warnings: list[str] = []
+    planned = set(plan.names)
+    out = []
+    for person in people:
+        if person.name not in planned:
+            warnings.append(
+                f"{person.name} has a rate in people.csv but no rows in "
+                "plan.csv, so 0 hours."
+            )
+            out.append(replace(person, hours=HoursEstimate.constant(0.0)))
+            continue
+        days, other = person.pto_days, pto_by_name.get(person.name)
+        if days is None:
+            days = other
+        elif other is not None and other != days:
+            warnings.append(
+                f"{person.name}: pto_days is {days:g} in people.csv but {other:g} "
+                "in allocations.csv; using people.csv."
+            )
+        likely = plan.allocated_hours(person.name, year, pto if days is None else days)
+        spread = person.spread
+        if spread is None:
+            warnings.append(
+                f"{person.name}'s likely hours in people.csv are 0, so their "
+                "planned hours have no spread."
+            )
+            spread = (1.0, 1.0)
+        out.append(
+            replace(
+                person,
+                hours=HoursEstimate(likely * spread[0], likely, likely * spread[1]),
+            )
+        )
+
+    rated = {p.name.casefold(): p.name for p in people}
+    for name in plan.names:
+        if name in {p.name for p in people}:
+            continue
+        near = rated.get(name.casefold())
+        hint = f" (people.csv has {near!r})" if near else ""
+        warnings.append(
+            f"{name} is in plan.csv but has no rate in people.csv{hint}, so not costed."
+        )
+    return out, warnings
+
+
 @dataclass(frozen=True)
 class Snapshot:
     """A project as it stands: the inputs, with every precedence rule applied."""
@@ -128,6 +206,9 @@ class Snapshot:
     budget_revisions: Budget | None = None
     #: The project's own plan.csv (never the bundled sample), or None.
     plan: AllocationPlan | None = None
+    #: Things a person should be told about how the inputs were combined (see
+    #: :func:`people_on_plan`): sentences to show, never only logged.
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def allocated(self) -> dict[str, float]:
@@ -174,12 +255,58 @@ class Snapshot:
             plan = AllocationPlan(
                 (*(self.plan.entries if self.plan else ()), *seeds, *plan_entries)
             )
-            changes["plan"] = plan
-            if self.allocations:
-                changes["allocations"] = self._replanned(plan)
-            else:
-                changes["planned"] = plan.team_hours(self.year, self.pto)
+            return replace(self.with_plan(plan), **changes)
         return replace(self, **changes)
+
+    def with_plan(self, plan: AllocationPlan) -> Snapshot:
+        """A copy with ``plan`` in place of the project's; touches no files.
+
+        Allocated hours, ``people`` (so cost, not just hours) and ``warnings``
+        are all re-derived from it, which is how an edited or deleted plan row
+        is previewed.
+        """
+        changes: dict = {"plan": plan}
+        if self.allocations:
+            changes["allocations"] = self._replanned(plan)
+        else:
+            changes["planned"] = plan.team_hours(self.year, self.pto)
+        return replace(self, **changes)._on_plan()
+
+    def _on_plan(self) -> Snapshot:
+        """``people`` and ``warnings`` re-derived from ``plan``.
+
+        Someone in allocations.csv the plan doesn't mention keeps their flat
+        ``fte`` from Jan 1 -- the same rule allocated hours follow -- so hours
+        and cost agree; that is still worth a warning.
+        """
+        plan, warnings = self.plan, []
+        if plan is not None:
+            seeds = [
+                PlanEntry(a.name, date(self.year, 1, 1), a.fte)
+                for a in self.allocations
+                if a.name not in plan.names and a.fte
+            ]
+            warnings = [
+                f"{e.name} has no rows in plan.csv; using allocations.csv fte "
+                f"{e.fte:g} from Jan 1."
+                for e in seeds
+            ]
+            if seeds:
+                plan = AllocationPlan((*plan.entries, *seeds))
+        people, more = people_on_plan(
+            self.people, plan, self.year, self.pto, self._allocation_pto()
+        )
+        return replace(self, people=people, warnings=warnings + more)
+
+    def _allocation_pto(self) -> dict[str, float]:
+        """Per-person PTO days allocations.csv gave, recovered from each ceiling."""
+        team = self.ceiling.available_hours
+        return {
+            a.name: (self.ceiling.productive_hours - a.available_hours)
+            / self.ceiling.hours_per_day
+            for a in self.allocations
+            if abs(a.available_hours - team) > 1e-9
+        }
 
     def _replanned(self, plan: AllocationPlan) -> list[Allocation]:
         """``allocations`` with planned people's FTE set to the plan's year average."""
@@ -253,4 +380,4 @@ def load_snapshot(project: str | Path) -> Snapshot:
         seed=workspace.setting("seed"),
         budget_revisions=budget if isinstance(source, str) else None,
         plan=plan,
-    )
+    )._on_plan()

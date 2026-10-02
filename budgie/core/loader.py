@@ -1,7 +1,14 @@
 """
 Load a team from CSV into core objects.
 
-Two input shapes are supported so utilization and raw hours are both first-class:
+The plain form gives only what an hour costs, plus how far real hours may stray
+from the plan (percent under / over; both optional, missing means 0)::
+
+    name,hourly_cost,under,over
+    Alice,95,10,5
+
+Its hours come from plan.csv (see :func:`budgie.core.project.people_on_plan`);
+on its own each person has 0 hours. Two older shapes still load:
 
   Utilization form (fractions of the productive-hours ceiling)::
 
@@ -15,7 +22,9 @@ Two input shapes are supported so utilization and raw hours are both first-class
 
 For the utilization form, ``productive_hours`` (the ceiling, e.g. from
 :func:`budgie.core.calendar.productive_hours`) must be provided so fractions can
-be resolved to hours.
+be resolved to hours. With a plan, either one becomes a spread around the plan
+(low/likely and high/likely), which every form records on ``Person.spread``.
+Any form may carry ``pto_days``.
 """
 
 from __future__ import annotations
@@ -64,15 +73,22 @@ def load_people(
             resolve_ceiling(productive_hours, as_float(row, "pto_days")),
             *(as_required_float(row, c) for c in _UTIL_COLS),
         )
+        spread = lambda row: _ratios(*(as_required_float(row, c) for c in _UTIL_COLS))
     elif set(_HOURS_COLS) <= cols:
         shape = "absolute-hours"
         build = lambda row: HoursEstimate(
             *(as_required_float(row, c) for c in _HOURS_COLS)
         )
+        spread = lambda row: _ratios(*(as_required_float(row, c) for c in _HOURS_COLS))
+    elif not cols & {*_UTIL_COLS, *_HOURS_COLS}:
+        shape = "plain"
+        build = lambda row: HoursEstimate.constant(0.0)
+        spread = _percent_spread
     else:
         raise ValueError(
-            "team CSV must have either utilization columns "
-            f"{_UTIL_COLS} or absolute-hours columns {_HOURS_COLS}"
+            "team CSV must have all three utilization columns "
+            f"{_UTIL_COLS}, all three absolute-hours columns {_HOURS_COLS}, "
+            "or neither (the plain form: hours come from plan.csv)"
         )
 
     people = [
@@ -80,8 +96,27 @@ def load_people(
             name=as_str(row, "name"),
             hourly_cost=as_required_float(row, "hourly_cost"),
             hours=build(row),
+            spread=spread(row),
+            pto_days=as_float(row, "pto_days"),
         )
         for row in rows
     ]
     logger.info("Loaded %d people from %s (%s form)", len(people), csv_path, shape)
     return people
+
+
+def _ratios(low: float, mode: float, high: float) -> tuple[float, float] | None:
+    """``(low/mode, high/mode)``, or None when ``mode`` is 0."""
+    return (low / mode, high / mode) if mode else None
+
+
+def _percent_spread(row) -> tuple[float, float]:
+    """The plain form's ``under`` / ``over`` percentages as ratios of the plan."""
+    under = as_float(row, "under") or 0.0
+    over = as_float(row, "over") or 0.0
+    if not 0 <= under <= 100 or over < 0:
+        raise ValueError(
+            f"{as_str(row, 'name')}: under must be 0-100 and over at least 0 "
+            f"(percent of planned hours), got under={under:g}, over={over:g}"
+        )
+    return 1 - under / 100, 1 + over / 100
