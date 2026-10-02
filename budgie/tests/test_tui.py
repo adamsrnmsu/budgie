@@ -487,3 +487,36 @@ def test_run_execs_the_target_after_the_app_exits(monkeypatch):
     monkeypatch.setattr(os, "execvp", lambda f, a: calls.append(("exec", f, a)))
     tui_mod.run()
     assert calls == [("chdir", "/ws"), ("exec", "perch", ["perch", "tui"])]
+
+
+# -- step A: safety and quick fixes (budgie-vrc, budgie-4oj) ------------------
+
+
+async def test_d_on_the_plan_tab_deletes_nothing(tmp_path, monkeypatch):
+    # The repro: one project under budget/, launched from the parent folder.
+    # On the Plan tab `d` reads as "delete this row"; it must not reach the
+    # project, and the footer must not offer it there.
+    project = tmp_path / PROJECTS_DIR / "fy26"
+    init_workspace(project, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("3")
+        await pilot.pause()
+        assert "d" not in app.active_bindings
+        await pilot.press("d", "d")
+        await pilot.pause()
+        assert project.is_dir()
+        assert app.query_one("#tabs").active == "tab_plan"
+
+        await pilot.press("1")
+        await pilot.pause()
+        assert "d" in app.active_bindings
+        await pilot.press("d")
+        await pilot.pause()
+        # The arming warning is drawn as an error, not in success green.
+        assert app.query_one("#projects_status").has_class("error")
+        assert project.is_dir()

@@ -35,6 +35,7 @@ import numpy as np
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.widgets import (
     Button,
     DataTable,
@@ -257,6 +258,7 @@ class BudgieTUI(App):
     }
     .hint { padding: 1 2; color: $text-muted; }
     .status { padding: 0 2; color: $success; height: 1; }
+    .status.error { color: $error; }
     .pane-title { text-style: bold; padding: 0 0 1 0; }
 
     /* --- Forecast tab --------------------------------------------------
@@ -500,6 +502,25 @@ class BudgieTUI(App):
     def action_show_tab(self, tab_id: str) -> None:
         self.query_one("#tabs", TabbedContent).active = tab_id
 
+    def _active_tab(self) -> str | None:
+        try:
+            return self.query_one("#tabs", TabbedContent).active
+        except NoMatches:  # asked before compose has run
+            return None
+
+    def check_action(self, action: str, parameters) -> bool | None:
+        # Keys are app-global, so `d` would otherwise delete a project from any
+        # tab -- on Plan it reads as "delete this row". False also hides it
+        # from the footer.
+        if action == "delete_project":
+            return self._active_tab() == "tab_projects"
+        return True
+
+    def on_tabbed_content_tab_activated(self, event) -> None:
+        # A mouse click changes tab without a key, so on_key can't disarm.
+        self._delete_armed = None
+        self.refresh_bindings()
+
     def action_edit_selected(self) -> None:
         """Open the highlighted input file in $EDITOR."""
         table = self.query_one("#inputs_table", DataTable)
@@ -610,8 +631,14 @@ class BudgieTUI(App):
         except (OSError, TypeError, ValueError):
             return None
 
-    def _projects_status(self, message: str) -> str:
-        self.query_one("#projects_status", Static).update(message)
+    def _projects_status(self, message: str, error: bool = False) -> str:
+        return self._status("#projects_status", message, error)
+
+    def _status(self, selector: str, message: str, error: bool = False) -> str:
+        """Show ``message`` on a status line: red when it's a failure."""
+        widget = self.query_one(selector, Static)
+        widget.update(message)
+        widget.set_class(error, "error")
         return message
 
     def selected_project(self) -> str | None:
@@ -650,16 +677,18 @@ class BudgieTUI(App):
         """
         from budgie.core.scaffold import delete_project
 
-        self.action_show_tab("tab_projects")
+        if self._active_tab() != "tab_projects":
+            return ""
         name = self.selected_project()
         if name is None:
-            return self._projects_status("No project selected.")
+            return self._projects_status("No project selected.", error=True)
 
         if self._delete_armed != name:
             self._delete_armed = name
             return self._projects_status(
                 f"Delete {name} and everything in it? Press d again to confirm, "
-                f"any other key to cancel. This cannot be undone."
+                f"any other key to cancel. This cannot be undone.",
+                error=True,
             )
 
         target = next((p for p in self.projects() if p.name == name), None)
@@ -669,7 +698,7 @@ class BudgieTUI(App):
         try:
             removed = delete_project(target.root)
         except (OSError, ValueError) as exc:
-            return self._projects_status(str(exc))
+            return self._projects_status(str(exc), error=True)
 
         # The deleted project may be the one being displayed; drop it and let
         # what's left be re-discovered rather than showing numbers from a
