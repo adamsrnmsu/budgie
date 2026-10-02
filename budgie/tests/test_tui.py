@@ -1,5 +1,6 @@
 """TUI behaviour: tabs, workspace awareness, and appending plan rows."""
 
+import contextlib
 import json
 import os
 from datetime import date
@@ -520,3 +521,96 @@ async def test_d_on_the_plan_tab_deletes_nothing(tmp_path, monkeypatch):
         # The arming warning is drawn as an error, not in success green.
         assert app.query_one("#projects_status").has_class("error")
         assert project.is_dir()
+
+
+def _record_edits(monkeypatch):
+    """Stand in for the editor: record what `e` would open."""
+    opened = []
+
+    def fake_open(path):
+        opened.append(path)
+        return f"Edited {path.name}."
+
+    monkeypatch.setattr(tui_mod, "open_in_editor", fake_open)
+    # The headless test driver can't suspend.
+    monkeypatch.setattr(BudgieTUI, "suspend", lambda self: contextlib.nullcontext())
+    return opened
+
+
+async def test_e_opens_the_file_the_tab_shows(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    opened = _record_edits(monkeypatch)
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("3", "e")
+        await pilot.pause()
+        await pilot.press("4", "e")
+        await pilot.pause()
+        await pilot.press("2")
+        app.query_one("#inputs_table").move_cursor(row=3)
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.pause()
+        third = app.workspace.inputs()[3].path
+        # Editing recalculates; the Inputs cursor stays where it was.
+        assert app.query_one("#inputs_table").cursor_row == 3
+
+    assert opened == [tmp_path / "plan.csv", tmp_path / "people.csv", third]
+
+
+async def test_e_on_projects_edits_the_open_projects_config(tmp_path, monkeypatch):
+    container = _two_projects(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    opened = _record_edits(monkeypatch)
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.switch_project("fy26")
+        await pilot.pause()
+        await pilot.press("e")  # cursor on fy26, the open one
+        await pilot.pause()
+        app.query_one("#projects_table").move_cursor(row=1)
+        await pilot.pause()
+        await pilot.press("e")  # fy27 isn't open: nothing, and say so in red
+        await pilot.pause()
+        assert app.query_one("#projects_status").has_class("error")
+
+    assert opened == [(container / "fy26" / "budgie.yaml").resolve()]
+
+
+async def test_e_on_forecast_wont_edit_the_bundled_sample(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    opened = _record_edits(monkeypatch)
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("4", "e")
+        await pilot.pause()
+
+    assert opened == []
+
+
+async def test_failures_are_red_and_successes_are_not(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        status = app.query_one("#plan_status")
+        app.query_one("#plan_name").value = "Alice"
+        app.query_one("#plan_date").value = "next tuesday"
+        app.query_one("#plan_fte").value = "0.5"
+        app.add_plan_row()
+        assert status.has_class("error")
+
+        app.query_one("#plan_date").value = "2026-07-01"
+        app.add_plan_row()
+        assert not status.has_class("error")

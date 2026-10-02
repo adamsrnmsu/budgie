@@ -297,7 +297,7 @@ class BudgieTUI(App):
 
     BINDINGS: ClassVar[list[BindingType]] = [
         ("r", "recalculate", "Recalculate"),
-        ("e", "edit_selected", "Edit input"),
+        ("e", "edit_selected", "Edit file"),
         ("d", "delete_project", "Delete project"),
         ("1", "show_tab('tab_projects')", "Projects"),
         ("2", "show_tab('tab_inputs')", "Inputs"),
@@ -514,6 +514,8 @@ class BudgieTUI(App):
         # from the footer.
         if action == "delete_project":
             return self._active_tab() == "tab_projects"
+        if action == "edit_selected":
+            return self._active_tab() != "tab_assumptions"
         return True
 
     def on_tabbed_content_tab_activated(self, event) -> None:
@@ -522,25 +524,63 @@ class BudgieTUI(App):
         self.refresh_bindings()
 
     def action_edit_selected(self) -> None:
-        """Open the highlighted input file in $EDITOR."""
-        table = self.query_one("#inputs_table", DataTable)
-        status = self.query_one("#inputs_status", Static)
-        self.action_show_tab("tab_inputs")
-        if self.workspace is None:
-            status.update("No project here -- run `budgie init` to create one.")
-            return
-        items = self.workspace.inputs()
-        row = table.cursor_row
-        if not 0 <= row < len(items):
-            status.update("Select a file first.")
+        """Open the file the current tab shows in $EDITOR."""
+        tab = self._active_tab()
+        target = self._edit_target(tab)
+        if not isinstance(target, Path):
+            self._tab_status(tab, target, error=True)
             return
         with self.suspend():
-            message = open_in_editor(items[row].path)
-        # Recalculate first: it rewrites this same status line with whatever
+            message = open_in_editor(target)
+        # Recalculate first: it rewrites the Inputs status line with whatever
         # the edited file now says, and the editor's own message is the newer
         # news of the two.
         self.recalculate()
-        status.update(message)
+        self._tab_status(tab, message, error=not message.startswith("Edited"))
+
+    def _edit_target(self, tab: str | None) -> Path | str:
+        """The file `e` opens on ``tab``, or why there isn't one."""
+        if tab == "tab_projects":
+            projects = self.projects()
+            row = self.query_one("#projects_table", DataTable).cursor_row
+            if (
+                self.workspace is not None
+                and 0 <= row < len(projects)
+                and projects[row].root == self.workspace.root
+            ):
+                return self.workspace.config_path
+            return "Open this project first (enter), then e edits its budgie.yaml."
+        if tab == "tab_forecast":
+            if self.workspace is None and not self._people_override:
+                return f"That's the bundled sample team -- {self._no_project_hint()}."
+            return Path(self.people_path)
+        if self.workspace is None:
+            return f"No project open -- {self._no_project_hint()}."
+        if tab == "tab_plan":
+            return self.plan_path
+        if tab == "tab_inputs":
+            items = self.workspace.inputs()
+            row = self.query_one("#inputs_table", DataTable).cursor_row
+            return items[row].path if 0 <= row < len(items) else "Select a file first."
+        return "Nothing to edit on this tab."
+
+    def _no_project_hint(self) -> str:
+        # Telling someone who has two budgets to run `budgie init` is wrong.
+        if self.projects():
+            return "pick a project on the Projects tab"
+        return "run `budgie init` to make one"
+
+    def _tab_status(self, tab: str | None, message: str, error: bool) -> None:
+        """Say ``message`` on ``tab``'s status line; Forecast has none, so toast."""
+        selector = {
+            "tab_projects": "#projects_status",
+            "tab_inputs": "#inputs_status",
+            "tab_plan": "#plan_status",
+        }.get(tab)
+        if selector:
+            self._status(selector, message, error)
+        else:
+            self.notify(message, severity="error" if error else "information")
 
     # -- reading the form --------------------------------------------------
 
@@ -566,21 +606,25 @@ class BudgieTUI(App):
         """
         path = self.plan_path
         if path is None:
-            return self._plan_status("No project here -- run `budgie init` first.")
+            return self._plan_status(
+                f"No project open -- {self._no_project_hint()}.", error=True
+            )
 
         name = self.query_one("#plan_name", Input).value.strip()
         raw_date = self.query_one("#plan_date", Input).value.strip()
         raw_fte = self.query_one("#plan_fte", Input).value.strip()
         if not (name and raw_date and raw_fte):
-            return self._plan_status("Name, from-date and FTE are all needed.")
+            return self._plan_status(
+                "Name, from-date and FTE are all needed.", error=True
+            )
 
         try:
             effective = parse_date(raw_date)
             fte = float(raw_fte)
         except ValueError as exc:
-            return self._plan_status(str(exc))
+            return self._plan_status(str(exc), error=True)
         if fte < 0:
-            return self._plan_status("FTE cannot be negative.")
+            return self._plan_status("FTE cannot be negative.", error=True)
 
         append_plan_row(path, name, effective, fte)
         # Clear the form so the same row can't be added twice by a stray Enter.
@@ -591,9 +635,8 @@ class BudgieTUI(App):
             f"Added {name} → {fte:g} FTE from {effective} ({path.name})"
         )
 
-    def _plan_status(self, message: str) -> str:
-        self.query_one("#plan_status", Static).update(message)
-        return message
+    def _plan_status(self, message: str, error: bool = False) -> str:
+        return self._status("#plan_status", message, error)
 
     def switch_project(self, name: str) -> str:
         """Point the whole app at project ``name``.
@@ -607,7 +650,8 @@ class BudgieTUI(App):
             workspace = self._open(project)
             if workspace is None:
                 return self._projects_status(
-                    f"{name}'s {project.config_path.name} won't load -- fix it first."
+                    f"{name}'s {project.config_path.name} won't load -- fix it first.",
+                    error=True,
                 )
             self.workspace = workspace
             # A --people path given at launch was an instruction about the old
@@ -617,7 +661,7 @@ class BudgieTUI(App):
             self._load_error = None
             self.recalculate()
             return self._projects_status(f"Switched to {name}")
-        return self._projects_status(f"No project called {name}")
+        return self._projects_status(f"No project called {name}", error=True)
 
     @staticmethod
     def _open(project):
@@ -664,7 +708,7 @@ class BudgieTUI(App):
     def action_open_project(self) -> str:
         name = self.selected_project()
         if name is None:
-            return self._projects_status("No project to open.")
+            return self._projects_status("No project to open.", error=True)
         return self.switch_project(name)
 
     def action_delete_project(self) -> str:
@@ -694,7 +738,7 @@ class BudgieTUI(App):
         target = next((p for p in self.projects() if p.name == name), None)
         self._delete_armed = None
         if target is None:
-            return self._projects_status(f"No project called {name}.")
+            return self._projects_status(f"No project called {name}.", error=True)
         try:
             removed = delete_project(target.root)
         except (OSError, ValueError) as exc:
@@ -906,10 +950,9 @@ class BudgieTUI(App):
     def _refresh_inputs(self) -> None:
         # Say why we're here. Arriving on this tab because a file wouldn't load
         # is confusing unless the reason arrives with you.
-        self.query_one("#inputs_status", Static).update(
-            "" if self._load_error is None else f"[red]{self._load_error}[/red]"
-        )
+        self._status("#inputs_status", self._load_error or "", error=True)
         table = self.query_one("#inputs_table", DataTable)
+        cursor = table.cursor_row
         items = self.workspace.inputs() if self.workspace else []
         used_by = [" ".join(item.used_by) for item in items]
 
@@ -941,6 +984,8 @@ class BudgieTUI(App):
                 _ellipsize(item.description, description_width),
                 used,
             )
+        # clear(columns=True) put the cursor back on row 0; keep the user's row.
+        table.move_cursor(row=cursor)
 
     def _refresh_assumptions(self, ph, year: int) -> None:
         lines = [
