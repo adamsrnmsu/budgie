@@ -14,6 +14,7 @@ rather than assuming a flat 2080-hour year.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -28,6 +29,88 @@ WEEKS_PER_YEAR = 52.0
 
 # Gross paid hours in a standard year before any holidays/PTO are removed.
 GROSS_ANNUAL_HOURS = HOURS_PER_WEEK * WEEKS_PER_YEAR  # 2080.0
+
+
+_YEAR_START = re.compile(r"(\d{2})-01")
+
+
+def year_start_month(text) -> int:
+    """The month a ``year_start`` setting names; it must be a month's first day."""
+    match = _YEAR_START.fullmatch(str(text).strip())
+    if not match or not 1 <= int(match[1]) <= 12:
+        raise ValueError(
+            f"year_start must be MM-01, the first day of a month "
+            f'(e.g. "10-01" for a federal fiscal year), got {text!r}'
+        )
+    return int(match[1])
+
+
+@dataclass(frozen=True)
+class YearSpan:
+    """The money year: ``first`` to ``last`` inclusive, twelve whole months.
+
+    A calendar year starts Jan 1. A fiscal year is named for the calendar year
+    it ends in: FY27 is 2026-10-01 to 2027-09-30.
+    """
+
+    first: date
+    last: date
+
+    @property
+    def year(self) -> int:
+        return self.last.year
+
+    @property
+    def fiscal(self) -> bool:
+        return (self.first.month, self.first.day) != (1, 1)
+
+    @property
+    def label(self) -> str:
+        """How the year prints: ``2026``, or ``FY27`` for a fiscal year."""
+        return f"FY{self.year % 100:02d}" if self.fiscal else str(self.year)
+
+    @property
+    def days(self) -> int:
+        return (self.last - self.first).days + 1
+
+    @property
+    def zero(self) -> date:
+        """The day before ``first``: where a cumulative curve is 0."""
+        return self.first - timedelta(days=1)
+
+    @property
+    def months(self) -> list[tuple[int, int]]:
+        """The twelve ``(calendar year, month)`` pairs, in the year's order."""
+        year, month, out = self.first.year, self.first.month, []
+        for _ in range(12):
+            out.append((year, month))
+            year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+        return out
+
+    @property
+    def quarters(self) -> tuple[tuple[date, date], ...]:
+        """Four ``(first, last)`` quarters of three whole months each."""
+        starts = [date(y, m, 1) for y, m in self.months[::3]]
+        ends = [s - timedelta(days=1) for s in starts[1:]] + [self.last]
+        return tuple(zip(starts, ends))
+
+    def contains(self, day: date) -> bool:
+        return self.first <= day <= self.last
+
+
+def year_span(year: int, year_start: str = "01-01") -> YearSpan:
+    """The span ``year`` names: Jan 1-Dec 31, or the twelve months ending in
+    ``year`` that start on ``year_start`` (``"10-01"``: Oct 1 of year - 1)."""
+    month = year_start_month(year_start)
+    if month == 1:
+        return YearSpan(date(year, 1, 1), date(year, 12, 31))
+    return YearSpan(date(year - 1, month, 1), date(year, month, 1) - timedelta(days=1))
+
+
+def current_year(year_start: str, today: date) -> int:
+    """The year whose span contains ``today``."""
+    month = year_start_month(year_start)
+    return today.year + 1 if month > 1 and today.month >= month else today.year
 
 
 def federal_holiday_workdays(year: int) -> int:
