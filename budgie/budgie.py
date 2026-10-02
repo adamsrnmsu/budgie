@@ -306,7 +306,7 @@ def forecast(
     With spend readings (actuals.csv or weekly.csv) this is an estimate at
     completion: hours already booked, plus a forecast of only the time left.
     """
-    from budgie.core.calendar import productive_hours
+    from budgie.core.calendar import productive_hours, year_span
     from budgie.core.costs import load_costs
     from budgie.core.forecast import forecast as run_forecast
     from budgie.core.loader import load_people
@@ -324,7 +324,7 @@ def forecast(
     seed = _setting("seed", seed, None)
     budget_arg = _budget_arg(budget_arg)
 
-    ph = productive_hours(year, pto_days=pto)
+    ph = productive_hours(year_span(year), pto_days=pto)  # bridge: budgie-bvd
     logger.info(
         f"Productive hours {year}: {ph.productive_hours:.0f}"
         + (
@@ -570,7 +570,7 @@ def tui(people_csv):
 def hours(alloc_csv, year, pto, plan_csv):
     """Show each person's allocated / spent / remaining hours from their FTE."""
     from budgie.core.allocation import load_allocations
-    from budgie.core.calendar import productive_hours
+    from budgie.core.calendar import productive_hours, year_span
     from budgie.singletons import console, logger
     from budgie.utils.utils import display_startup_message
 
@@ -586,7 +586,7 @@ def hours(alloc_csv, year, pto, plan_csv):
         with_readings,
     )
 
-    ph = productive_hours(year, pto_days=pto)
+    ph = productive_hours(year_span(year), pto_days=pto)  # bridge: budgie-bvd
     plan_csv, plan = _plan_for_allocations(plan_csv)
     allocs = load_allocations(alloc_csv, available_hours=ph, plan=plan)
     # The project's latest reading is the spent figure, as in `emails`.
@@ -679,7 +679,7 @@ def emails(
     Writes draft files only -- nothing is sent.
     """
     from budgie.core.allocation import load_allocations
-    from budgie.core.calendar import productive_hours
+    from budgie.core.calendar import productive_hours, year_span
     from budgie.emails import render_email, write_drafts
     from budgie.singletons import console
     from budgie.utils.utils import display_startup_message
@@ -692,7 +692,7 @@ def emails(
 
     actuals_csv, weekly_csv = readings_files(_workspace(), actuals_csv, weekly_csv)
 
-    ph = productive_hours(year, pto_days=pto)
+    ph = productive_hours(year_span(year), pto_days=pto)  # bridge: budgie-bvd
     _, plan = _plan_for_allocations(plan_csv)
     allocs = load_allocations(alloc_csv, available_hours=ph, plan=plan)
 
@@ -914,7 +914,7 @@ def monthly(
     With spend readings (actuals.csv or weekly.csv) the months already past carry
     the hours actually booked, and only the rest of the year is simulated.
     """
-    from budgie.core.calendar import productive_hours
+    from budgie.core.calendar import productive_hours, year_span
     from budgie.core.costs import load_costs
     from budgie.core.loader import load_people
     from budgie.core.monthly import monthly_forecast, monthly_simulation
@@ -929,7 +929,7 @@ def monthly(
     seed = _setting("seed", seed, None)
     budget_arg = _budget_arg(budget_arg)
 
-    ph = productive_hours(year, pto_days=pto)
+    ph = productive_hours(year_span(year), pto_days=pto)  # bridge: budgie-bvd
     people = load_people(people_csv, productive_hours=ph)
     costs = load_costs(costs_csv) if costs_csv else []
     budget = _budget_from(budget_arg) if budget_arg else None
@@ -1289,6 +1289,7 @@ def assumptions(year, pto):
         federal_holiday_workdays,
         productive_hours,
         workdays_in_year,
+        year_span,
     )
     from budgie.core.monthly import month_weights
     from budgie.utils.utils import display_startup_message
@@ -1297,7 +1298,7 @@ def assumptions(year, pto):
     year = _setting("year", year, 2026)
     pto = _setting("pto", pto, 0.0)
 
-    ph = productive_hours(year, pto_days=pto)
+    ph = productive_hours(year_span(year), pto_days=pto)  # bridge: budgie-bvd
     weights = month_weights(year)
 
     # (assumption, current value, where it is set).
@@ -1315,7 +1316,7 @@ def assumptions(year, pto):
         ),
         _row(
             "Holidays",
-            f"{federal_holiday_workdays(year)} US federal holidays fall Mon-Fri"
+            f"{federal_holiday_workdays(year_span(year))} US federal holidays fall Mon-Fri"  # bridge: budgie-bvd
             f" in {year} (-{ph.holiday_hours:,.0f} h)",
             "core/calendar.py (holidays pkg)",
         ),
@@ -1334,7 +1335,7 @@ def assumptions(year, pto):
         _row("", explain_pto(ph), ""),
         _row(
             "Working days",
-            f"{workdays_in_year(year)} in {year}; day-level math spreads"
+            f"{workdays_in_year(year_span(year))} in {year}; day-level math spreads"  # bridge: budgie-bvd
             " available hours across exactly these",
             "core/calendar.py",
         ),

@@ -143,7 +143,7 @@ def _planned_fte(
     if ceiling == 0:
         return 0.0
     days = ph.pto_days if pto_days is None else pto_days
-    return plan.allocated_hours(name, ph.year, pto_days=days) / ceiling
+    return plan.allocated_hours(name, ph.span.year, pto_days=days) / ceiling
 
 
 def _apply_plan(

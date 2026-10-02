@@ -9,7 +9,7 @@ from click.testing import CliRunner
 from budgie.budgie import cli
 from budgie.core.allocation import Allocation
 from budgie.core.budget import Budget
-from budgie.core.calendar import productive_hours
+from budgie.core.calendar import productive_hours, year_span
 from budgie.core.plan import AllocationPlan, PlanEntry
 from budgie.core.project import (
     Snapshot,
@@ -163,7 +163,7 @@ def test_pinned_budget_has_no_revisions_and_no_plan_csv_means_no_plan(project):
 # (7.968 h each), and 126 of those days fall from 1 July to 31 December:
 # 126 x 7.968 = 1,003.968 h.
 def _alice(plan=None):
-    ceiling = productive_hours(2026, pto_days=0)
+    ceiling = productive_hours(year_span(2026), pto_days=0)
     return Snapshot(
         year=2026,
         pto=0.0,

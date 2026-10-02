@@ -33,7 +33,7 @@ import holidays
 import numpy as np
 
 from budgie.core.actuals import Observation
-from budgie.core.calendar import productive_hours
+from budgie.core.calendar import productive_hours, year_span
 from budgie.core.costs import CostItem, monthly_totals, sample_total
 from budgie.core.csvio import as_int, as_required_float, as_str, read_rows
 from budgie.core.eac import elapsed_fraction
@@ -81,7 +81,9 @@ def month_weights(year: int) -> list[float]:
 
 def monthly_available_hours(year: int, pto_days: float = 0.0) -> list[float]:
     """The year's available hours split across months by working-day share."""
-    annual = productive_hours(year, pto_days=pto_days).available_hours
+    annual = productive_hours(
+        year_span(year), pto_days=pto_days
+    ).available_hours  # bridge: budgie-bvd
     return [annual * w for w in month_weights(year)]
 
 

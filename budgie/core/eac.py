@@ -28,7 +28,7 @@ from datetime import date
 from typing import TYPE_CHECKING
 
 from budgie.core.actuals import Observation
-from budgie.core.calendar import workdays_between, workdays_in_year
+from budgie.core.calendar import workdays_between, workdays_in_year, year_span
 from budgie.core.person import HoursEstimate, Person
 
 if TYPE_CHECKING:
@@ -57,7 +57,9 @@ def elapsed_fraction(year: int, as_of: date) -> float:
     start, end = date(year, 1, 1), date(year, 12, 31)
     if as_of < start:
         return 0.0
-    return workdays_between(start, min(as_of, end)) / workdays_in_year(year)
+    return workdays_between(start, min(as_of, end)) / workdays_in_year(
+        year_span(year)
+    )  # bridge: budgie-bvd
 
 
 def at_completion(

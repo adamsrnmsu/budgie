@@ -29,7 +29,7 @@ from pathlib import Path
 
 import holidays
 
-from budgie.core.calendar import hours_per_workday
+from budgie.core.calendar import hours_per_workday, year_span
 from budgie.core.csvio import as_required_float, as_str, parse_date, read_rows
 
 logger = logging.getLogger(__name__)
@@ -92,7 +92,9 @@ class AllocationPlan:
         2026-07-15 at 0.50 FTE is charged only for the working days from July 15
         onward -- not a full-month or full-year approximation.
         """
-        per_day = hours_per_workday(year, pto_days=pto_days)
+        per_day = hours_per_workday(
+            year_span(year), pto_days=pto_days
+        )  # bridge: budgie-bvd
         schedule = self.changes_for(name)
         if not schedule:
             return 0.0

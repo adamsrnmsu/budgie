@@ -31,7 +31,7 @@ from budgie.core.actuals import (
 )
 from budgie.core.allocation import Allocation, load_allocations
 from budgie.core.budget import Budget, coerce_budget
-from budgie.core.calendar import ProductiveHours, productive_hours
+from budgie.core.calendar import ProductiveHours, productive_hours, year_span
 from budgie.core.costs import CostItem, load_costs, total_cost
 from budgie.core.loader import load_people
 from budgie.core.monthly import load_monthly_actuals
@@ -218,7 +218,7 @@ def load_snapshot(project: str | Path) -> Snapshot:
     if year is None:
         raise ValueError(f"{workspace.config_path}: `year` is not set")
     pto = workspace.setting("pto", 0.0)
-    ceiling = productive_hours(year, pto_days=pto)
+    ceiling = productive_hours(year_span(year), pto_days=pto)  # bridge: budgie-bvd
 
     people_csv = workspace.resolve("people")
     if people_csv is None:

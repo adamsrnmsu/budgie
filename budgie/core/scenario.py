@@ -31,7 +31,7 @@ from pathlib import Path
 import yaml
 
 from budgie.core.budget import coerce_budget
-from budgie.core.calendar import productive_hours
+from budgie.core.calendar import productive_hours, year_span
 from budgie.core.costs import load_costs
 from budgie.core.forecast import Forecast
 from budgie.core.forecast import forecast as run_forecast
@@ -88,7 +88,8 @@ def run_scenarios(config_path: str | Path) -> tuple[list[ScenarioResult], float]
 
     for spec in specs:
         ph = productive_hours(
-            int(spec.get("year", 2026)), pto_days=float(spec.get("pto", 0.0))
+            year_span(int(spec.get("year", 2026))),  # bridge: budgie-bvd
+            pto_days=float(spec.get("pto", 0.0)),
         )
         people = load_people(_resolve(spec["people"], base_dir), productive_hours=ph)
         det = run_forecast(people, costs=costs)

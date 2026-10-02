@@ -45,7 +45,7 @@ from textual.widgets import (
 )
 
 from budgie.core.allocation import pto_overrides
-from budgie.core.calendar import PTO_RULE, explain_pto, productive_hours
+from budgie.core.calendar import PTO_RULE, explain_pto, productive_hours, year_span
 from budgie.core.csvio import parse_date
 from budgie.core.forecast import forecast as run_forecast
 from budgie.core.loader import load_people
@@ -665,7 +665,7 @@ class BudgieTUI(App):
         iterations = max(self._read_int("iterations", 10_000), 100)
         seed = self._read_int("seed", 42)
 
-        ph = productive_hours(year, pto_days=pto)
+        ph = productive_hours(year_span(year), pto_days=pto)  # bridge: budgie-bvd
         self._refresh_chrome(year, pto)
         self._refresh_projects()
         self._refresh_forecast(ph, iterations, seed)

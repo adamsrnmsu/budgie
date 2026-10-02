@@ -6,7 +6,12 @@ import pytest
 
 from budgie.core.allocation import Allocation, load_allocations
 from budgie.core.burndown import burndown
-from budgie.core.calendar import productive_hours, resolve_ceiling, workdays_between
+from budgie.core.calendar import (
+    productive_hours,
+    resolve_ceiling,
+    workdays_between,
+    year_span,
+)
 from budgie.core.loader import load_people
 
 
@@ -70,7 +75,7 @@ def test_per_person_pto_overrides_the_team_default(tmp_path):
         "Alice,1.0,0,10\n"  # her own PTO
         "Bob,1.0,0,\n"  # blank -> team default
     )
-    ph = productive_hours(2026, pto_days=20)
+    ph = productive_hours(year_span(2026), pto_days=20)
     alice, bob = load_allocations(csv, available_hours=ph)
 
     assert alice.available_hours == pytest.approx(1992 - 10 * 8)
@@ -80,7 +85,7 @@ def test_per_person_pto_overrides_the_team_default(tmp_path):
 def test_pto_is_prorated_by_fte_not_charged_in_full():
     # The whole point of item 13: a quarter-time person surrenders a quarter of
     # their PTO to this project, not all of it.
-    ph = productive_hours(2026, pto_days=15)
+    ph = productive_hours(year_span(2026), pto_days=15)
     quarter_time = Allocation(
         name="Alice", fte=0.25, hours_spent=0, available_hours=ph.available_hours
     )
@@ -97,7 +102,7 @@ def test_people_csv_honours_a_per_person_pto_column(tmp_path):
         "Alice,100,0.9,0.9,0.9,0\n"
         "Bob,100,0.9,0.9,0.9,25\n"
     )
-    ph = productive_hours(2026, pto_days=0)
+    ph = productive_hours(year_span(2026), pto_days=0)
     alice, bob = load_people(csv, productive_hours=ph)
 
     assert alice.hours.point > bob.hours.point

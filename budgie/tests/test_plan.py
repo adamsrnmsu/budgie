@@ -10,7 +10,12 @@ from budgie.core.actuals import (
 )
 from budgie.core.allocation import Allocation
 from budgie.core.burndown import burndown
-from budgie.core.calendar import hours_per_workday, workdays_between, workdays_in_year
+from budgie.core.calendar import (
+    hours_per_workday,
+    workdays_between,
+    workdays_in_year,
+    year_span,
+)
 from budgie.core.plan import load_plan
 
 TESTS_DIR = Path(__file__).resolve().parent
@@ -26,8 +31,8 @@ def test_workdays_between_excludes_weekend_and_holiday():
 
 
 def test_hours_per_workday_reconciles_to_annual():
-    assert workdays_in_year(2026) == 250
-    assert hours_per_workday(2026) * 250 == pytest.approx(1992)
+    assert workdays_in_year(year_span(2026)) == 250
+    assert hours_per_workday(year_span(2026)) * 250 == pytest.approx(1992)
 
 
 # --- allocation plan ------------------------------------------------------

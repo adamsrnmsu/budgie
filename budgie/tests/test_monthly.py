@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from budgie.core.calendar import productive_hours
+from budgie.core.calendar import productive_hours, year_span
 from budgie.core.monthly import (
     cumulative,
     load_monthly_actuals,
@@ -39,7 +39,7 @@ def test_weights_sum_to_one_and_vary():
 
 
 def test_monthly_hours_reconcile_to_annual():
-    annual = productive_hours(2026).available_hours
+    annual = productive_hours(year_span(2026)).available_hours
     months = monthly_available_hours(2026)
     assert sum(months) == pytest.approx(annual)
 

@@ -16,7 +16,16 @@ from datetime import date
 
 import pytest
 
-from budgie.core.calendar import YearSpan, current_year, year_span, year_start_month
+from budgie.core.calendar import (
+    YearSpan,
+    current_year,
+    federal_holiday_workdays,
+    hours_per_workday,
+    productive_hours,
+    workdays_in_year,
+    year_span,
+    year_start_month,
+)
 from budgie.core.workspace import load_workspace
 
 FY27 = year_span(2027, "10-01")
@@ -77,3 +86,16 @@ def test_year_start_is_a_workspace_setting(tmp_path):
     config = tmp_path / "budgie.yaml"
     config.write_text('year: 2027\nyear_start: "10-01"\n')
     assert load_workspace(config).setting("year_start") == "10-01"
+
+
+def test_fy27_counts_holidays_from_both_calendar_years():
+    assert federal_holiday_workdays(FY27) == 11
+    assert federal_holiday_workdays(year_span(2027)) == 12  # Dec 31 2027: FY28
+    assert workdays_in_year(FY27) == 250
+
+
+def test_fy27_productive_hours():
+    ph = productive_hours(FY27)
+    assert ph.span == FY27
+    assert (ph.holiday_hours, ph.productive_hours) == (88.0, 1992.0)
+    assert hours_per_workday(FY27) == pytest.approx(7.968)
