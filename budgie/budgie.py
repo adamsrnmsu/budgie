@@ -964,10 +964,16 @@ def monthly(
         actuals = Actuals(readings, observations, plan)
         _print_eac_note(readings, len(people))
 
-    mf = monthly_forecast(people, year, pto_days=pto, costs=costs, actuals=actuals)
+    mf = monthly_forecast(
+        people,
+        year_span(year),  # bridge: budgie-bvd
+        pto_days=pto,
+        costs=costs,
+        actuals=actuals,
+    )
     sim = monthly_simulation(
         people,
-        year,
+        year_span(year),  # bridge: budgie-bvd
         pto_days=pto,
         iterations=iterations,
         seed=seed,
@@ -990,14 +996,14 @@ def monthly(
 def _print_monthly_table(mf, sim, budget):
     from rich.table import Table
 
-    from budgie.core.monthly import MONTH_NAMES
+    from budgie.core.monthly import month_names
     from budgie.singletons import console
 
     p10, p50, p90 = sim.band(10), sim.band(50), sim.band(90)
     table = Table(
         show_header=True,
         header_style="bold magenta",
-        title=f"Monthly breakdown {mf.year}",
+        title=f"Monthly breakdown {mf.span.label}",
     )
     table.add_column("Month")
     table.add_column("Hours", justify="right")
@@ -1006,7 +1012,7 @@ def _print_monthly_table(mf, sim, budget):
     table.add_column("P10", justify="right")
     table.add_column("P90", justify="right")
     cum = mf.cumulative_costs
-    for i, name in enumerate(MONTH_NAMES):
+    for i, name in enumerate(month_names(mf.span)):
         over = budget is not None and p50[i] > budget
         cumulative_cell = f"${cum[i]:,.0f}"
         if over:
@@ -1317,7 +1323,7 @@ def assumptions(year, pto):
     pto = _setting("pto", pto, 0.0)
 
     ph = productive_hours(year_span(year), pto_days=pto)  # bridge: budgie-bvd
-    weights = month_weights(year)
+    weights = month_weights(year_span(year))  # bridge: budgie-bvd
 
     # (assumption, current value, where it is set).
     rows = [

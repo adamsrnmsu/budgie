@@ -22,6 +22,7 @@ from budgie.core.actuals import (
     week_ending,
 )
 from budgie.core.allocation import Allocation
+from budgie.core.budget import Budget, BudgetRevision
 from budgie.core.burndown import burndown
 from budgie.core.calendar import (
     YearSpan,
@@ -33,7 +34,14 @@ from budgie.core.calendar import (
     year_span,
     year_start_month,
 )
+from budgie.core.costs import CostItem, monthly_totals
 from budgie.core.eac import elapsed_fraction
+from budgie.core.monthly import (
+    month_names,
+    month_weights,
+    monthly_available_hours,
+    spent_at,
+)
 from budgie.core.plan import AllocationPlan, PlanEntry
 from budgie.core.workspace import load_workspace
 
@@ -197,3 +205,32 @@ def test_an_edge_week_reading_past_the_span_clamps_to_its_last_day():
 def test_fy27_elapsed_share_counts_working_days_from_october():
     assert elapsed_fraction(FY27, date(2026, 12, 31)) == pytest.approx(0.248)
     assert elapsed_fraction(FY27, date(2026, 9, 30)) == 0.0
+
+
+def test_fy27_months_run_october_to_september():
+    assert month_names(FY27)[:3] == ("Oct", "Nov", "Dec")
+    assert month_names(FY27)[-1] == "Sep"
+    assert month_weights(FY27)[0] == pytest.approx(21 / 250)
+    assert monthly_available_hours(FY27)[0] == pytest.approx(167.328)
+
+
+def test_fy27_spend_curve_is_zero_on_september_30():
+    assert spent_at([(date(2026, 10, 31), 31.0)], date(2026, 10, 1), FY27) == 1.0
+
+
+def test_costs_outside_the_span_are_left_out_and_recurring_runs_to_september():
+    items = [
+        CostItem("old", 999.0, date(2026, 9, 15)),
+        CostItem("cloud", 100.0, date(2026, 11, 1), recurring=True),
+    ]
+    assert monthly_totals(items, FY27) == [0.0] + [100.0] * 11
+
+
+def test_budget_steps_follow_fiscal_month_ends():
+    budget = Budget(
+        (
+            BudgetRevision(date(2026, 10, 1), 1000.0),
+            BudgetRevision(date(2027, 4, 1), 1200.0),
+        )
+    )
+    assert budget.monthly_amounts(FY27) == [1000.0] * 6 + [1200.0] * 6

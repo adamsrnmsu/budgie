@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 from budgie.core.burndown import BurndownStatus
 from budgie.core.forecast import Forecast
 from budgie.core.montecarlo import SimulationResult
-from budgie.core.monthly import MONTH_NAMES, MonthlyForecast, MonthlySimulation
+from budgie.core.monthly import MonthlyForecast, MonthlySimulation, month_names
 
 # Budgie house palette (matches the demo/report styling).
 GREEN = "#4c9f70"
@@ -201,7 +201,7 @@ def fan_chart(
         # A revised budget is a step line, not a flat one -- drawing it flat
         # would hide exactly the increase or cut you're trying to see.
         if hasattr(budget, "monthly_amounts"):
-            steps = budget.monthly_amounts(sim.year)
+            steps = budget.monthly_amounts(sim.span)
             ax.step(
                 months, steps, color=RED, linestyle="--", linewidth=1.4, where="post"
             )
@@ -220,9 +220,11 @@ def fan_chart(
         )
 
     ax.set_xticks(list(months))
-    ax.set_xticklabels(MONTH_NAMES, fontsize=9)
+    ax.set_xticklabels(month_names(sim.span), fontsize=9)
     ax.set_ylabel("Cumulative cost ($)", fontsize=10)
-    ax.set_title(f"Cumulative cost through {sim.year} ({sim.iterations:,} simulations)")
+    ax.set_title(
+        f"Cumulative cost through {sim.span.label} ({sim.iterations:,} simulations)"
+    )
     ax.yaxis.set_major_formatter(lambda x, _: f"${x:,.0f}")
     ax.set_xlim(0, 11)
     ax.set_ylim(0, None)
@@ -243,12 +245,13 @@ def monthly_cost_bars(forecast: MonthlyForecast, out_path: str | Path) -> Path:
     fig, ax = plt.subplots(figsize=(9, 3.8))
     # Numeric positions with separate labels: passing month names directly makes
     # matplotlib treat them as categorical dates and emit a warning.
-    positions = range(len(MONTH_NAMES))
+    names = month_names(forecast.span)
+    positions = range(len(names))
     ax.bar(positions, forecast.costs, color=GREEN)
     ax.set_xticks(list(positions))
-    ax.set_xticklabels(MONTH_NAMES)
+    ax.set_xticklabels(names)
     ax.set_ylabel("Cost ($)", fontsize=10)
-    ax.set_title(f"Cost per month, {forecast.year} (weighted by working days)")
+    ax.set_title(f"Cost per month, {forecast.span.label} (weighted by working days)")
     ax.yaxis.set_major_formatter(lambda x, _: f"${x:,.0f}")
     ax.tick_params(labelsize=9)
     ax.grid(axis="y", alpha=0.2)

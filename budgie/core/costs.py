@@ -16,7 +16,7 @@ and the item is sampled triangularly like an hours estimate, leave them blank
 and it is treated as known exactly.
 
 ``recurring`` marks a per-month charge: the amount is booked every month from
-its own month through December, so one row covers a monthly subscription.
+its own month through the year's last month, so one row covers a monthly subscription.
 """
 
 from __future__ import annotations
@@ -26,10 +26,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from budgie.core.csvio import as_float, as_required_float, as_str, parse_date, read_rows
+
+if TYPE_CHECKING:
+    from budgie.core.calendar import YearSpan
 
 logger = logging.getLogger(__name__)
 
@@ -99,17 +103,19 @@ def sample_total(
     return totals
 
 
-def monthly_totals(items: Sequence[CostItem], year: int) -> list[float]:
-    """Non-labor cost booked in each month of ``year``.
+def monthly_totals(items: Sequence[CostItem], span: YearSpan) -> list[float]:
+    """Non-labor cost booked in each month of ``span``, in the year's order.
 
     A one-off lands in its own month; a recurring line is booked in every month
-    from its own through December.
+    from its own through the year's last. Lines dated outside the span are left
+    out.
     """
     months = [0.0] * 12
+    index = {ym: i for i, ym in enumerate(span.months)}
     for item in items:
-        if item.when.year != year:
+        start = index.get((item.when.year, item.when.month))
+        if start is None:
             continue
-        start = item.when.month - 1
         if item.recurring:
             for m in range(start, 12):
                 months[m] += item.amount
