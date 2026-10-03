@@ -338,7 +338,10 @@ class HelpScreen(ModalScreen):
     ]
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(id="help"):
+        scroll = VerticalScroll(id="help")
+        # The app's footer is under the modal, so say how out on the frame.
+        scroll.border_subtitle = "↑↓ scroll · escape or ? closes"
+        with scroll:
             yield Static(help_text(), id="help_text")
 
 

@@ -869,6 +869,11 @@ async def test_help_teaches_the_model_and_every_term(tmp_path, monkeypatch):
         await pilot.press("question_mark")
         await pilot.pause()
         text = _help_text(app)
+        # It is longer than the screen, so it has to scroll to the keys.
+        await pilot.press("end")
+        await pilot.pause()
+        assert app.screen.query_one("#help").scroll_y > 0
+        assert "closes" in str(app.screen.query_one("#help").border_subtitle)
 
     for step in (
         "Who and when",
