@@ -11,6 +11,7 @@ command that needs it. Importing numpy, holidays and rich up here put roughly a
 second between typing ``budgie`` and seeing the help text.
 """
 
+import csv
 from datetime import date
 from pathlib import Path
 
@@ -245,7 +246,45 @@ def _span(year):
     return year_span(_setting("year", year, default), start)
 
 
-@click.group(invoke_without_command=True, add_help_option=False)
+# Mistakes in the inputs, not bugs: these get one line instead of a traceback.
+_INPUT_ERRORS = (ValueError, FileNotFoundError, KeyError, csv.Error)
+
+
+class _Budgie(click.Group):
+    """The group, plus one place that turns an input mistake into one line.
+
+    Every command reads hand-edited files, so a typo is the common failure and a
+    traceback the wrong answer to it. ``-v`` keeps the traceback for debugging.
+    """
+
+    def invoke(self, ctx):
+        try:
+            return super().invoke(ctx)
+        except _INPUT_ERRORS as exc:
+            if ctx.params.get("verbose"):
+                raise
+            _fail(exc)
+            ctx.exit(1)
+
+
+def _fail(exc: Exception) -> None:
+    """``error: <message>``, then ``see: budgie guide <topic>`` if a file is named."""
+    from budgie.core.workspace import INPUTS
+
+    if isinstance(exc, FileNotFoundError) and exc.filename:
+        message, filename = f"no such file: {exc.filename}", Path(exc.filename).name
+    else:
+        # KeyError's str() is the repr of the key; everything else is the message.
+        message = f"missing {exc}" if isinstance(exc, KeyError) else str(exc)
+        # Loader messages lead with the file: "plan.csv line 3: ...".
+        filename = message.split(" ", 1)[0].rstrip(":")
+    click.secho(f"error: {message}", fg="red", err=True)
+    topic = {name: key for key, (name, *_) in INPUTS.items()}.get(filename)
+    if topic:
+        click.echo(f"see: budgie guide {topic}", err=True)
+
+
+@click.group(cls=_Budgie, invoke_without_command=True, add_help_option=False)
 @click.option(
     "-v", "--verbose", is_flag=True, help="Show DEBUG logging from budgie's internals."
 )

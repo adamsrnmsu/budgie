@@ -599,6 +599,14 @@ budgie -v plan
 
 Verbose affects Budgie's own loggers only; third-party libraries stay quiet.
 
+**"It says `error: plan.csv line 3: ...`."** A mistake in an input file stops the command
+with one line naming the file and the line (the header is line 1, so it is the row number a
+spreadsheet shows), plus `see: budgie guide <topic>` for a project input. Values that can't
+be right are refused the same way: a negative `hourly_cost`, a blank or repeated name in
+people.csv (`alice` repeats `Alice`), a `util_*` outside 0 to 1 (`80` means `0.80`), and a
+plan.csv `fte` outside 0 to 1. Add `-v` (`budgie -v forecast`) to see the full traceback
+instead.
+
 **"Which files is it actually reading?"** `budgie status` shows the project it found and
 every input path. If it reports no project, you're on the bundled sample data — run
 `budgie init` where you want your numbers to live.

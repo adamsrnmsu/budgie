@@ -33,7 +33,7 @@ import logging
 from pathlib import Path
 
 from budgie.core.calendar import ProductiveHours, resolve_ceiling
-from budgie.core.csvio import as_float, as_required_float, as_str, read_rows
+from budgie.core.csvio import as_float, as_required_float, as_str, read_rows, row_error
 from budgie.core.person import HoursEstimate, Person
 
 logger = logging.getLogger(__name__)
@@ -56,11 +56,13 @@ def load_people(
             per-row ``pto_days`` column give someone their own ceiling.
 
     Raises:
-        ValueError: If required columns are missing, or the utilization form is
-            used without a ``productive_hours`` ceiling.
+        ValueError: If required columns are missing, the utilization form is
+            used without a ``productive_hours`` ceiling, the file has no people,
+            or a row holds an impossible value (named by file and line).
     """
     rows = read_rows(csv_path, required={"name", "hourly_cost"})
     cols = rows.columns
+    filename = Path(csv_path).name
 
     if set(_UTIL_COLS) <= cols:
         if productive_hours is None:
@@ -71,38 +73,72 @@ def load_people(
         shape = "utilization"
         build = lambda row: HoursEstimate.from_utilization(
             resolve_ceiling(productive_hours, as_float(row, "pto_days")),
-            *(as_required_float(row, c) for c in _UTIL_COLS),
+            *_three_points(row, _UTIL_COLS, share=True),
         )
-        spread = lambda row: _ratios(*(as_required_float(row, c) for c in _UTIL_COLS))
+        spread = lambda row: _ratios(*_three_points(row, _UTIL_COLS, share=True))
     elif set(_HOURS_COLS) <= cols:
         shape = "absolute-hours"
-        build = lambda row: HoursEstimate(
-            *(as_required_float(row, c) for c in _HOURS_COLS)
-        )
-        spread = lambda row: _ratios(*(as_required_float(row, c) for c in _HOURS_COLS))
+        build = lambda row: HoursEstimate(*_three_points(row, _HOURS_COLS))
+        spread = lambda row: _ratios(*_three_points(row, _HOURS_COLS))
     elif not cols & {*_UTIL_COLS, *_HOURS_COLS}:
         shape = "plain"
         build = lambda row: HoursEstimate.constant(0.0)
         spread = _percent_spread
     else:
         raise ValueError(
-            "team CSV must have all three utilization columns "
+            f"{filename}: team CSV must have all three utilization columns "
             f"{_UTIL_COLS}, all three absolute-hours columns {_HOURS_COLS}, "
             "or neither (the plain form: hours come from plan.csv)"
         )
 
+    seen: dict[str, int] = {}  # casefolded name -> line it was first on
     people = [
         Person(
-            name=as_str(row, "name"),
-            hourly_cost=as_required_float(row, "hourly_cost"),
+            name=_unique_name(row, seen),
+            hourly_cost=_rate(row),
             hours=build(row),
             spread=spread(row),
             pto_days=as_float(row, "pto_days"),
         )
         for row in rows
     ]
+    if not people:
+        raise ValueError(f"{filename} has no people")
     logger.info("Loaded %d people from %s (%s form)", len(people), csv_path, shape)
     return people
+
+
+def _unique_name(row, seen: dict[str, int]) -> str:
+    """The row's name, refusing a blank one or a repeat ("alice" repeats "Alice")."""
+    name = as_str(row, "name")
+    if not name:
+        raise row_error(row, "name is blank")
+    first = seen.setdefault(name.casefold(), getattr(row, "line", 0))
+    if first != getattr(row, "line", 0):
+        raise row_error(row, f"{name} is already on line {first}; one row per person")
+    return name
+
+
+def _rate(row) -> float:
+    cost = as_required_float(row, "hourly_cost")
+    if cost < 0:
+        raise row_error(row, f"hourly_cost cannot be negative, got {cost:g}")
+    return cost
+
+
+def _three_points(row, cols: tuple[str, str, str], share: bool = False) -> list[float]:
+    """``low, mode, high`` from ``cols``: in order, not negative, and ``<= 1`` if a share."""
+    values = [as_required_float(row, c) for c in cols]
+    for col, value in zip(cols, values):
+        if share and not 0 <= value <= 1:
+            hint = " (looks like a percentage -- use 0.80 for 80%)" if value > 1 else ""
+            raise row_error(row, f"{col} must be 0 to 1, got {value:g}{hint}")
+        if value < 0:
+            raise row_error(row, f"{col} cannot be negative, got {value:g}")
+    if not values[0] <= values[1] <= values[2]:
+        got = ", ".join(f"{v:g}" for v in values)
+        raise row_error(row, f"need {' <= '.join(cols)}, got {got}")
+    return values
 
 
 def _ratios(low: float, mode: float, high: float) -> tuple[float, float] | None:
@@ -115,8 +151,9 @@ def _percent_spread(row) -> tuple[float, float]:
     under = as_float(row, "under") or 0.0
     over = as_float(row, "over") or 0.0
     if not 0 <= under <= 100 or over < 0:
-        raise ValueError(
-            f"{as_str(row, 'name')}: under must be 0-100 and over at least 0 "
-            f"(percent of planned hours), got under={under:g}, over={over:g}"
+        raise row_error(
+            row,
+            "under must be 0-100 and over at least 0 "
+            f"(percent of planned hours), got under={under:g}, over={over:g}",
         )
     return 1 - under / 100, 1 + over / 100

@@ -28,7 +28,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from budgie.core.calendar import YearSpan, federal_holidays, hours_per_workday
-from budgie.core.csvio import as_required_float, as_str, parse_date, read_rows
+from budgie.core.csvio import as_date, as_required_float, as_str, read_rows, row_error
 
 logger = logging.getLogger(__name__)
 
@@ -146,13 +146,18 @@ def load_plan(csv_path: str | Path) -> AllocationPlan:
     entries = []
     for row in read_rows(csv_path, required=_REQUIRED_COLS):
         name = as_str(row, "name")
+        if not name:
+            raise row_error(row, "name is blank")
         fte = as_required_float(row, "fte")
-        if fte < 0:
-            raise ValueError(f"fte cannot be negative, got {fte} for {name}")
+        if not 0 <= fte <= 1:
+            raise row_error(
+                row,
+                f"fte must be 0 to 1, got {fte:g} (FTE is a share of full time: 0 to 1)",
+            )
         entries.append(
             PlanEntry(
                 name=name,
-                effective_date=parse_date(row["effective_date"]),
+                effective_date=as_date(row, "effective_date"),
                 fte=fte,
             )
         )

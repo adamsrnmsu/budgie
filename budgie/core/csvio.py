@@ -8,8 +8,10 @@ even print. Since every loader immediately iterates rows into frozen dataclasses
 and never touches a DataFrame again, there was nothing to give up.
 
 Everything here returns plain strings; the ``as_*`` helpers do the conversions
-with error messages that name the column and the offending value, because these
-files are edited by hand and a typo should say where it is.
+with error messages that name the file, the line, the column and the offending
+value, because these files are edited by hand and a typo should say where it is.
+Each :class:`Row` knows where it came from, so a loader gets that for free by
+converting through the helpers (and :func:`row_error` for its own checks).
 """
 
 from __future__ import annotations
@@ -23,7 +25,22 @@ from pathlib import Path
 # write in templates; the other two are what spreadsheets export.
 _DATE_FORMATS = ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d")
 
-Row = dict[str, str]
+
+class Row(dict):
+    """One record as ``{column: value}``, plus where it is: ``people.csv line 4``.
+
+    The line is the physical line in the file (the header is line 1), which is
+    the row number a spreadsheet shows.
+    """
+
+    where = ""
+    line = 0
+
+
+def row_error(row: dict, message: str) -> ValueError:
+    """A ValueError for ``row``, prefixed with its file and line when known."""
+    where = getattr(row, "where", "")
+    return ValueError(f"{where}: {message}" if where else message)
 
 
 class Table(list):
@@ -47,7 +64,8 @@ def read_rows(csv_path: str | Path, required: Iterable[str] = ()) -> Table:
     are stripped and lower-cased so ``Name`` and ``name`` are the same column.
 
     Raises:
-        ValueError: If any of ``required`` is missing from the header.
+        ValueError: If any of ``required`` is missing from the header
+            (``people.csv: missing column hourly_cost``).
     """
     path = Path(csv_path)
     with path.open(newline="", encoding="utf-8-sig") as handle:
@@ -55,14 +73,19 @@ def read_rows(csv_path: str | Path, required: Iterable[str] = ()) -> Table:
         fieldnames = [(f or "").strip().lower() for f in (reader.fieldnames or [])]
         missing = set(required) - set(fieldnames)
         if missing:
-            raise ValueError(f"{path.name} missing columns: {sorted(missing)}")
+            plural = "s" if len(missing) > 1 else ""
+            names = ", ".join(sorted(missing))
+            raise ValueError(f"{path.name}: missing column{plural} {names}")
 
         rows = []
         for raw in reader:
-            row = {}
-            for key, value in zip(fieldnames, raw.values()):
-                # A short row yields None for the trailing columns.
-                row[key] = (value or "").strip()
+            # A short row yields None for the trailing columns.
+            row = Row(
+                (key, (value or "").strip())
+                for key, value in zip(fieldnames, raw.values())
+            )
+            row.line = reader.line_num
+            row.where = f"{path.name} line {row.line}"
             rows.append(row)
     return Table(rows, fieldnames)
 
@@ -75,14 +98,14 @@ def as_float(row: Row, key: str, default: float | None = None) -> float | None:
     try:
         return float(value)
     except ValueError as exc:
-        raise ValueError(f"{key}: expected a number, got {value!r}") from exc
+        raise row_error(row, f"{key}: expected a number, got {value!r}") from exc
 
 
 def as_required_float(row: Row, key: str) -> float:
     """Float value of ``row[key]``, which must be present and non-blank."""
     value = as_float(row, key)
     if value is None:
-        raise ValueError(f"{key} is required but blank")
+        raise row_error(row, f"{key} is required but blank")
     return value
 
 
@@ -90,13 +113,21 @@ def as_int(row: Row, key: str) -> int:
     """Integer value of ``row[key]`` (accepts ``12`` and ``12.0``)."""
     value = as_required_float(row, key)
     if value != int(value):
-        raise ValueError(f"{key}: expected a whole number, got {value:g}")
+        raise row_error(row, f"{key}: expected a whole number, got {value:g}")
     return int(value)
 
 
 def as_str(row: Row, key: str, default: str = "") -> str:
     """Stripped string value of ``row[key]``, falling back to ``default``."""
     return row.get(key, "") or default
+
+
+def as_date(row: Row, key: str) -> date:
+    """Date value of ``row[key]`` (see :func:`parse_date`)."""
+    try:
+        return parse_date(row.get(key, ""))
+    except ValueError as exc:
+        raise row_error(row, str(exc)) from exc
 
 
 def parse_date(value: str | date) -> date:
