@@ -1338,6 +1338,13 @@ def assumptions(year, pto):
     # (assumption, current value, where it is set).
     rows = [
         _row(
+            "Where numbers come from",
+            "Hours: plan.csv FTE, day by day · Rate and spread: people.csv ·"
+            " Spent: weekly.csv (else actuals.csv) · Budget: budget.csv"
+            " (or budget: in budgie.yaml)",
+            "the project's input files",
+        ),
+        _row(
             "Working week",
             f"{HOURS_PER_WEEK:g} h over {WEEKS_PER_YEAR:g} weeks"
             f" = {GROSS_ANNUAL_HOURS:,.0f} h gross",
@@ -1363,7 +1370,7 @@ def assumptions(year, pto):
             "PTO",
             f"{pto:g} days (-{ph.pto_hours:,.0f} h)"
             f" -> available {ph.available_hours:,.0f} h",
-            "--pto, or a pto_days column",
+            "pto in budgie.yaml, --pto, or a pto_days column",
         ),
         _row("PTO vs part-time", PTO_RULE, "core/calendar.py: PTO_RULE"),
         _row("", explain_pto(ph), ""),
@@ -1393,8 +1400,8 @@ def assumptions(year, pto):
         _row(
             "Estimate at completion",
             "with actuals, forecast replaces the past with each person's latest"
-            " reading; the remainder is their plan x the share of working days"
-            " left after it. Spent hours are costed at the current rate;"
+            " reading; the remainder is the plan's hours for the days left"
+            " (no plan: their year x the share of working days left). Spent hours are costed at the current rate;"
             " non-labor lines are not adjusted",
             "core/eac.py, --ignore-actuals",
         ),
@@ -1407,9 +1414,10 @@ def assumptions(year, pto):
         ),
         _row(
             "Burn-down pace",
-            "expectation is a straight line from 0 on Jan 1"
-            " to the full allocation on Dec 31",
-            "core/burndown.py",
+            "expectation is the plan's own hours accumulated day by day;"
+            " without a plan, a straight line from 0 on Jan 1 to the"
+            " full allocation on Dec 31",
+            "core/burndown.py, plan.csv",
         ),
         _row(
             "Required pace",
@@ -1455,8 +1463,9 @@ def _print_assumptions_table(year, rows):
         table.add_row(name, value, source)
     console.print(table)
     console.print(
-        "[dim]Change any of these by passing the matching option, or edit the "
-        "module named in the last column.[/dim]"
+        "[dim]Change a value with the matching option, or in the input file or "
+        "budgie.yaml setting named in the last column. Rows that name a core/ "
+        "module are fixed rules.[/dim]"
     )
 
 

@@ -7,6 +7,8 @@ then puts honest confidence bounds around that number with a Monte Carlo simulat
 tracks FTE allocations, tells each person how many hours they have left, and writes the emails
 that say so.
 
+The bundled sample team (four people, no project), as `budgie forecast --seed 42` shows it:
+
 ```
 $ budgie forecast --seed 42
 
@@ -393,7 +395,8 @@ a file won't load. Landing on a tab that can only report an error helps nobody.
 
 All inputs are plain CSV (or YAML for scenarios), so they're easy to export from a spreadsheet.
 
-**Team** — `people.csv` (`team.csv` in the bundled samples). In a project with a plan, it
+**Team** — your project's `people.csv` (the bundled sample team is `budgie/tests/team.csv`,
+used when there is no project). In a project with a plan, it
 says what an hour costs and how sure the plan's hours are:
 
 ```csv
