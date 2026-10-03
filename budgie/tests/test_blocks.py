@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -135,16 +136,12 @@ def test_status_blocks(project):
     out = parsed(run(["status"], project))
     assert any(b["block"] == "figures" for b in out)
     assert any(b["block"] == "table" and b["columns"][1] == "File" for b in out)
-    assert (
-        out[-1]
-        == {
-            "pi": 1,
-            "block": "text",
-            "tone": "dim",
-            "text": f"Settings from {project / 'budgie.yaml'}",
-        }
-        or out[-1]["tone"] == "dim"
-    )
+    assert out[-1] == {
+        "pi": 1,
+        "block": "text",
+        "tone": "dim",
+        "text": f"Settings from {project / 'budgie.yaml'}",
+    }
 
 
 def test_emails_blocks(project):
@@ -157,10 +154,10 @@ def test_emails_blocks(project):
             project,
         )
     )
+    assert out[1]["block"] == "list" and out[1]["items"]  # the scaffold writes 3
     assert out[0]["block"] == "text" and out[0]["text"].startswith(
         f"Wrote {len(out[1]['items'])} draft(s)"
     )
-    assert out[1]["block"] == "list"
 
 
 def test_plain_output_unchanged_without_env(tmp_path):
@@ -170,3 +167,58 @@ def test_plain_output_unchanged_without_env(tmp_path):
         blocks_on=False,
     )
     assert "Deterministic forecast" in proc.stdout and "Monte Carlo" in proc.stdout
+
+
+def _values(b):
+    """Every string a block shows, for the drift guard."""
+    if b["block"] in ("heading", "text"):
+        return [b["text"]]
+    if b["block"] == "figures":
+        return [f[k] for f in b["items"] for k in ("label", "value", "note") if k in f]
+    if b["block"] == "list":
+        return b["items"]
+    return [b["title"]] * ("title" in b) + [c for r in b["rows"] for c in r if c]
+
+
+def _plain(proc):
+    """Plain stdout with ANSI stripped and whitespace collapsed."""
+    assert proc.returncode == 0, proc.stderr
+    return re.sub(r"\s+", " ", re.sub(r"\x1b\[[0-9;]*m", "", proc.stdout))
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [
+            "forecast",
+            "--people",
+            str(TESTS / "team.csv"),
+            "--seed",
+            "1",
+            "--costs",
+            str(TESTS / "costs_items.csv"),
+            "--budget",
+            "1000000",
+        ],
+        [
+            "forecast",
+            "--people",
+            str(TESTS / "team.csv"),
+            "--seed",
+            "1",
+            "--actuals",
+            str(TESTS / "actuals.csv"),
+            "--as-of",
+            "2026-03-31",
+        ],
+        ["status"],
+    ],
+    ids=["forecast", "forecast-eac", "status"],
+)
+def test_blocks_twins_match_plain_output(project, args, monkeypatch):
+    """Drift guard: each ``_*_blocks`` twin shows the values its ``_print_*`` does."""
+    monkeypatch.setenv("COLUMNS", "400")  # no rich line-wrapping inside cells
+    blocks_out = parsed(run(args, project))
+    plain = _plain(run(args, project, blocks_on=False))
+    missing = [v for b in blocks_out for v in _values(b) if v not in plain]
+    assert not missing, missing
