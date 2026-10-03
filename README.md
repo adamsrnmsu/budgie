@@ -200,9 +200,11 @@ budgie forecast --costs costs.csv --budget budget.csv --seed 42
 ```
 
 ```
-Total (labor)                    $712,738
-Non-labor                         $81,500
-Labor + non-labor                $794,238
+├───────────────────┼───────────┼─────────────────┼──────────┤
+│ Non-labor         │           │                 │  $81,500 │
+│ Labor + non-labor │           │                 │ $794,238 │
+└───────────────────┴───────────┴─────────────────┴──────────┘
+Monte Carlo (10,000 sims):  P10 $751,591  |  P50 $783,032  |  P90 $812,674
 Budget: original $800,000 → current $835,000 (+35,000 over 3 revisions)
 ● GOOD — Only 1% chance of exceeding budget -- comfortably covered.
 ```
@@ -255,9 +257,13 @@ budgie scenario --config scenarios.yaml
 ```
 
 ```
-● Baseline           $712,738        —    0% over budget → GOOD
-● With 15 PTO days   $669,802  −$42,936    0%            → GOOD
-● Lean team (3)      $505,570 −$207,168    0%            → GOOD
+  Scenario               Total (P50 det.)   vs base        P90   P(over budget)
+● Baseline                        $712,738         —   $728,057               0%
+● With 15 PTO days                $669,802   -42,936   $684,198               0%
+● Lean team (3 people)            $505,570  -207,168   $517,289               0%
+
+Signals
+  ● Baseline — GOOD: Only 0% chance of exceeding budget -- comfortably covered.
 ```
 
 The first scenario is the baseline; the rest are measured against it.
