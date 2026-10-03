@@ -9,6 +9,7 @@ from click.testing import CliRunner
 from budgie.budgie import cli
 from budgie.core.allocation import Allocation
 from budgie.core.burndown import burndown
+from budgie.core.calendar import year_span
 from budgie.emails import build_message, render_email, render_html_email
 
 AS_OF = date(2026, 6, 30)
@@ -22,7 +23,7 @@ def _status(fte=0.25, spent=180.0):
         available_hours=1992.0,
         email="alice@example.com",
     )
-    return burndown(alloc, 2026, as_of=AS_OF)
+    return burndown(alloc, year_span(2026), as_of=AS_OF)
 
 
 def _plain_part(msg):

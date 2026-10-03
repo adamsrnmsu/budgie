@@ -2,12 +2,12 @@ from datetime import date
 
 import pytest
 
-from budgie.core.calendar import hours_per_workday, workdays_between
+from budgie.core.calendar import hours_per_workday, workdays_between, year_span
 from budgie.core.plan import AllocationPlan, PlanEntry
 from budgie.core.solve import PlanCosting, entries_for, solve
 
 YEAR = 2026
-PER_DAY = hours_per_workday(YEAR)  # 1992 h over 250 working days
+PER_DAY = hours_per_workday(year_span(YEAR))  # 1992 h over 250 working days
 H2 = list(range(7, 13))  # Jul..Dec
 
 
@@ -22,7 +22,7 @@ def _costing(*entries, as_of=None, spent=None, non_labor=0.0):
     return PlanCosting(
         plan=plan,
         rates={"Alice": 100.0, "Bob": 50.0, "Carol": 80.0},
-        year=YEAR,
+        span=year_span(YEAR),
         non_labor=non_labor,
         spent=spent or {},
         as_of=as_of,

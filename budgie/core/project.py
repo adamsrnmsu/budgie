@@ -31,7 +31,7 @@ from budgie.core.actuals import (
 )
 from budgie.core.allocation import Allocation, load_allocations
 from budgie.core.budget import Budget, coerce_budget
-from budgie.core.calendar import ProductiveHours, productive_hours
+from budgie.core.calendar import ProductiveHours, YearSpan, productive_hours, year_span
 from budgie.core.costs import CostItem, load_costs, total_cost
 from budgie.core.loader import load_people
 from budgie.core.monthly import load_monthly_actuals
@@ -55,7 +55,9 @@ def readings_files(
 
 
 def load_observations(
-    year: int, actuals: str | Path | None = None, weekly: str | Path | None = None
+    span: YearSpan,
+    actuals: str | Path | None = None,
+    weekly: str | Path | None = None,
 ) -> dict[str, list[Observation]]:
     """Spend readings as ``{name: [(date, cumulative hours)]}``; weekly wins.
 
@@ -63,10 +65,10 @@ def load_observations(
     same observations, so everything downstream handles one shape.
     """
     if weekly:
-        return load_weekly_actuals(weekly, year)
+        return load_weekly_actuals(weekly, span)
     if actuals:
         return {
-            name: monthly_to_observations(year, months)
+            name: monthly_to_observations(span, months)
             for name, months in load_monthly_actuals(actuals).items()
         }
     return {}
@@ -109,24 +111,19 @@ def budget_source(workspace: Workspace | None) -> float | str | None:
 def people_on_plan(
     people: Sequence[Person],
     plan: AllocationPlan | None,
-    year: int,
+    span: YearSpan,
     pto: float = 0.0,
     pto_by_name: Mapping[str, float] | None = None,
-    flat_fte: Mapping[str, float] | None = None,
 ) -> tuple[list[Person], list[str]]:
     """The team with each person's hours taken from ``plan``, plus warnings.
 
     A planned person's likely hours are ``plan.allocated_hours`` and their low
     and high are that figure scaled by ``Person.spread``, so people.csv says
     what an hour costs and how far real hours may stray, and the plan says how
-    many there are. Someone in people.csv with no plan rows gets 0 hours;
-    someone in the plan with no rate is not costed. Both are warned about,
-    because either one quietly changes the total.
-
-    ``flat_fte`` is allocations.csv's ``fte`` column: someone it gives a
-    non-zero FTE whom the plan doesn't mention is carried at that FTE from
-    Jan 1 -- the rule allocated hours already follow -- so hours and cost
-    agree. That is a warning too.
+    many there are. Someone in people.csv with no plan rows gets 0 hours --
+    no plan rows means not on the project, whatever allocations.csv's ``fte``
+    says; someone in the plan with no rate is not costed. Both are warned
+    about, because either one quietly changes the total.
 
     PTO is the person's own ``pto_days`` from people.csv, else ``pto_by_name``
     (allocations.csv), else ``pto``; when both files give one and they differ,
@@ -145,18 +142,7 @@ def people_on_plan(
         ]
 
     rated = {p.name for p in people}
-    seeds = [
-        PlanEntry(name, date(year, 1, 1), fte)
-        for name, fte in (flat_fte or {}).items()
-        if fte and name in rated and name not in plan.names
-    ]
-    warnings = [
-        f"{e.name} has no rows in plan.csv; using allocations.csv fte {e.fte:g} "
-        "from Jan 1."
-        for e in seeds
-    ]
-    if seeds:
-        plan = AllocationPlan((*plan.entries, *seeds))
+    warnings: list[str] = []
     planned = set(plan.names)
     out = []
     for person in people:
@@ -175,7 +161,7 @@ def people_on_plan(
                 f"{person.name}: pto_days is {days:g} in people.csv but {other:g} "
                 "in allocations.csv; using people.csv."
             )
-        likely = plan.allocated_hours(person.name, year, pto if days is None else days)
+        likely = plan.allocated_hours(person.name, span, pto if days is None else days)
         spread = person.spread
         if spread is None:
             warnings.append(
@@ -206,7 +192,7 @@ def people_on_plan(
 class Snapshot:
     """A project as it stands: the inputs, with every precedence rule applied."""
 
-    year: int
+    span: YearSpan
     pto: float
     ceiling: ProductiveHours
     people: list[Person]
@@ -255,8 +241,8 @@ class Snapshot:
         someone only in the new entries is added with nothing spent.
 
         Someone named in ``plan_entries`` who is in allocations.csv but not the
-        plan is first carried at their flat ``fte`` from Jan 1 (seeded ahead of
-        the new entries, so a Jan 1 entry of their own still wins); otherwise a
+        plan is first carried at their flat ``fte`` from the year's first day (seeded
+        ahead of the new entries, so a first-day entry of their own still wins); otherwise a
         leave date would zero their whole year.
         """
         changes: dict = {}
@@ -266,7 +252,7 @@ class Snapshot:
             planned = self.plan.names if self.plan else ()
             flat = {a.name: a.fte for a in self.allocations}
             seeds = [
-                PlanEntry(n, date(self.year, 1, 1), flat[n])
+                PlanEntry(n, self.span.first, flat[n])
                 for n in dict.fromkeys(e.name for e in plan_entries)
                 if n in flat and n not in planned
             ]
@@ -287,23 +273,13 @@ class Snapshot:
         if self.allocations:
             changes["allocations"] = self._replanned(plan)
         else:
-            changes["planned"] = plan.team_hours(self.year, self.pto)
+            changes["planned"] = plan.team_hours(self.span, self.pto)
         return replace(self, **changes)._on_plan()
 
     def _on_plan(self) -> Snapshot:
-        """``people`` and ``warnings`` re-derived from ``plan``.
-
-        Someone in allocations.csv the plan doesn't mention keeps their flat
-        ``fte`` from Jan 1 -- the same rule allocated hours follow -- so hours
-        and cost agree; that is still worth a warning.
-        """
+        """``people`` and ``warnings`` re-derived from ``plan``."""
         people, warnings = people_on_plan(
-            self.people,
-            self.plan,
-            self.year,
-            self.pto,
-            self._allocation_pto(),
-            flat_fte={a.name: a.fte for a in self.allocations},
+            self.people, self.plan, self.span, self.pto, self._allocation_pto()
         )
         return replace(self, people=people, warnings=warnings)
 
@@ -326,7 +302,7 @@ class Snapshot:
                 self.ceiling.productive_hours - available
             ) / self.ceiling.hours_per_day
             return (
-                plan.allocated_hours(name, self.year, pto) / available
+                plan.allocated_hours(name, self.span, pto) / available
                 if available
                 else 0.0
             )
@@ -353,8 +329,9 @@ def load_snapshot(project: str | Path) -> Snapshot:
     year = workspace.setting("year")
     if year is None:
         raise ValueError(f"{workspace.config_path}: `year` is not set")
+    span = year_span(year, workspace.setting("year_start", "01-01"))
     pto = workspace.setting("pto", 0.0)
-    ceiling = productive_hours(year, pto_days=pto)
+    ceiling = productive_hours(span, pto_days=pto)
 
     people_csv = workspace.resolve("people")
     if people_csv is None:
@@ -362,20 +339,20 @@ def load_snapshot(project: str | Path) -> Snapshot:
     people = load_people(people_csv, productive_hours=ceiling)
 
     actuals, weekly = readings_files(workspace)
-    readings = {n: s for n, s in load_observations(year, actuals, weekly).items() if s}
+    readings = {n: s for n, s in load_observations(span, actuals, weekly).items() if s}
 
     plan_csv = workspace.resolve("plan")
     plan = load_plan(plan_csv) if plan_csv else None
     alloc_csv = workspace.resolve("allocations")
     allocations = load_allocations(alloc_csv, ceiling, plan=plan) if alloc_csv else []
-    planned = plan.team_hours(year, pto_days=pto) if plan and not allocations else {}
+    planned = plan.team_hours(span, pto_days=pto) if plan and not allocations else {}
 
     costs_csv = workspace.resolve("costs")
-    costs = load_costs(costs_csv) if costs_csv else []
+    costs = load_costs(costs_csv, span=span) if costs_csv else []
     source = budget_source(workspace)
     budget = None if source is None else coerce_budget(source)
     return Snapshot(
-        year=year,
+        span=span,
         pto=pto,
         ceiling=ceiling,
         people=people,

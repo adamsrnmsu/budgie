@@ -23,25 +23,21 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from functools import cache, cached_property
-from itertools import pairwise
 from typing import Literal
 
-import holidays
-
-from budgie.core.calendar import hours_per_workday
+from budgie.core.calendar import YearSpan, federal_holidays, hours_per_workday
+from budgie.core.csvio import last_day_of_month
 from budgie.core.plan import AllocationPlan, PlanEntry
 
 logger = logging.getLogger(__name__)
 
-#: One person in one month (1-12).
+#: One person in one month: 1 is the span's first month, 12 its last.
 Cell = tuple[str, int]
 
 
-def months(year: int) -> list[tuple[date, date]]:
-    """First and last day of each month the grid shows."""
-    # ponytail: calendar Jan-Dec; follow the YearSpan once budgie-bvd lands.
-    starts = [date(year, m, 1) for m in range(1, 13)] + [date(year + 1, 1, 1)]
-    return [(a, b - timedelta(days=1)) for a, b in pairwise(starts)]
+def months(span: YearSpan) -> list[tuple[date, date]]:
+    """First and last day of each month the grid shows, in the span's order."""
+    return [(date(y, m, 1), last_day_of_month(y, m)) for y, m in span.months]
 
 
 _per_day = cache(hours_per_workday)
@@ -68,7 +64,7 @@ class PlanCosting:
 
     plan: AllocationPlan
     rates: Mapping[str, float]
-    year: int
+    span: YearSpan
     pto: float = 0.0
     pto_by_name: Mapping[str, float] = field(default_factory=dict)
     non_labor: float = 0.0
@@ -80,15 +76,15 @@ class PlanCosting:
 
     @cached_property
     def _workdays(self) -> list[list[date]]:
-        off = holidays.UnitedStates(years=self.year)
+        off = federal_holidays(self.span)
         out = []
-        for start, end in months(self.year):
+        for start, end in months(self.span):
             days = (start + timedelta(n) for n in range((end - start).days + 1))
             out.append([d for d in days if d.weekday() < 5 and d not in off])
         return out
 
     def _first_open_day(self, month: int) -> date:
-        start = months(self.year)[month - 1][0]
+        start = months(self.span)[month - 1][0]
         return max(start, self.as_of + timedelta(1)) if self.as_of else start
 
     def _months(self, name: str, plan: AllocationPlan) -> list[_Month]:
@@ -107,7 +103,7 @@ class PlanCosting:
         return out
 
     def _hours_per_day(self, name: str) -> float:
-        return _per_day(self.year, self.pto_by_name.get(name, self.pto))
+        return _per_day(self.span, self.pto_by_name.get(name, self.pto))
 
     @property
     def uncosted(self) -> list[str]:
@@ -240,7 +236,7 @@ def entries_for(costing: PlanCosting, edits: Mapping[Cell, float]) -> list[PlanE
     these to the plan; never edit history.
     """
     rows: list[PlanEntry] = []
-    bounds = months(costing.year)
+    bounds = months(costing.span)
     for name in dict.fromkeys(n for n, _ in edits):
         mine = {m: v for (n, m), v in edits.items() if n == name}
         changes = costing.plan.changes_for(name)

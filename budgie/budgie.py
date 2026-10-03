@@ -11,6 +11,7 @@ command that needs it. Importing numpy, holidays and rich up here put roughly a
 second between typing ``budgie`` and seeing the help text.
 """
 
+from datetime import date
 from pathlib import Path
 
 import click
@@ -163,27 +164,21 @@ def _plan_for_allocations(plan_csv):
     return plan_csv, load_plan(plan_csv)
 
 
-def _on_plan(people, year, ph):
+def _on_plan(people, span, ph):
     """The team with hours from the project's plan.csv, warnings printed.
 
     The same rule the Snapshot (and so the TUI and perch) applies: the plan
     sets the hours, people.csv the rate and spread. Project plan or nothing,
     as for ``hours``. Without a plan the team comes back unchanged.
     """
-    from budgie.core.allocation import load_allocations, pto_overrides
+    from budgie.core.allocation import pto_overrides
     from budgie.core.project import people_on_plan
     from budgie.singletons import console
 
     _, plan = _plan_for_allocations(None)
     alloc_csv = _workspace_input("allocations") if plan else None
-    flat = load_allocations(alloc_csv, ph) if alloc_csv else []
     people, warnings = people_on_plan(
-        people,
-        plan,
-        year,
-        ph.pto_days,
-        pto_overrides(alloc_csv) if alloc_csv else None,
-        flat_fte={a.name: a.fte for a in flat},
+        people, plan, span, ph.pto_days, pto_overrides(alloc_csv) if alloc_csv else None
     )
     for warning in warnings:
         console.print(f"[yellow]⚠ {warning}[/yellow]")
@@ -233,6 +228,25 @@ def _setting(key: str, override, default):
     return default
 
 
+SAMPLE_YEAR = 2026  # the bundled sample files are dated in 2026
+
+
+def _today() -> date:
+    # Local calendar date is what a budget year is measured in.
+    return date.today()  # noqa: DTZ011
+
+
+def _span(year):
+    """The money year: --year, else the project's ``year``, else the year that
+    contains today -- or the samples' 2026 when there is no project at all."""
+    from budgie.core.calendar import current_year, year_span
+
+    workspace = _workspace()
+    start = workspace.setting("year_start", "01-01") if workspace else "01-01"
+    default = current_year(start, _today()) if workspace else SAMPLE_YEAR
+    return year_span(_setting("year", year, default), start)
+
+
 @click.group(invoke_without_command=True, add_help_option=False)
 @click.option(
     "-v", "--verbose", is_flag=True, help="Show DEBUG logging from budgie's internals."
@@ -273,7 +287,13 @@ def cli(ctx, verbose, show_help):
     help="CSV of team members (name, hourly_cost, and util_*/hours_* columns) "
     "[default: the project's, else bundled sample].",
 )
-@click.option("--year", default=None, type=int, help="Calendar year [default: 2026].")
+@click.option(
+    "--year",
+    default=None,
+    type=int,
+    help="Year (fiscal when the project sets year_start) "
+    "[default: the project's, else this year].",
+)
 @click.option(
     "--pto",
     default=None,
@@ -349,15 +369,15 @@ def forecast(
     on_plan = people_csv is None
     people_csv = _input("people", people_csv, "team.csv")
     costs_csv = costs_csv or _workspace_input("costs")
-    year = _setting("year", year, 2026)
+    span = _span(year)
     pto = _setting("pto", pto, 0.0)
     iterations = _setting("iterations", iterations, 10_000)
     seed = _setting("seed", seed, None)
     budget_arg = _budget_arg(budget_arg)
 
-    ph = productive_hours(year, pto_days=pto)
+    ph = productive_hours(span, pto_days=pto)
     logger.info(
-        f"Productive hours {year}: {ph.productive_hours:.0f}"
+        f"Productive hours {span.label}: {ph.productive_hours:.0f}"
         + (
             f" (available after {pto:g} PTO days: {ph.available_hours:.0f})"
             if pto
@@ -367,8 +387,8 @@ def forecast(
 
     people = load_people(people_csv, productive_hours=ph)
     if on_plan:
-        people = _on_plan(people, year, ph)
-    costs = load_costs(costs_csv) if costs_csv else []
+        people = _on_plan(people, span, ph)
+    costs = load_costs(costs_csv, span=span) if costs_csv else []
     # Loaded up front so its log line lands with the other loading messages
     # rather than interleaving after the tables.
     budget = _budget_from(budget_arg) if budget_arg else None
@@ -378,7 +398,7 @@ def forecast(
     # just receives the adjusted people. A file named on the command line beats
     # the project's, whichever kind it is.
     people, readings, _ = _with_actuals(
-        people, year, actuals_csv, weekly_csv, as_of, ignore_actuals
+        people, span, actuals_csv, weekly_csv, as_of, ignore_actuals
     )
 
     det = run_forecast(people, costs=costs)
@@ -419,7 +439,7 @@ def forecast(
             console.print(f"[bold]Wrote[/bold] {hist} and {bars}")
 
 
-def _with_actuals(people, year, actuals_csv, weekly_csv, as_of, ignore_actuals):
+def _with_actuals(people, span, actuals_csv, weekly_csv, as_of, ignore_actuals):
     """``(people, readings, observations)``: the team adjusted to the estimate at
     completion, the reading each adjustment used, and the full series.
 
@@ -433,7 +453,7 @@ def _with_actuals(people, year, actuals_csv, weekly_csv, as_of, ignore_actuals):
     from budgie.core.project import load_observations, readings_files
 
     actuals_csv, weekly_csv = readings_files(_workspace(), actuals_csv, weekly_csv)
-    observations = load_observations(year, actuals_csv, weekly_csv)
+    observations = load_observations(span, actuals_csv, weekly_csv)
     if not observations:
         return people, {}, {}
     from budgie.core.eac import at_completion
@@ -441,7 +461,11 @@ def _with_actuals(people, year, actuals_csv, weekly_csv, as_of, ignore_actuals):
     # Project file or nothing, as for `hours`: a sample plan would invent a team.
     _, plan = _plan_for_allocations(None)
     eac = at_completion(
-        people, observations, year, as_of=as_of.date() if as_of else None, plan=plan
+        people,
+        observations,
+        span,
+        as_of=as_of.date() if as_of else None,
+        plan=plan,
     )
     return eac.people, eac.readings, observations
 
@@ -728,7 +752,13 @@ def tui(people_csv):
     help="CSV of allocations (name, fte, hours_spent, optional email/pto_days) "
     "[default: the project's, else bundled sample].",
 )
-@click.option("--year", default=None, type=int, help="Calendar year [default: 2026].")
+@click.option(
+    "--year",
+    default=None,
+    type=int,
+    help="Year (fiscal when the project sets year_start) "
+    "[default: the project's, else this year].",
+)
 @click.option(
     "--pto",
     default=None,
@@ -752,7 +782,7 @@ def hours(alloc_csv, year, pto, plan_csv):
 
     display_startup_message()
     alloc_csv = _input("allocations", alloc_csv, "allocations.csv")
-    year = _setting("year", year, 2026)
+    span = _span(year)
     pto = _setting("pto", pto, 0.0)
 
     from budgie.core.project import (
@@ -762,13 +792,13 @@ def hours(alloc_csv, year, pto, plan_csv):
         with_readings,
     )
 
-    ph = productive_hours(year, pto_days=pto)
+    ph = productive_hours(span, pto_days=pto)
     plan_csv, plan = _plan_for_allocations(plan_csv)
     allocs = load_allocations(alloc_csv, available_hours=ph, plan=plan)
     # The project's latest reading is the spent figure, as in `emails`.
-    readings = load_observations(year, *readings_files(_workspace()))
+    readings = load_observations(span, *readings_files(_workspace()))
     allocs = with_readings(allocs, spent_to_date(readings))
-    logger.info(f"Available hours {year}: {ph.available_hours:,.0f} (1.0 FTE)")
+    logger.info(f"Available hours {span.label}: {ph.available_hours:,.0f} (1.0 FTE)")
     _print_hours_table(allocs)
     if plan_csv:
         console.print(
@@ -785,7 +815,13 @@ def hours(alloc_csv, year, pto, plan_csv):
     help="CSV of allocations (name, fte, hours_spent, optional email/pto_days) "
     "[default: the project's, else bundled sample].",
 )
-@click.option("--year", default=None, type=int, help="Calendar year [default: 2026].")
+@click.option(
+    "--year",
+    default=None,
+    type=int,
+    help="Year (fiscal when the project sets year_start) "
+    "[default: the project's, else this year].",
+)
 @click.option(
     "--pto",
     default=None,
@@ -862,22 +898,22 @@ def emails(
 
     display_startup_message()
     alloc_csv = _input("allocations", alloc_csv, "allocations.csv")
-    year = _setting("year", year, 2026)
+    span = _span(year)
     pto = _setting("pto", pto, 0.0)
     from budgie.core.project import readings_files
 
     actuals_csv, weekly_csv = readings_files(_workspace(), actuals_csv, weekly_csv)
 
-    ph = productive_hours(year, pto_days=pto)
+    ph = productive_hours(span, pto_days=pto)
     _, plan = _plan_for_allocations(plan_csv)
     allocs = load_allocations(alloc_csv, available_hours=ph, plan=plan)
 
-    statuses = _burndown_statuses(allocs, year, as_of, actuals_csv, weekly_csv, plan)
+    statuses = _burndown_statuses(allocs, span, as_of, actuals_csv, weekly_csv, plan)
 
     if as_html:
-        paths, charts_dir = _write_html_emails(statuses, year, out_dir)
+        paths, charts_dir = _write_html_emails(statuses, span, out_dir)
     else:
-        paths, charts_dir = write_drafts(statuses, year, out_dir), None
+        paths, charts_dir = write_drafts(statuses, span.label, out_dir), None
 
     if blocks.wanted():
         out = [
@@ -907,13 +943,13 @@ def emails(
         console.rule("Preview" + (" (text part of the .eml)" if as_html else ""))
         console.print(
             render_email(
-                statuses[0].allocation, year, pace=statuses[0].required_pace
+                statuses[0].allocation, span.label, pace=statuses[0].required_pace
             ).as_text()
         )
 
 
 def _burndown_statuses(
-    allocs, year, as_of, actuals_csv=None, weekly_csv=None, plan=None
+    allocs, span, as_of, actuals_csv=None, weekly_csv=None, plan=None
 ):
     """Build a BurndownStatus per person, using real spend readings if given.
 
@@ -924,7 +960,7 @@ def _burndown_statuses(
     from budgie.core.project import load_observations
 
     # Real spend readings turn the interpolated burn-down into a true curve.
-    observations = load_observations(year, actuals_csv, weekly_csv)
+    observations = load_observations(span, actuals_csv, weekly_csv)
 
     as_of_date = as_of.date() if as_of else None
     statuses = []
@@ -934,12 +970,18 @@ def _burndown_statuses(
         if obs and as_of_date:
             obs = [o for o in obs if o[0] <= as_of_date]
         statuses.append(
-            burndown(alloc, year, as_of=as_of_date, observations=obs, plan=plan)
+            burndown(
+                alloc,
+                span,
+                as_of=as_of_date,
+                observations=obs,
+                plan=plan,
+            )
         )
     return statuses
 
 
-def _write_html_emails(statuses, year, out_dir):
+def _write_html_emails(statuses, span, out_dir):
     """Render a burn-down chart per person and write Outlook-ready .eml drafts."""
     from budgie.emails import slug, write_eml_drafts
     from budgie.plots import burndown_chart
@@ -954,7 +996,7 @@ def _write_html_emails(statuses, year, out_dir):
         chart_path = burndown_chart(status, charts_dir / f"{slug(name)}.png")
         charts[name] = chart_path.read_bytes()
 
-    return write_eml_drafts(statuses, year, out, charts=charts), charts_dir
+    return write_eml_drafts(statuses, span.label, out, charts=charts), charts_dir
 
 
 def _print_hours_table(allocs):
@@ -1052,7 +1094,13 @@ def _print_scenario_table(results, budget):
     default=None,
     help="CSV of team members [default: the project's, else bundled sample].",
 )
-@click.option("--year", default=None, type=int, help="Calendar year [default: 2026].")
+@click.option(
+    "--year",
+    default=None,
+    type=int,
+    help="Year (fiscal when the project sets year_start) "
+    "[default: the project's, else this year].",
+)
 @click.option(
     "--pto", default=None, type=float, help="PTO/sick days per person [default: 0]."
 )
@@ -1115,21 +1163,21 @@ def monthly(
     # A named --people file is its own team: the project's plan is not for it.
     on_plan = people_csv is None
     people_csv = _input("people", people_csv, "team.csv")
-    year = _setting("year", year, 2026)
+    span = _span(year)
     pto = _setting("pto", pto, 0.0)
     iterations = _setting("iterations", iterations, 10_000)
     seed = _setting("seed", seed, None)
     budget_arg = _budget_arg(budget_arg)
 
-    ph = productive_hours(year, pto_days=pto)
+    ph = productive_hours(span, pto_days=pto)
     people = load_people(people_csv, productive_hours=ph)
     if on_plan:
-        people = _on_plan(people, year, ph)
-    costs = load_costs(costs_csv) if costs_csv else []
+        people = _on_plan(people, span, ph)
+    costs = load_costs(costs_csv, span=span) if costs_csv else []
     budget = _budget_from(budget_arg) if budget_arg else None
 
     people, readings, observations = _with_actuals(
-        people, year, actuals_csv, weekly_csv, as_of, ignore_actuals
+        people, span, actuals_csv, weekly_csv, as_of, ignore_actuals
     )
     actuals = None
     if readings:
@@ -1140,17 +1188,25 @@ def monthly(
         actuals = Actuals(readings, observations, plan)
         _print_eac_note(readings, len(people))
 
-    mf = monthly_forecast(people, year, pto_days=pto, costs=costs, actuals=actuals)
+    mf = monthly_forecast(
+        people,
+        span,
+        pto_days=pto,
+        costs=costs,
+        actuals=actuals,
+    )
     sim = monthly_simulation(
         people,
-        year,
+        span,
         pto_days=pto,
         iterations=iterations,
         seed=seed,
         costs=costs,
         actuals=actuals,
     )
-    logger.info(f"{len(people)} people, {year} split into months by working-day share")
+    logger.info(
+        f"{len(people)} people, {span.label} split into months by working-day share"
+    )
     _print_monthly_table(mf, sim, budget.latest if budget else None)
 
     if plots:
@@ -1166,14 +1222,14 @@ def monthly(
 def _print_monthly_table(mf, sim, budget):
     from rich.table import Table
 
-    from budgie.core.monthly import MONTH_NAMES
+    from budgie.core.monthly import month_names
     from budgie.singletons import console
 
     p10, p50, p90 = sim.band(10), sim.band(50), sim.band(90)
     table = Table(
         show_header=True,
         header_style="bold magenta",
-        title=f"Monthly breakdown {mf.year}",
+        title=f"Monthly breakdown {mf.span.label}",
     )
     table.add_column("Month")
     table.add_column("Hours", justify="right")
@@ -1182,7 +1238,7 @@ def _print_monthly_table(mf, sim, budget):
     table.add_column("P10", justify="right")
     table.add_column("P90", justify="right")
     cum = mf.cumulative_costs
-    for i, name in enumerate(MONTH_NAMES):
+    for i, name in enumerate(month_names(mf.span)):
         over = budget is not None and p50[i] > budget
         cumulative_cell = f"${cum[i]:,.0f}"
         if over:
@@ -1233,7 +1289,16 @@ def _ask_project_name(default: str) -> str:
 
 @click.command()
 @click.argument("name", required=False)
-@click.option("--year", default=2026, show_default=True, help="Year to scaffold for.")
+@click.option(
+    "--year", default=None, type=int, help="Year to scaffold for [default: this year]."
+)
+@click.option(
+    "--year-start",
+    default="01-01",
+    show_default=True,
+    help='First day of the money year: "01-01" calendar, "10-01" federal fiscal '
+    "(--year 2027 is then Oct 2026-Sep 2027).",
+)
 @click.option(
     "--force",
     is_flag=True,
@@ -1245,7 +1310,7 @@ def _ask_project_name(default: str) -> str:
     is_flag=True,
     help="Scaffold into the current directory instead of under budget/.",
 )
-def init(name, year, force, here):
+def init(name, year, year_start, force, here):
     """Create a Budgie project: a folder with budgie.yaml and starter inputs.
 
     Projects live together under budget/, so NAME picks which one -- budget/fy27
@@ -1254,12 +1319,18 @@ def init(name, year, force, here):
     time, and what the TUI browses. Use --here to put the files loose in the
     current directory instead.
     """
+    from budgie.core.calendar import current_year, year_start_month
     from budgie.core.scaffold import DEFAULT_PROJECT_NAME, PROJECTS_DIR, init_workspace
     from budgie.core.workspace import CONFIG_NAME, forget_workspaces
     from budgie.singletons import console
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
+    try:
+        year_start_month(year_start)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="--year-start") from None
+    year = year or current_year(year_start, _today())
     if here and name:
         raise click.UsageError("give a name or --here, not both")
 
@@ -1269,7 +1340,9 @@ def init(name, year, force, here):
         chosen = name or _ask_project_name(DEFAULT_PROJECT_NAME)
         target = Path(PROJECTS_DIR) / chosen
 
-    written, skipped = init_workspace(target, year=year, overwrite=force)
+    written, skipped = init_workspace(
+        target, year=year, overwrite=force, year_start=year_start
+    )
     forget_workspaces()
 
     root = Path(target).resolve()
@@ -1513,7 +1586,13 @@ def _print_status_table(workspace):
 
 
 @click.command()
-@click.option("--year", default=None, type=int, help="Calendar year [default: 2026].")
+@click.option(
+    "--year",
+    default=None,
+    type=int,
+    help="Year (fiscal when the project sets year_start) "
+    "[default: the project's, else this year].",
+)
 @click.option(
     "--pto",
     default=None,
@@ -1539,15 +1618,16 @@ def assumptions(year, pto):
         productive_hours,
         workdays_in_year,
     )
-    from budgie.core.monthly import month_weights
+    from budgie.core.monthly import month_names, month_weights
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
-    year = _setting("year", year, 2026)
+    span = _span(year)
     pto = _setting("pto", pto, 0.0)
 
-    ph = productive_hours(year, pto_days=pto)
-    weights = month_weights(year)
+    ph = productive_hours(span, pto_days=pto)
+    weights, names = month_weights(span), month_names(span)
+    first, last = span.first, span.last
 
     # (assumption, current value, where it is set).
     rows = [
@@ -1564,8 +1644,8 @@ def assumptions(year, pto):
         ),
         _row(
             "Holidays",
-            f"{federal_holiday_workdays(year)} US federal holidays fall Mon-Fri"
-            f" in {year} (-{ph.holiday_hours:,.0f} h)",
+            f"{federal_holiday_workdays(span)} US federal holidays fall Mon-Fri"
+            f" in {span.label} (-{ph.holiday_hours:,.0f} h)",
             "core/calendar.py (holidays pkg)",
         ),
         _row(
@@ -1583,14 +1663,14 @@ def assumptions(year, pto):
         _row("", explain_pto(ph), ""),
         _row(
             "Working days",
-            f"{workdays_in_year(year)} in {year}; day-level math spreads"
+            f"{workdays_in_year(span)} in {span.label}; day-level math spreads"
             " available hours across exactly these",
             "core/calendar.py",
         ),
         _row(
             "Month weights",
             "by working-day share, not 1/12"
-            f" (Jan {weights[0]:.1%} ... Feb {weights[1]:.1%})",
+            f" ({names[0]} {weights[0]:.1%} ... {names[1]} {weights[1]:.1%})",
             "core/monthly.py",
         ),
         _row(
@@ -1621,8 +1701,8 @@ def assumptions(year, pto):
         ),
         _row(
             "Burn-down pace",
-            "expectation is a straight line from 0 on Jan 1"
-            " to the full allocation on Dec 31",
+            f"expectation is a straight line from 0 on {first:%b} {first.day}"
+            f" to the full allocation on {last:%b} {last.day}",
             "core/burndown.py",
         ),
         _row(
@@ -1643,7 +1723,7 @@ def assumptions(year, pto):
             "core/budget.py",
         ),
     ]
-    _print_assumptions_table(year, rows)
+    _print_assumptions_table(span.label, rows)
 
 
 def _row(name: str, value: str, source: str) -> tuple[str, str, str]:
@@ -1651,7 +1731,7 @@ def _row(name: str, value: str, source: str) -> tuple[str, str, str]:
     return (name, value, source)
 
 
-def _print_assumptions_table(year, rows):
+def _print_assumptions_table(label, rows):
     from rich.table import Table
 
     from budgie.singletons import console
@@ -1659,7 +1739,7 @@ def _print_assumptions_table(year, rows):
     table = Table(
         show_header=True,
         header_style="bold magenta",
-        title=f"Assumptions in force for {year}",
+        title=f"Assumptions in force for {label}",
         show_lines=False,
     )
     table.add_column("Assumption", style="bold")
@@ -1682,7 +1762,13 @@ def _print_assumptions_table(year, rows):
     help="CSV of allocation changes (name, effective_date, fte) "
     "[default: the project's, else bundled sample].",
 )
-@click.option("--year", default=None, type=int, help="Calendar year [default: 2026].")
+@click.option(
+    "--year",
+    default=None,
+    type=int,
+    help="Year (fiscal when the project sets year_start) "
+    "[default: the project's, else this year].",
+)
 @click.option(
     "--pto", default=None, type=float, help="PTO/sick days per person [default: 0]."
 )
@@ -1699,7 +1785,7 @@ def plan(plan_csv, year, pto):
 
     display_startup_message()
     plan_csv = _input("plan", plan_csv, "plan.csv")
-    year = _setting("year", year, 2026)
+    span = _span(year)
     pto = _setting("pto", pto, 0.0)
 
     # A person's own pto_days lives in allocations.csv. `hours` honours it, so
@@ -1709,16 +1795,18 @@ def plan(plan_csv, year, pto):
     pto_by_name = pto_overrides(alloc_csv) if alloc_csv else {}
 
     allocation_plan = load_plan(plan_csv)
-    _print_plan_table(allocation_plan, year, pto, pto_by_name)
+    _print_plan_table(allocation_plan, span, pto, pto_by_name)
 
 
-def _print_plan_table(allocation_plan, year, pto, pto_by_name=None):
+def _print_plan_table(allocation_plan, span, pto, pto_by_name=None):
     from rich.table import Table
 
     from budgie.singletons import console
 
     table = Table(
-        show_header=True, header_style="bold magenta", title=f"Allocation plan {year}"
+        show_header=True,
+        header_style="bold magenta",
+        title=f"Allocation plan {span.label}",
     )
     table.add_column("Name")
     table.add_column("Changes")
@@ -1726,7 +1814,7 @@ def _print_plan_table(allocation_plan, year, pto, pto_by_name=None):
     total = 0.0
     for name in allocation_plan.names:
         days = (pto_by_name or {}).get(name, pto)
-        hours = allocation_plan.allocated_hours(name, year, pto_days=days)
+        hours = allocation_plan.allocated_hours(name, span, pto_days=days)
         total += hours
         changes = ", ".join(
             f"{e.effective_date:%b %-d}→{e.fte:g}"
