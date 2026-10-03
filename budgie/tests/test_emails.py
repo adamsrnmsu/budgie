@@ -142,3 +142,20 @@ def test_a_named_actuals_file_beats_the_projects_weekly(tmp_path, monkeypatch):
     # One spent figure throughout: the reading, not allocations.csv's 660.
     assert "Hours spent:      11" in body
     assert "remaining 1,782 hours" in body
+
+
+def test_signoff_appears_once_in_every_rendered_form(tmp_path):
+    # budgie-ucx: the .eml carries Thanks twice only because it holds two parts
+    # (text + HTML); each form, and the terminal preview, has exactly one.
+    status = _status()
+    msg = build_message(status, 2026)
+    html = render_html_email(status, 2026)
+    assert render_email(status.allocation, 2026).body.count("Thanks,") == 1
+    assert html.count("Thanks,") == 1
+    assert _plain_part(msg).count("Thanks,") == 1
+    assert msg.get_body(preferencelist=("html",)).get_content().count("Thanks,") == 1
+
+    result = CliRunner().invoke(
+        cli, ["emails", "--out-dir", str(tmp_path), "--as-of", "2026-06-30"]
+    )
+    assert result.output.count("Thanks,") == 1
