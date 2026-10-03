@@ -26,6 +26,7 @@ from datetime import date
 from pathlib import Path
 
 from budgie.core.csvio import (
+    as_date,
     as_required_float,
     as_str,
     last_day_of_month,
@@ -102,7 +103,7 @@ def load_budget(csv_path: str | Path) -> Budget:
     """Load budget revisions from an ``effective_date,amount[,note]`` CSV."""
     revisions = [
         BudgetRevision(
-            effective_date=parse_date(row["effective_date"]),
+            effective_date=as_date(row, "effective_date"),
             amount=as_required_float(row, "amount"),
             note=as_str(row, "note"),
         )

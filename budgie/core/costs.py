@@ -29,7 +29,7 @@ from pathlib import Path
 
 import numpy as np
 
-from budgie.core.csvio import as_float, as_required_float, as_str, parse_date, read_rows
+from budgie.core.csvio import as_date, as_float, as_required_float, as_str, read_rows
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,7 @@ def load_costs(csv_path: str | Path) -> list[CostItem]:
             CostItem(
                 name=as_str(row, "name"),
                 amount=as_required_float(row, "amount"),
-                when=parse_date(row["date"]),
+                when=as_date(row, "date"),
                 category=as_str(row, "category", "other"),
                 low=as_float(row, "low"),
                 high=as_float(row, "high"),

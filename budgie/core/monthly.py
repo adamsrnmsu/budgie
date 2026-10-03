@@ -35,7 +35,7 @@ import numpy as np
 from budgie.core.actuals import Observation
 from budgie.core.calendar import productive_hours
 from budgie.core.costs import CostItem, monthly_totals, sample_total
-from budgie.core.csvio import as_int, as_required_float, as_str, read_rows
+from budgie.core.csvio import as_int, as_required_float, as_str, read_rows, row_error
 from budgie.core.eac import elapsed_fraction
 from budgie.core.person import Person
 
@@ -302,7 +302,7 @@ def load_monthly_actuals(csv_path: str | Path) -> dict[str, list[float]]:
         name = as_str(row, "name")
         month = as_int(row, "month")
         if not 1 <= month <= 12:
-            raise ValueError(f"month must be 1-12, got {month} for {name}")
+            raise row_error(row, f"month must be 1-12, got {month} for {name}")
         actuals.setdefault(name, [0.0] * 12)[month - 1] += as_required_float(
             row, "hours"
         )
