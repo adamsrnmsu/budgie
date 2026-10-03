@@ -19,7 +19,8 @@ plan cost hits a number. Budgie gives no help hitting it.
   default, with even available.
 - **Target:** plan cost = budget by default, or a dollar figure typed in.
   Monte Carlo is context only.
-- **Import:** a wide `name,Jan..Dec` sheet seeds the grid.
+- **Import:** a wide sheet with one column per month of the year's span
+  (`name,Oct,...,Sep` for an Oct-start fiscal year) seeds the grid.
 
 ## Plan cost (the number the solver aims at)
 
@@ -65,7 +66,7 @@ plan cost = Σ people: rate × (hours up to as_of + plan hours after as_of) + no
   - Preview is `cost(AllocationPlan(plan.entries + entries))`. Commit
     appends the same rows, so preview and commit cannot disagree.
 
-## Grid (budgie-w3l.2, blocked on budgie-3oj)
+## Grid (budgie-w3l.2, built in `budgie/plan_grid.py`)
 
 The grid gets built after step B, so the Forecast tab agrees with the grid's
 readout. It lives in its own module, which the TUI imports, so it does not
@@ -77,11 +78,13 @@ collide with the `tui.py` safety work under way. Defaults:
 - `c` commits and `x` discards;
 - a readout line shows: plan cost · target · gap · P50 · P80.
 
-## Calendar months
+## Months follow the year's span
 
-The solver uses Jan–Dec of `year`, behind one function (`months`). The
-fiscal-year branch (budgie-bvd) replaces calendar years with a `YearSpan`;
-when that lands, `months` follows it.
+A cell's month number is its position in the project's `YearSpan` (budgie-bvd):
+1 is the span's first month, so 1 is October in an Oct-start fiscal year.
+`solve.months(span)` gives each month's first and last day, and the grid labels
+its columns from `span.months` (Oct … Sep). A calendar-year project is the
+Jan … Dec case of the same rule.
 
 ## Out of scope
 

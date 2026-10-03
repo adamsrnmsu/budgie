@@ -382,9 +382,17 @@ conclusion last:
    other key cancels.
 2. **Inputs** — every project file, whether it exists, and what feeds what. Select one and
    press `e` to open it in `$VISUAL`/`$EDITOR` (`vim` if neither is set), then `r` to recalculate.
-3. **Plan** — the allocation plan, with a form to append a dated change. Re-planning is an
-   appended row, never an edit, so the history stays intact. FTE runs 0 to 1, and a name
-   that isn't in people.csv takes a second Add to confirm. `escape` leaves the form.
+3. **Plan** — a **month grid**: everyone down the side, Jan–Dec across, FTE in each cell.
+   Edits are scratch — they reprice the plan live and write nothing — and the line above the
+   grid shows plan cost · target · gap · P50 · P80. Arrows move; `enter` types an FTE for the
+   cell (or every selected cell); `space` selects a cell and `shift`+arrows extend the
+   selection. `t` sets a target (the budget by default; `425000`, `850k` and `1.2M` all
+   work), and `s` fills the selected cells so the plan cost lands on it — scaling them all
+   by one factor, or `S` to add the same FTE to each. FTE stays 0–1, and whatever gap that
+   leaves is reported. Months before the latest spend reading are booked and dimmed. `c`
+   commits the scratch edits as dated rows appended to plan.csv; `x` discards them. `g`
+   flips to the per-person list of changes, and the form above still appends one row at a
+   time. `escape` leaves a field.
 4. **Forecast** — leads with one line: budget · spent · forecast P50 · headroom · stoplight.
    It reads the project exactly as `budgie forecast` does (plan, readings, costs, budget), so
    the two quote the same P50. Year, PTO, iterations and seed come from `budgie.yaml` (`e` on

@@ -72,6 +72,7 @@ from budgie.core.workspace import (
     find_workspace,
     forget_workspaces,
 )
+from budgie.plan_grid import PlanGrid
 
 _BLOCKS = " ▁▂▃▄▅▆▇█"
 
@@ -342,6 +343,7 @@ class BudgieTUI(App):
         ("3", "show_tab('tab_plan')", "Plan"),
         ("4", "show_tab('tab_forecast')", "Forecast"),
         ("5", "show_tab('tab_assumptions')", "Assumptions"),
+        ("g", "toggle_grid", "Grid/list"),
         ("P", "switch('perch')", "perch"),
         ("G", "switch('gitboard')", "gitboard"),
         ("q", "quit", "Quit"),
@@ -354,6 +356,8 @@ class BudgieTUI(App):
         # An explicit path still wins, exactly like on the command line.
         self._people_override = str(csv_path) if csv_path else None
         self._load_error: str | None = None
+        # The project as the Forecast tab last read it; the Plan grid works on it.
+        self._snap = None
         # Which project the next `d` would actually delete. Set by the first
         # press and cleared by anything else, so deletion always takes two
         # deliberate keystrokes aimed at the same row.
@@ -461,6 +465,9 @@ class BudgieTUI(App):
             yield Input(placeholder="0.5", id="plan_fte", type="number")
             yield Button("Add row", id="add_plan_row", variant="primary")
         yield Static(id="plan_status", classes="status")
+        # The month grid is the default view; g flips to the per-person list
+        # of dated changes.
+        yield PlanGrid(id="plan_grid")
         yield DataTable(id="plan_table")
 
     def _compose_inputs(self) -> ComposeResult:
@@ -485,6 +492,7 @@ class BudgieTUI(App):
         plan_table = self.query_one("#plan_table", DataTable)
         plan_table.add_columns("Name", "Changes", "Allocated hours")
         plan_table.zebra_stripes = True
+        plan_table.display = False  # the grid is the Plan tab's default view
 
         inputs_table = self.query_one("#inputs_table", DataTable)
         inputs_table.cursor_type = "row"
@@ -544,9 +552,37 @@ class BudgieTUI(App):
     def action_leave_input(self) -> None:
         """Escape out of a form field, so the 1-5 keys switch tabs again."""
         if isinstance(self.focused, Input):
-            # The Plan tab's form has a table under it.
+            # The Plan tab's form has a table under it: whichever is showing.
             pane = self.query_one("#tabs", TabbedContent).active_pane
-            pane.query(DataTable).first().focus()
+            if pane.id == "tab_plan":
+                self._plan_view().focus()
+            else:
+                pane.query(DataTable).first().focus()
+
+    def _plan_view(self) -> DataTable:
+        """The Plan tab's table on show: the grid's, or the list of changes."""
+        if self.query_one("#plan_grid", PlanGrid).display:
+            return self.query_one("#grid_table", DataTable)
+        return self.query_one("#plan_table", DataTable)
+
+    def action_toggle_grid(self) -> None:
+        grid = self.query_one("#plan_grid", PlanGrid)
+        grid.display = not grid.display
+        self.query_one("#plan_table", DataTable).display = not grid.display
+        self._plan_view().focus()
+
+    def on_plan_grid_commit(self, event: PlanGrid.Commit) -> None:
+        """Append the grid's scratch edits to plan.csv, then reload everything."""
+        path = self.plan_path
+        if path is None:
+            self._plan_status("No project here -- run `budgie init` first.", error=True)
+            return
+        for row in event.rows:
+            append_plan_row(path, row.name, row.effective_date, row.fte)
+        self.recalculate()
+        self.query_one("#plan_grid", PlanGrid).say(
+            f"Committed {len(event.rows)} row(s) to {path.name}."
+        )
 
     def _active_tab(self) -> str | None:
         try:
@@ -562,6 +598,8 @@ class BudgieTUI(App):
             return self._active_tab() == "tab_projects"
         if action == "edit_selected":
             return self._active_tab() != "tab_assumptions"
+        if action == "toggle_grid":
+            return self._active_tab() == "tab_plan"
         return True
 
     def on_tabbed_content_tab_activated(self, event) -> None:
@@ -934,14 +972,14 @@ class BudgieTUI(App):
         # An open project is read the way the CLI and perch read it: hours
         # from plan.csv, readings, cost lines and the budget. The bundled
         # sample or a --people file is just that team, as before.
-        snap = None
+        snap = self._snap = None
         if (
             self.workspace is not None
             and not self._people_override
             and not self.on_sample
         ):
             try:
-                snap = load_snapshot(self.workspace.root)
+                snap = self._snap = load_snapshot(self.workspace.root)
             except (OSError, ValueError) as exc:
                 self._load_error = f"Can't read the project's inputs: {exc}"
                 banner.display = True
@@ -1040,6 +1078,7 @@ class BudgieTUI(App):
         )
 
     def _refresh_plan(self, span, pto: float) -> None:
+        self.query_one("#plan_grid", PlanGrid).load(self._snap)
         table = self.query_one("#plan_table", DataTable)
         table.clear()
         path = self.plan_path
