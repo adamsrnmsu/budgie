@@ -62,7 +62,7 @@ def test_run_scenarios_per_person_pto(tmp_path):
     )
     (tmp_path / "s.yaml").write_text(
         "budget: 1000000\niterations: 100\nseed: 1\n"
-        "scenarios:\n  - name: Base\n    people: people.csv\n"
+        "scenarios:\n  - name: Base\n    year: 2026\n    people: people.csv\n"
     )
     (res,), _ = run_scenarios(tmp_path / "s.yaml")
     a, b = res.forecast.line_items

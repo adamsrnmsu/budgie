@@ -24,6 +24,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from budgie.core.csvio import (
     as_required_float,
@@ -32,6 +33,9 @@ from budgie.core.csvio import (
     parse_date,
     read_rows,
 )
+
+if TYPE_CHECKING:
+    from budgie.core.calendar import YearSpan
 
 logger = logging.getLogger(__name__)
 
@@ -93,9 +97,9 @@ class Budget:
                 break
         return current
 
-    def monthly_amounts(self, year: int) -> list[float]:
+    def monthly_amounts(self, span: YearSpan) -> list[float]:
         """The budget in force at each month end, for a stepped budget line."""
-        return [self.amount_on(last_day_of_month(year, m)) for m in range(1, 13)]
+        return [self.amount_on(last_day_of_month(y, m)) for y, m in span.months]
 
 
 def load_budget(csv_path: str | Path) -> Budget:

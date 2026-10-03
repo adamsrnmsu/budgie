@@ -132,6 +132,7 @@ folder you ran `init` in. `budgie.yaml` also pins the settings you'd otherwise r
 
 ```yaml
 year: 2026
+year_start: "01-01"   # "10-01" for a federal fiscal year
 pto: 0
 iterations: 10000
 seed: 42
@@ -145,6 +146,15 @@ inputs:
 An explicit option always wins over the project (`budgie forecast --people other.csv`),
 and with no project at all every command falls back to bundled sample data — so you can
 try everything before committing to anything.
+
+### Fiscal year
+
+A federal budget runs October to September. Set `year_start: "10-01"` beside
+`year:` and the year is named for the calendar year it ends in: `year: 2027`
+is FY27, 2026-10-01 to 2027-09-30. Holidays, working days, the pace line, the
+forecast, the monthly view (October first) and every printed label follow it.
+`year_start` must be a month's first day; the default `"01-01"` is the
+calendar year. `budgie init --year 2027 --year-start 10-01` writes it for you.
 
 ### `budgie guide` — how do I actually build one of these?
 
@@ -257,13 +267,15 @@ budgie scenario --config scenarios.yaml
 ```
 
 ```
-  Scenario               Total (P50 det.)   vs base        P90   P(over budget)
-● Baseline                        $712,738         —   $728,057               0%
-● With 15 PTO days                $669,802   -42,936   $684,198               0%
-● Lean team (3 people)            $505,570  -207,168   $517,289               0%
+│ ● │ Baseline             │         $712,738 │        — │ $728,057 │             0% │
+│ ● │ With 15 PTO days     │         $669,802 │  -42,936 │ $684,198 │             0% │
+│ ● │ Lean team (3 people) │         $505,570 │ -207,168 │ $517,289 │             0% │
+└───┴──────────────────────┴──────────────────┴──────────┴──────────┴────────────────┘
 
 Signals
   ● Baseline — GOOD: Only 0% chance of exceeding budget -- comfortably covered.
+  ● With 15 PTO days — GOOD: Only 0% chance of exceeding budget -- comfortably covered.
+  ● Lean team (3 people) — GOOD: Only 0% chance of exceeding budget -- comfortably covered.
 ```
 
 The first scenario is the baseline; the rest are measured against it.
@@ -476,6 +488,8 @@ was distributed between readings. One row per person is enough; more rows give a
 Budgie takes the as-of date from the latest reading (week 29 of 2026 ends July 19), so the burn
 rate is measured over the right window rather than against today's date.
 
+In a fiscal year (`year_start` in budgie.yaml) a bare week or month number belongs to the calendar year that keeps it inside the money year. FY27 runs 2026-10-01 to 2027-09-30, so weeks 40–53 and months 10–12 are 2026, and weeks 1–39 and months 1–9 are 2027. A calendar year reads every number in that year, as it always has.
+
 **Non-labor costs** — `costs.csv` (materials, licences, hardware, travel):
 
 ```csv
@@ -487,8 +501,9 @@ Travel,travel,2026-06-01,8000,6000,11000,no
 
 `amount` is the most-likely figure; `low`/`high` are optional and make the line participate in
 the Monte Carlo just like uncertain hours do. `recurring: yes` books the amount **every month
-from its own month through December**, so one row covers a subscription (the cloud line above
-totals $24,000). Costs land in the month they're incurred, so they show up as a step in the
+from its own month through the year's last month** (a line dated before the year starts in the
+year's first month; one dated after it is not charged), so one row covers a subscription (the
+cloud line above totals $24,000). Costs land in the month they're incurred, so they show up as a step in the
 monthly and fan charts rather than being smeared across the year.
 
 **Budget revisions** — `budget.csv`. Budgets get increased, cut, and re-baselined:

@@ -8,7 +8,7 @@ from click.testing import CliRunner
 
 from budgie.budgie import cli
 from budgie.core.allocation import load_allocations
-from budgie.core.calendar import productive_hours
+from budgie.core.calendar import productive_hours, year_span
 from budgie.core.plan import AllocationPlan, PlanEntry
 from budgie.core.scaffold import init_workspace
 from budgie.core.workspace import forget_workspaces
@@ -41,14 +41,16 @@ def _by_name(allocs):
 
 def test_plan_overrides_the_flat_fte(tmp_path):
     path = _csv(tmp_path, "name,fte,hours_spent\nBob,0.50,100\n")
-    ph = productive_hours(YEAR)
+    ph = productive_hours(year_span(YEAR))
     plan = _plan(("Bob", "2026-01-01", 0.5), ("Bob", "2026-09-01", 0.0))
 
     flat = load_allocations(path, ph)[0]
     planned = load_allocations(path, ph, plan=plan)[0]
 
     assert flat.allocated_hours == pytest.approx(996)
-    assert planned.allocated_hours == pytest.approx(plan.allocated_hours("Bob", YEAR))
+    assert planned.allocated_hours == pytest.approx(
+        plan.allocated_hours("Bob", year_span(YEAR))
+    )
     assert round(planned.allocated_hours) == 665
     assert planned.fte < flat.fte
     # The invariant Allocation is built on still holds.
@@ -58,7 +60,7 @@ def test_plan_overrides_the_flat_fte(tmp_path):
 
 def test_constant_fte_reconciles_to_the_no_plan_number(tmp_path):
     path = _csv(tmp_path, "name,fte,hours_spent\nAlice,0.25,0\n")
-    ph = productive_hours(YEAR)
+    ph = productive_hours(year_span(YEAR))
 
     flat = load_allocations(path, ph)[0]
     planned = load_allocations(path, ph, plan=_plan(("Alice", "2026-01-01", 0.25)))[0]
@@ -70,7 +72,7 @@ def test_constant_fte_reconciles_to_the_no_plan_number(tmp_path):
 
 def test_per_row_pto_days_is_honoured(tmp_path):
     path = _csv(tmp_path, "name,fte,hours_spent,pto_days\nBob,0.5,0,20\nAl,0.5,0,\n")
-    ph = productive_hours(YEAR, pto_days=5)
+    ph = productive_hours(year_span(YEAR), pto_days=5)
     plan = _plan(("Bob", "2026-01-01", 0.5), ("Al", "2026-01-01", 0.5))
 
     allocs = _by_name(load_allocations(path, ph, plan=plan))
@@ -86,7 +88,9 @@ def test_person_missing_from_the_plan_keeps_flat_fte(tmp_path, caplog):
     plan = _plan(("Alice", "2026-01-01", 0.25))
 
     with caplog.at_level(logging.WARNING, logger="budgie.core.allocation"):
-        allocs = _by_name(load_allocations(path, productive_hours(YEAR), plan=plan))
+        allocs = _by_name(
+            load_allocations(path, productive_hours(year_span(YEAR)), plan=plan)
+        )
 
     assert allocs["Zed"].fte == 0.40
     assert "Zed" in caplog.text
@@ -95,7 +99,7 @@ def test_person_missing_from_the_plan_keeps_flat_fte(tmp_path, caplog):
 
 def test_person_only_in_the_plan_appears_with_nothing_spent(tmp_path, caplog):
     path = _csv(tmp_path, "name,fte,hours_spent\nAlice,0.25,0\n")
-    ph = productive_hours(YEAR)
+    ph = productive_hours(year_span(YEAR))
     plan = _plan(
         ("Carol", "2026-07-15", 0.5),
         ("Alice", "2026-01-01", 0.25),
@@ -127,7 +131,9 @@ def test_no_plan_is_unchanged(tmp_path):
     path = _csv(tmp_path, "name,fte,hours_spent,email\nAlice,0.25,180,a@x.org\n")
 
     (from_float,) = load_allocations(path, 1992.0)
-    (explicit_none,) = load_allocations(path, productive_hours(YEAR), plan=None)
+    (explicit_none,) = load_allocations(
+        path, productive_hours(year_span(YEAR)), plan=None
+    )
 
     assert from_float.fte == 0.25
     assert from_float.allocated_hours == 498

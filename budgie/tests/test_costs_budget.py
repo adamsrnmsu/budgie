@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from budgie.core.budget import Budget, coerce_budget, load_budget
+from budgie.core.calendar import year_span
 from budgie.core.costs import (
     CostItem,
     by_category,
@@ -70,7 +71,7 @@ def test_monthly_totals_place_costs_in_the_right_month():
         _one_off(1000, month=3),
         CostItem(name="Sub", amount=100, when=date(2026, 11, 1), recurring=True),
     ]
-    months = monthly_totals(items, 2026)
+    months = monthly_totals(items, year_span(2026))
     assert months[2] == 1000  # March
     assert months[10] == 100  # Nov
     assert months[11] == 100  # Dec
@@ -80,7 +81,7 @@ def test_monthly_totals_place_costs_in_the_right_month():
 
 def test_costs_from_another_year_are_ignored():
     items = [CostItem(name="Old", amount=500, when=date(2025, 3, 1))]
-    assert sum(monthly_totals(items, 2026)) == 0
+    assert sum(monthly_totals(items, year_span(2026))) == 0
 
 
 def test_load_costs_and_categories():
@@ -164,7 +165,7 @@ def test_before_first_revision_uses_the_original():
 
 def test_monthly_amounts_step():
     b = load_budget(TESTS_DIR / "budget.csv")
-    months = b.monthly_amounts(2026)
+    months = b.monthly_amounts(year_span(2026))
     assert months[0] == 800000  # Jan
     assert months[4] == 850000  # May
     assert months[11] == 835000  # Dec

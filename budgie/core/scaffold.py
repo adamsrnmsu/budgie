@@ -14,8 +14,10 @@ loadable data -- ``budgie forecast`` works the moment ``init`` finishes.
 from __future__ import annotations
 
 import logging
+from datetime import date, timedelta
 from pathlib import Path
 
+from budgie.core.calendar import year_span
 from budgie.core.workspace import CONFIG_NAME, INPUTS, PROJECTS_DIR
 
 logger = logging.getLogger(__name__)
@@ -43,6 +45,7 @@ CONFIG_TEMPLATE = """\
 
 # Defaults, so you stop retyping them.
 year: {year}
+year_start: "{year_start}"  # first day of the money year: "01-01" calendar, "10-01" federal fiscal (year 2027 = Oct 2026-Sep 2027)
 pto: 0            # PTO/sick days per person; pro-rated by FTE (see `budgie assumptions`)
 iterations: 10000 # Monte Carlo runs
 seed: 42          # fixed seed => reproducible numbers; remove for fresh draws
@@ -75,36 +78,36 @@ Bob,0.85,620,bob@example.com,
 
 PLAN_CSV = """\
 name,effective_date,fte
-Alice,{year}-01-01,0.90
-Bob,{year}-01-01,0.85
+Alice,{start},0.90
+Bob,{start},0.85
 """
 
 COSTS_CSV = """\
 name,category,date,amount,low,high,recurring
-Laptops,materials,{year}-03-15,12000,11000,14000,no
-Cloud hosting,services,{year}-01-01,2000,,,yes
+Laptops,materials,{third_month_15},12000,11000,14000,no
+Cloud hosting,services,{start},2000,,,yes
 """
 
 BUDGET_CSV = """\
 effective_date,amount,note
-{year}-01-01,425000,Original
-{year}-05-01,450000,Q2 increase
+{start},425000,Original
+{fifth_month},450000,Q2 increase
 """
 
 ACTUALS_CSV = """\
 name,month,hours
-Alice,1,150
-Alice,2,140
-Bob,1,145
-Bob,2,135
+Alice,{m1},150
+Alice,{m2},140
+Bob,{m1},145
+Bob,{m2},135
 """
 
 WEEKLY_CSV = """\
 name,week,hours_to_date
-Alice,12,430
-Alice,20,660
-Bob,12,410
-Bob,20,620
+Alice,{w1},430
+Alice,{w2},660
+Bob,{w1},410
+Bob,{w2},620
 """
 
 SCENARIOS_YAML = """\
@@ -114,6 +117,7 @@ SCENARIOS_YAML = """\
 budget: 425000
 iterations: 10000
 seed: 42
+year_start: "{year_start}"
 
 scenarios:
   - name: Baseline
@@ -176,24 +180,46 @@ def _file_list() -> str:
     )
 
 
-def scaffold_files(year: int) -> dict[str, str]:
-    """Filename -> contents for a fresh workspace."""
+def _week(span, weeks_in: int) -> int:
+    if not span.fiscal:
+        return weeks_in + 1
+    return (span.first + timedelta(weeks=weeks_in)).isocalendar()[1]
+
+
+def scaffold_files(year: int, year_start: str = "01-01") -> dict[str, str]:
+    """Filename -> contents for a fresh workspace, dated inside its year."""
+    span = year_span(year, year_start)
+    months = span.months
+    dates = {
+        "start": span.first.isoformat(),
+        "third_month_15": date(*months[2], 15).isoformat(),
+        "fifth_month": date(*months[4], 1).isoformat(),
+        "m1": months[0][1],
+        "m2": months[1][1],
+        # Calendar year: weeks 12 and 20, as ever. A fiscal year counts the same
+        # 11 and 19 weeks from its first day.
+        "w1": _week(span, 11),
+        "w2": _week(span, 19),
+    }
     return {
-        CONFIG_NAME: CONFIG_TEMPLATE.format(year=year),
+        CONFIG_NAME: CONFIG_TEMPLATE.format(year=year, year_start=year_start),
         "README.md": README_TEMPLATE.format(file_list=_file_list()),
         "people.csv": PEOPLE_CSV,
         "allocations.csv": ALLOCATIONS_CSV,
-        "plan.csv": PLAN_CSV.format(year=year),
-        "costs.csv": COSTS_CSV.format(year=year),
-        "budget.csv": BUDGET_CSV.format(year=year),
-        "actuals.csv": ACTUALS_CSV,
-        "weekly.csv": WEEKLY_CSV,
-        "scenarios.yaml": SCENARIOS_YAML.format(year=year),
+        "plan.csv": PLAN_CSV.format(**dates),
+        "costs.csv": COSTS_CSV.format(**dates),
+        "budget.csv": BUDGET_CSV.format(**dates),
+        "actuals.csv": ACTUALS_CSV.format(**dates),
+        "weekly.csv": WEEKLY_CSV.format(**dates),
+        "scenarios.yaml": SCENARIOS_YAML.format(year=year, year_start=year_start),
     }
 
 
 def init_workspace(
-    directory: str | Path, year: int, overwrite: bool = False
+    directory: str | Path,
+    year: int,
+    overwrite: bool = False,
+    year_start: str = "01-01",
 ) -> tuple[list[Path], list[Path]]:
     """Write a starter workspace into ``directory``.
 
@@ -207,7 +233,7 @@ def init_workspace(
     root.mkdir(parents=True, exist_ok=True)
 
     written, skipped = [], []
-    for filename, contents in scaffold_files(year).items():
+    for filename, contents in scaffold_files(year, year_start).items():
         path = root / filename
         if path.exists() and not overwrite:
             skipped.append(path)

@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from budgie.core.calendar import productive_hours
+from budgie.core.calendar import productive_hours, year_span
 from budgie.core.monthly import (
     cumulative,
     load_monthly_actuals,
@@ -31,7 +31,7 @@ def test_workdays_exclude_weekends_and_holidays():
 
 
 def test_weights_sum_to_one_and_vary():
-    w = month_weights(2026)
+    w = month_weights(year_span(2026))
     assert len(w) == 12
     assert sum(w) == pytest.approx(1.0)
     # February is shorter than March -- an even 1/12 split would be wrong.
@@ -39,14 +39,14 @@ def test_weights_sum_to_one_and_vary():
 
 
 def test_monthly_hours_reconcile_to_annual():
-    annual = productive_hours(2026).available_hours
-    months = monthly_available_hours(2026)
+    annual = productive_hours(year_span(2026)).available_hours
+    months = monthly_available_hours(year_span(2026))
     assert sum(months) == pytest.approx(annual)
 
 
 def test_monthly_forecast_reconciles_to_annual_total():
     people = _team()
-    mf = monthly_forecast(people, 2026)
+    mf = monthly_forecast(people, year_span(2026))
     expected = sum(p.expected_cost() for p in people)
     assert mf.total_cost == pytest.approx(expected)
     assert mf.cumulative_costs[-1] == pytest.approx(expected)
@@ -54,7 +54,7 @@ def test_monthly_forecast_reconciles_to_annual_total():
 
 
 def test_simulation_bands_widen_and_are_ordered():
-    sim = monthly_simulation(_team(), 2026, iterations=4000, seed=7)
+    sim = monthly_simulation(_team(), year_span(2026), iterations=4000, seed=7)
     p10, p50, p90 = sim.band(10), sim.band(50), sim.band(90)
     assert len(p50) == 12
     # Ordered at every month.
@@ -67,7 +67,7 @@ def test_simulation_bands_widen_and_are_ordered():
 
 def test_simulation_requires_people():
     with pytest.raises(ValueError):
-        monthly_simulation([], 2026, iterations=10)
+        monthly_simulation([], year_span(2026), iterations=10)
 
 
 def test_cumulative_helper():
@@ -116,7 +116,7 @@ def _actuals(plan=None):
 
 
 def test_past_months_book_real_hours_and_the_rest_is_spread_by_working_days():
-    mf = monthly_forecast([_ALICE], 2026, actuals=_actuals())
+    mf = monthly_forecast([_ALICE], year_span(2026), actuals=_actuals())
     cum = mf.cumulative_costs
     assert cum[2] == pytest.approx(100 * 100)  # Mar 31 reading
     assert cum[5] == pytest.approx(400 * 100)  # Jun 30 reading
@@ -130,7 +130,9 @@ def test_past_months_book_real_hours_and_the_rest_is_spread_by_working_days():
 
 
 def test_simulation_has_no_spread_before_the_reading():
-    sim = monthly_simulation([_ALICE], 2026, iterations=50, seed=1, actuals=_actuals())
+    sim = monthly_simulation(
+        [_ALICE], year_span(2026), iterations=50, seed=1, actuals=_actuals()
+    )
     assert sim.band(10)[5] == sim.band(90)[5] == pytest.approx(40_000)
     assert sim.band(50)[11] == pytest.approx(100_000)
 
@@ -143,14 +145,16 @@ def test_remaining_hours_follow_the_plan_when_it_ends_early():
             PlanEntry("Alice", date(2026, 9, 1), 0.0),
         )
     )
-    cum = monthly_forecast([_ALICE], 2026, actuals=_actuals(plan)).cumulative_costs
+    cum = monthly_forecast(
+        [_ALICE], year_span(2026), actuals=_actuals(plan)
+    ).cumulative_costs
     assert cum[7] == pytest.approx(100_000)  # Aug
     assert cum[8] == pytest.approx(cum[7])  # nothing new in Sep+
 
 
 def test_no_actuals_is_unchanged():
-    assert monthly_forecast(_team(), 2026, actuals=None) == monthly_forecast(
-        _team(), 2026
+    assert monthly_forecast(_team(), year_span(2026), actuals=None) == monthly_forecast(
+        _team(), year_span(2026)
     )
 
 
@@ -172,9 +176,9 @@ def test_monthly_cli_books_actuals_only_when_given():
 
 def test_spent_at_is_linear_from_dec_31_and_flat_after_the_last_reading():
     series = [(date(2026, 1, 31), 310.0), (date(2026, 3, 2), 400.0)]  # 31 days, then 30
-    assert spent_at(series, date(2025, 12, 31), 2026) == 0.0
-    assert spent_at(series, date(2026, 1, 11), 2026) == pytest.approx(110.0)
-    assert spent_at(series, date(2026, 2, 15), 2026) == pytest.approx(
+    assert spent_at(series, date(2025, 12, 31), year_span(2026)) == 0.0
+    assert spent_at(series, date(2026, 1, 11), year_span(2026)) == pytest.approx(110.0)
+    assert spent_at(series, date(2026, 2, 15), year_span(2026)) == pytest.approx(
         355.0
     )  # 14 of 30 days
-    assert spent_at(series, date(2026, 6, 1), 2026) == 400.0
+    assert spent_at(series, date(2026, 6, 1), year_span(2026)) == 400.0

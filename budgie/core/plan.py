@@ -27,9 +27,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
-import holidays
-
-from budgie.core.calendar import hours_per_workday
+from budgie.core.calendar import YearSpan, federal_holidays, hours_per_workday
 from budgie.core.csvio import as_required_float, as_str, parse_date, read_rows
 
 logger = logging.getLogger(__name__)
@@ -79,30 +77,29 @@ class AllocationPlan:
     def allocated_hours(
         self,
         name: str,
-        year: int,
+        span: YearSpan,
         pto_days: float = 0.0,
         through: date | None = None,
     ) -> float:
-        """Hours this person's plan buys them across ``year``.
+        """Hours this person's plan buys them across ``span``.
 
         ``through`` stops the count at that date (inclusive), giving the plan's
         hours accumulated so far rather than the year's total.
 
         Sums each working day at the FTE in effect that day, so someone starting
         2026-07-15 at 0.50 FTE is charged only for the working days from July 15
-        onward -- not a full-month or full-year approximation.
+        onward -- not a full-month or full-year approximation. A row dated
+        before the span is in force from its first day.
         """
-        per_day = hours_per_workday(year, pto_days=pto_days)
+        per_day = hours_per_workday(span, pto_days=pto_days)
         schedule = self.changes_for(name)
         if not schedule:
             return 0.0
 
-        us_holidays = holidays.UnitedStates(years=year)
-        start, end = date(year, 1, 1), date(year, 12, 31)
-        if through is not None:
-            end = min(end, through)
+        us_holidays = federal_holidays(span)
+        end = span.last if through is None else min(span.last, through)
         # Never start before the person's first effective date.
-        day = max(start, schedule[0].effective_date)
+        day = max(span.first, schedule[0].effective_date)
         total = 0.0
         while day <= end:
             if day.weekday() < 5 and day not in us_holidays:
@@ -110,22 +107,22 @@ class AllocationPlan:
             day += timedelta(days=1)
         return total
 
-    def fraction_through(self, name: str, year: int, day: date) -> float | None:
+    def fraction_through(self, name: str, span: YearSpan, day: date) -> float | None:
         """Share (0..1) of this person's year of plan hours accrued by ``day``.
 
         PTO scales every day equally, so the ratio needs no PTO figure. ``None``
         when the plan has no hours for them -- the caller keeps its own default.
         """
-        total = self.allocated_hours(name, year)
+        total = self.allocated_hours(name, span)
         if total <= 0:
             return None
-        return self.allocated_hours(name, year, through=day) / total
+        return self.allocated_hours(name, span, through=day) / total
 
-    def last_planned_day(self, name: str, year: int) -> date | None:
-        """Last working day in ``year`` on which the plan has them above 0 FTE."""
-        us_holidays = holidays.UnitedStates(years=year)
-        day = date(year, 12, 31)
-        while day.year == year:
+    def last_planned_day(self, name: str, span: YearSpan) -> date | None:
+        """Last working day in ``span`` on which the plan has them above 0 FTE."""
+        us_holidays = federal_holidays(span)
+        day = span.last
+        while day >= span.first:
             if (
                 day.weekday() < 5
                 and day not in us_holidays
@@ -135,9 +132,9 @@ class AllocationPlan:
             day -= timedelta(days=1)
         return None
 
-    def team_hours(self, year: int, pto_days: float = 0.0) -> dict[str, float]:
+    def team_hours(self, span: YearSpan, pto_days: float = 0.0) -> dict[str, float]:
         """Allocated hours for everyone in the plan."""
-        return {n: self.allocated_hours(n, year, pto_days) for n in self.names}
+        return {n: self.allocated_hours(n, span, pto_days) for n in self.names}
 
 
 def load_plan(csv_path: str | Path) -> AllocationPlan:
