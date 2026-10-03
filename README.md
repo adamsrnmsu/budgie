@@ -363,15 +363,19 @@ budgie tui
 ```
 
 Five tabs over your project, left to right in the order you'd build a budget — data first,
-conclusion last:
+conclusion last. Each tab opens with one line naming the question it answers and the file
+behind it, and `?` opens a help screen: how Budgie builds a forecast in six steps, every term
+you'll see (FTE, under/over, the old `util_*` columns, P10/P50/P90, headroom, stoplight…)
+and the keys. `escape` or `?` closes it.
 
 1. **Projects** — every budget under `budget/`, how many of its inputs exist, and which one
    is currently loaded. Select one and press `enter` to point every other tab at it, without
    quitting and changing directory. `d` deletes the selected project, and only on this tab —
    twice, deliberately: the first press names what would go, the second does it, and any
    other key cancels.
-2. **Inputs** — every project file, whether it exists, and what feeds what. Select one and
-   press `e` to open it in `$VISUAL`/`$EDITOR` (`vim` if neither is set), then `r` to recalculate.
+2. **Inputs** — every project file plus `budgie.yaml` itself (year, PTO, budget, simulation
+   runs), whether it exists, and which tab reads it. Select one and press `e` to open it in
+   `$VISUAL`/`$EDITOR` (`vim` if neither is set), then `r` to recalculate.
 3. **Plan** — the allocation plan, with a form to append a dated change. Re-planning is an
    appended row, never an edit, so the history stays intact. FTE runs 0 to 1, and a name
    that isn't in people.csv takes a second Add to confirm. `escape` leaves the form.
@@ -379,11 +383,13 @@ conclusion last:
    It reads the project exactly as `budgie forecast` does (plan, readings, costs, budget), so
    the two quote the same P50. Year, PTO, iterations and seed come from `budgie.yaml` (`e` on
    Projects). With no project open it shows a bundled sample team, marked SAMPLE DATA.
-5. **Assumptions** — the same model assumptions `budgie assumptions` prints.
+5. **Assumptions** — the model in six steps, this project's hours for a full-time year
+   (gross, holidays, PTO, available), the PTO rule worked through, and how the low/likely/high
+   spread becomes P10/P50/P90.
 
 Press `1`–`5` to jump to a tab, `r` to recalculate, `e` to edit the file the tab shows
 (Plan → plan.csv, Forecast → people.csv, Inputs → the selected file, Projects → the open
-project's budgie.yaml), `d` on Projects to delete the selected project, `q` to quit.
+project's budgie.yaml), `d` on Projects to delete the selected project, `?` for help, `q` to quit.
 
 It opens on **Forecast** when it can compute one, and otherwise on the tab that can fix what's
 wrong: **Projects** when there are several budgets and nothing to auto-select, **Inputs** when

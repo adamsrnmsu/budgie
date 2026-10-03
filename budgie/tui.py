@@ -28,6 +28,7 @@ import json
 import os
 import subprocess
 import sys
+import textwrap
 from datetime import date, datetime
 from pathlib import Path
 from typing import ClassVar
@@ -37,6 +38,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
+from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
     DataTable,
@@ -49,7 +51,7 @@ from textual.widgets import (
 )
 
 from budgie.core.allocation import pto_overrides
-from budgie.core.calendar import PTO_RULE, explain_pto, productive_hours
+from budgie.core.calendar import PTO_RULE, productive_hours
 from budgie.core.csvio import parse_date
 from budgie.core.eac import at_completion
 from budgie.core.forecast import forecast as run_forecast
@@ -57,10 +59,11 @@ from budgie.core.loader import load_people
 from budgie.core.montecarlo import simulate
 from budgie.core.plan import load_plan
 from budgie.core.project import load_snapshot
-from budgie.core.signals import evaluate
+from budgie.core.signals import GREEN_MAX, YELLOW_MAX, evaluate
 from budgie.core.workspace import (
     INPUTS,
     PROJECTS_DIR,
+    InputFile,
     Workspace,
     available_projects,
     find_workspace,
@@ -94,6 +97,249 @@ SAMPLE_BANNER = (
 
 # `#mc_pane` is `padding: 1 2`, so four columns of its width are not content.
 _MC_PANE_PADDING = 4
+
+# The one line at the top of each tab: the question it answers and the file
+# behind it. Yielded from `compose`, so no tab's own layout carries it.
+_HINTS = {
+    "tab_projects": "Your budgets under budget/ — enter opens one, e edits its "
+    "settings (budgie.yaml), d twice deletes it.",
+    "tab_inputs": "The files behind every number — e opens the highlighted one "
+    "in $EDITOR, then r recalculates.",
+    "tab_plan": "Who works on this, and when? plan.csv: one row per change — "
+    "a name, the date it starts, an FTE.",
+    "tab_forecast": "Will we run out? Built from plan.csv (hours), people.csv "
+    "(rates), weekly.csv (spent), costs.csv, budget.",
+    "tab_assumptions": "How is each number built? The model, this year's hours "
+    "and the spread. Press ? for every term.",
+}
+
+# Where the TUI reads each input. INPUTS' own `used_by` names CLI commands,
+# which say nothing to someone looking at tabs.
+_USED_ON = {
+    "people": "Forecast",
+    "allocations": "Plan, Forecast",
+    "plan": "Plan, Forecast",
+    "costs": "Forecast",
+    "budget": "Forecast",
+    "actuals": "Forecast",
+    "weekly": "Forecast",
+    "config": "every tab",
+}
+_CONFIG_DESCRIPTION = "Settings: year, PTO, budget, simulation runs"
+
+# The model, in the order Budgie computes it. The ? help and the Assumptions
+# tab both print it, so the two can't drift apart.
+MODEL: tuple[tuple[str, str], ...] = (
+    (
+        "Who and when",
+        "each person's FTE from a date. plan.csv is the only place FTE lives.",
+    ),
+    (
+        "Rate",
+        (
+            "what an hour of each person costs, and how sure we are of their hours: "
+            "people.csv holds the rate and the under/over spread around the plan."
+        ),
+    ),
+    (
+        "Time",
+        (
+            "a full-time year is ~1,992 h minus PTO; FTE × that, day by day, is each "
+            "person's hours."
+        ),
+    ),
+    (
+        "Cost",
+        (
+            "hours × rate, plus non-labor costs. P50 is the expected cost; P90 is "
+            "what to reserve."
+        ),
+    ),
+    (
+        "Reality",
+        (
+            "readings (weekly.csv) replace the past; only the rest of the year is "
+            "forecast."
+        ),
+    ),
+    (
+        "Will we run out",
+        (
+            "headroom = budget − (spent + remaining forecast); the stoplight is the "
+            "chance headroom goes negative."
+        ),
+    ),
+)
+
+# Every word the TUI or an input file shows, in plain English.
+GLOSSARY: tuple[tuple[str, str], ...] = (
+    ("FTE", "Share of full time on this project: 1 is full time, 0.5 half, 0 off it."),
+    (
+        "plan row, effective_date",
+        (
+            "One line of plan.csv: a name, the date it takes effect (effective_date) "
+            "and an FTE. It holds until that person's next row. Re-planning adds a "
+            "row, so the history stays."
+        ),
+    ),
+    ("rate, hourly_cost", "What one hour of a person costs (people.csv)."),
+    (
+        "under / over",
+        (
+            "people.csv percentages: how far below or above the plan a person's "
+            "hours may land. 10 under and 5 over means 90% to 105% of the plan."
+        ),
+    ),
+    (
+        "util_low / util_mode / util_high",
+        (
+            "Kept for old files: the spread is low/mode and high/mode. They are "
+            "shares of a full-time year: least, most likely, most."
+        ),
+    ),
+    (
+        "hours_low / hours_mode / hours_high",
+        (
+            "Kept for old files, likewise in hours: the spread is low/mode and "
+            "high/mode."
+        ),
+    ),
+    (
+        "P10 / P50 / P90",
+        (
+            "Of all the simulated years, 10%, 50% and 90% cost less than this. P50 "
+            "is the expected cost; P90 is what to reserve."
+        ),
+    ),
+    (
+        "headroom",
+        "Budget − (spent + remaining forecast). Below zero means over budget.",
+    ),
+    (
+        "stoplight",
+        (
+            f"The chance headroom goes negative: green up to {GREEN_MAX:.0%}, "
+            f"yellow up to {YELLOW_MAX:.0%}, red above that."
+        ),
+    ),
+    (
+        "readings",
+        (
+            "Hours actually booked to date, from weekly.csv (or actuals.csv, by "
+            "month). They replace the forecast for the past."
+        ),
+    ),
+    (
+        "iterations",
+        (
+            "How many years the simulation draws (budgie.yaml). More is steadier "
+            "and slower."
+        ),
+    ),
+    (
+        "seed",
+        (
+            "Fixes the random draws, so the same inputs give the same numbers "
+            "(budgie.yaml)."
+        ),
+    ),
+    (
+        "PTO",
+        (
+            "Paid time off, in days a year: pto: in budgie.yaml, or a pto_days "
+            "column per person. Pro-rated by FTE."
+        ),
+    ),
+)
+
+KEYS: tuple[tuple[str, str], ...] = (
+    ("1-5", "switch tab"),
+    ("r", "Recalculate, after editing a file outside the app"),
+    ("e", "edit the file this tab shows, in $EDITOR"),
+    ("enter", "open the highlighted project (Projects)"),
+    ("d d", "delete the highlighted project (Projects; press twice)"),
+    ("escape", "leave a form field; close this help"),
+    ("?", "this help"),
+    ("P / G", "switch to perch / gitboard"),
+    ("q", "quit"),
+)
+
+_WRAP = 88
+
+
+def _wrap(text: str, indent: int = 2) -> str:
+    pad = " " * indent
+    return textwrap.fill(text, _WRAP, initial_indent=pad, subsequent_indent=pad)
+
+
+def model_text() -> str:
+    """The six steps, numbered, each step's sentence wrapped under it."""
+    return "\n".join(
+        f"  [b]{n} {title}[/b]\n{_wrap(text, 6)}"
+        for n, (title, text) in enumerate(MODEL, 1)
+    )
+
+
+def help_text() -> str:
+    """The ? screen: the model, then every term, then the keys."""
+    terms = "\n".join(f"  [b]{t}[/b]\n{_wrap(m, 6)}" for t, m in GLOSSARY)
+    width = max(len(k) for k, _ in KEYS)
+    keys = "\n".join(f"  [b]{k:<{width}}[/b]  {what}" for k, what in KEYS)
+    return (
+        "[b]How Budgie works[/b]\n\n"
+        f"{model_text()}\n\n"
+        "[b]Words you will see[/b]\n\n"
+        f"{terms}\n\n"
+        "[b]Keys[/b]\n\n"
+        f"{keys}\n\n"
+        "[dim]escape or ? closes this.[/dim]"
+    )
+
+
+def pto_example(ph, fte: float = 0.25) -> str:
+    """The PTO rule worked through at ``fte``, saying where the TUI sets PTO.
+
+    Not ``calendar.explain_pto``: that one points at the CLI's --pto flag.
+    """
+    if not ph.pto_hours:
+        return (
+            f"No PTO is set, so there is nothing to pro-rate: {fte:g} FTE is "
+            f"{fte:g} × {ph.productive_hours:,.0f} = "
+            f"{fte * ph.productive_hours:,.0f} h. Set pto: in budgie.yaml (e on "
+            "Projects), or a pto_days column per person, to see what this rule "
+            "changes."
+        )
+    return (
+        f"At {fte:g} FTE with {ph.pto_days:g} PTO days: {fte:g} × "
+        f"{ph.available_hours:,.0f} = {fte * ph.available_hours:,.0f} h "
+        "(charging all their PTO to the project would give "
+        f"{fte * ph.productive_hours - ph.pto_hours:,.0f} h)."
+    )
+
+
+class HelpScreen(ModalScreen):
+    """`?`: the model, the vocabulary and the keys. Read-only."""
+
+    DEFAULT_CSS = """
+    HelpScreen { align: center middle; }
+    #help {
+        width: 100;
+        max-width: 95%;
+        height: 90%;
+        border: round $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    """
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        ("escape", "dismiss", "Close"),
+        Binding("question_mark", "dismiss", "Close", key_display="?"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="help"):
+            yield Static(help_text(), id="help_text")
 
 
 def ascii_histogram(values: np.ndarray, bins: int = 42, height: int = 8) -> str:
@@ -294,6 +540,7 @@ class BudgieTUI(App):
         color: $text;
     }
     .hint { padding: 1 2; color: $text-muted; }
+    .tab-hint { height: auto; padding: 1 2 0 2; }
     .status { padding: 0 2; color: $success; height: 1; }
     .status.error { color: $error; }
     .pane-title { text-style: bold; padding: 0 0 1 0; }
@@ -308,6 +555,7 @@ class BudgieTUI(App):
     #hist { color: $success; height: auto; padding: 1 0; }
     #mc_figures { height: auto; }
     #source { color: $text-muted; height: auto; padding: 1 0 0 0; }
+    #assumptions_text { padding: 1 2; }
 
     /* --- Plan tab ------------------------------------------------------ */
     #plan_form {
@@ -323,6 +571,8 @@ class BudgieTUI(App):
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
+        # First, so a narrow footer cuts something else off rather than help.
+        Binding("question_mark", "help", "Help", key_display="?"),
         ("r", "recalculate", "Recalculate"),
         ("e", "edit_selected", "Edit file"),
         ("d", "delete_project", "Delete project"),
@@ -398,24 +648,23 @@ class BudgieTUI(App):
         yield Static(id="contextbar")
         with TabbedContent(initial="tab_forecast", id="tabs"):
             with TabPane(_TABS[0][1], id=_TABS[0][0]):
+                yield Static(_HINTS[_TABS[0][0]], classes="tab-hint")
                 yield from self._compose_projects()
             with TabPane(_TABS[1][1], id=_TABS[1][0]):
+                yield Static(_HINTS[_TABS[1][0]], classes="tab-hint")
                 yield from self._compose_inputs()
             with TabPane(_TABS[2][1], id=_TABS[2][0]):
+                yield Static(_HINTS[_TABS[2][0]], classes="tab-hint")
                 yield from self._compose_plan()
             with TabPane(_TABS[3][1], id=_TABS[3][0]):
+                yield Static(_HINTS[_TABS[3][0]], classes="tab-hint")
                 yield from self._compose_forecast()
             with TabPane(_TABS[4][1], id=_TABS[4][0]):
+                yield Static(_HINTS[_TABS[4][0]], classes="tab-hint")
                 yield VerticalScroll(Static(id="assumptions_text"))
         yield Footer()
 
     def _compose_projects(self) -> ComposeResult:
-        yield Static(
-            f"Budgets under [b]{PROJECTS_DIR}/[/b]. Select one and press "
-            "[b]enter[/b] to switch every other tab to it, or [b]d[/b] twice "
-            "to delete it.",
-            classes="hint",
-        )
         yield DataTable(id="projects_table")
         yield Static(id="projects_status", classes="status")
 
@@ -426,7 +675,7 @@ class BudgieTUI(App):
             with Vertical(id="table_pane"):
                 yield DataTable(id="forecast")
             with VerticalScroll(id="mc_pane"):
-                yield Static("Monte Carlo", classes="pane-title")
+                yield Static("Simulation", classes="pane-title")
                 yield Static(id="mc_figures")
                 yield Static(id="hist")
                 yield Static(id="mc_stats")
@@ -452,11 +701,6 @@ class BudgieTUI(App):
         yield DataTable(id="plan_table")
 
     def _compose_inputs(self) -> ComposeResult:
-        yield Static(
-            "Your project's files. Select one and press [b]e[/b] to open it in "
-            "$VISUAL/$EDITOR (vim if unset), then [b]r[/b] to recalculate.",
-            classes="hint",
-        )
         yield DataTable(id="inputs_table")
         yield Static(id="inputs_status", classes="status")
 
@@ -516,6 +760,9 @@ class BudgieTUI(App):
 
     def action_recalculate(self) -> None:
         self.recalculate()
+
+    def action_help(self) -> None:
+        self.push_screen(HelpScreen())
 
     def action_show_tab(self, tab_id: str) -> None:
         self.query_one("#tabs", TabbedContent).active = tab_id
@@ -584,7 +831,7 @@ class BudgieTUI(App):
         if tab == "tab_plan":
             return self.plan_path
         if tab == "tab_inputs":
-            items = self.workspace.inputs()
+            items = self._input_files()
             row = self.query_one("#inputs_table", DataTable).cursor_row
             return items[row].path if 0 <= row < len(items) else "Select a file first."
         return "Nothing to edit on this tab."
@@ -761,8 +1008,8 @@ class BudgieTUI(App):
     def action_delete_project(self) -> str:
         """Delete the selected project -- on the second press, not the first.
 
-        There is no undo and no modal in this app, so the arming step *is* the
-        confirmation: the first `d` names what would go, the second does it.
+        There is no undo, and the only modal is the read-only `?` help, so the
+        arming step *is* the confirmation: the first `d` names what would go, the second does it.
         Aiming at a different row in between disarms, so a stale confirmation
         can't land on whatever happens to be under the cursor.
         """
@@ -825,7 +1072,7 @@ class BudgieTUI(App):
         self._refresh_forecast(ph, iterations, seed)
         self._refresh_plan(year, pto)
         self._refresh_inputs()
-        self._refresh_assumptions(ph, year)
+        self._refresh_assumptions(ph, year, iterations)
 
     def _refresh_projects(self) -> None:
         """List the projects, marking the one in play."""
@@ -997,9 +1244,9 @@ class BudgieTUI(App):
         # One figure per line. Run these together and the pane wraps them at
         # whatever column it reaches, which breaks a number across two rows.
         self.query_one("#mc_stats", Static).update(
-            f"{sim.iterations:,} sims\n"
-            f"mean {_money(sim.mean)}   std {_money(sim.std)}\n"
-            f"[dim]available hours {ph.available_hours:,.0f} @ 1.0 FTE[/dim]"
+            f"{sim.iterations:,} simulated years\n"
+            f"average {_money(sim.mean)}, give or take {_money(sim.std)}\n"
+            f"[dim]a full-time year here is {ph.available_hours:,.0f} h[/dim]"
         )
         self.query_one("#source", Static).update(
             # -8 for the "people: " label, -2 for the pane's scrollbar: this
@@ -1038,14 +1285,26 @@ class BudgieTUI(App):
             table.add_row(name, changes, f"{hours:,.0f}")
         table.add_row("[b]Total[/b]", "", f"[b]{total:,.0f}[/b]")
 
+    def _input_files(self) -> list[InputFile]:
+        """The Inputs tab's rows: every known input, then budgie.yaml itself."""
+        if self.workspace is None:
+            return []
+        config = InputFile(
+            "config", self.workspace.config_path, _CONFIG_DESCRIPTION, ()
+        )
+        return [*self.workspace.inputs(), config]
+
     def _refresh_inputs(self) -> None:
         # Say why we're here. Arriving on this tab because a file wouldn't load
         # is confusing unless the reason arrives with you.
         self._status("#inputs_status", self._load_error or "", error=True)
         table = self.query_one("#inputs_table", DataTable)
         cursor = table.cursor_row
-        items = self.workspace.inputs() if self.workspace else []
-        used_by = [" ".join(item.used_by) for item in items]
+        items = self._input_files()
+        used_by = [
+            _USED_ON.get(item.key) or "CLI: budgie " + ", ".join(item.used_by)
+            for item in items
+        ]
 
         # Columns are rebuilt each refresh because the description column is
         # sized to whatever room is left over. A DataTable clips rather than
@@ -1078,24 +1337,41 @@ class BudgieTUI(App):
         # clear(columns=True) put the cursor back on row 0; keep the user's row.
         table.move_cursor(row=cursor)
 
-    def _refresh_assumptions(self, ph, year: int) -> None:
+    def _refresh_assumptions(self, ph, year: int, iterations: int) -> None:
+        spread = (
+            "Each person's hours have a low, a likely and a high value. Likely "
+            "is their plan.csv hours; low and high take off their under "
+            "percentage and add their over percentage (people.csv). The "
+            "Forecast table shows the likely hours. The simulation draws every "
+            "person's hours from that range, most often near likely, and does "
+            "the same for non-labor lines with a low and high, then adds up the "
+            f"cost: {iterations:,} simulated years (iterations in budgie.yaml). "
+            "P10, P50 and P90 are read off those years."
+        )
         lines = [
-            f"[b]Assumptions in force for {year}[/b]\n",
-            f"Gross hours          {ph.gross_hours:,.0f}  (40 h x 52 weeks)",
-            f"Federal holidays    -{ph.holiday_hours:,.0f}",
-            f"Productive hours     {ph.productive_hours:,.0f}",
-            f"PTO                 -{ph.pto_hours:,.0f}  ({ph.pto_days:g} days)",
-            f"Available hours      {ph.available_hours:,.0f}  (1.0 FTE)\n",
-            f"[b]PTO and part-time[/b]\n{PTO_RULE}\n",
-            f"  {explain_pto(ph)}\n",
-            "[b]Uncertainty[/b]",
-            "  Hours are a triangular low/mode/high draw; the table above uses",
-            "  the mode. The Monte Carlo redraws every person each iteration.\n",
-            "[b]Inputs[/b]",
-            *(
-                f"  {default:<16} {description}"
-                for default, description, _used in INPUTS.values()
+            "[b]How Budgie builds a forecast[/b]",
+            model_text(),
+            "",
+            f"[b]One full-time year, {year}[/b]",
+            f"  Gross hours       {ph.gross_hours:>6,.0f}   40 h × 52 weeks",
+            f"  Federal holidays  {-ph.holiday_hours or 0:>6,.0f}",
+            (
+                f"  PTO               {-ph.pto_hours or 0:>6,.0f}   {ph.pto_days:g} days "
+                "(pto: in budgie.yaml, e on Projects)"
             ),
+            (
+                f"  Available         {ph.available_hours:>6,.0f}   × each "
+                "person's FTE, day by day"
+            ),
+            "",
+            "[b]PTO and part-time[/b]",
+            _wrap(PTO_RULE.replace("*", "")),  # markdown emphasis in calendar.py
+            _wrap(pto_example(ph)),
+            "",
+            "[b]How the spread works[/b]",
+            _wrap(spread),
+            "",
+            "[dim]Every term is explained under ?.[/dim]",
         ]
         self.query_one("#assumptions_text", Static).update("\n".join(lines))
 

@@ -96,8 +96,8 @@ async def test_tui_shows_every_tab_and_the_project_root(tmp_path, monkeypatch):
         assert app.query_one("#forecast").row_count > 0
         # The plan tab reflects the project's plan.csv.
         assert app.query_one("#plan_table").row_count > 0
-        # Every known input is listed.
-        assert app.query_one("#inputs_table").row_count == 8
+        # Every known input is listed, plus budgie.yaml itself.
+        assert app.query_one("#inputs_table").row_count == 9
 
 
 async def test_tui_adds_a_plan_row_from_the_form(tmp_path, monkeypatch):
@@ -816,3 +816,215 @@ async def test_the_forecast_tab_has_no_unsaved_setting_boxes(tmp_path, monkeypat
         await pilot.pause()
         for gone in ("#year", "#pto", "#iterations", "#seed", "#recalc"):
             assert not app.query(gone)
+
+
+# --- teaching: ? help, a hint per tab, an Assumptions tab that explains -----
+
+
+def _project(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+
+def _help_text(app) -> str:
+    from rich.text import Text
+
+    return Text.from_markup(str(app.screen.query_one("#help_text").content)).plain
+
+
+async def test_question_mark_opens_help_and_escape_or_question_mark_closes_it(
+    tmp_path, monkeypatch
+):
+    from budgie.tui import HelpScreen
+
+    _project(tmp_path, monkeypatch)
+    app = BudgieTUI()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        footer = {b.binding.key: b.binding for b in app.active_bindings.values()}
+        assert footer["question_mark"].description == "Help"
+        assert footer["question_mark"].key_display == "?"
+
+        await pilot.press("question_mark")
+        await pilot.pause()
+        assert isinstance(app.screen, HelpScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, HelpScreen)
+
+        await pilot.press("question_mark")
+        await pilot.pause()
+        assert isinstance(app.screen, HelpScreen)
+        await pilot.press("question_mark")
+        await pilot.pause()
+        assert not isinstance(app.screen, HelpScreen)
+
+
+async def test_help_teaches_the_model_and_every_term(tmp_path, monkeypatch):
+    _project(tmp_path, monkeypatch)
+    app = BudgieTUI()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        await pilot.press("question_mark")
+        await pilot.pause()
+        text = _help_text(app)
+
+    for step in (
+        "Who and when",
+        "Rate",
+        "Time",
+        "Cost",
+        "Reality",
+        "Will we run out",
+    ):
+        assert step in text
+    assert "plan.csv is the only place FTE lives" in text
+    for term in (
+        "FTE",
+        "effective_date",
+        "hourly_cost",
+        "under",
+        "over",
+        "util_low",
+        "util_mode",
+        "util_high",
+        "hours_low",
+        "hours_mode",
+        "hours_high",
+        "P10",
+        "P50",
+        "P90",
+        "headroom",
+        "stoplight",
+        "readings",
+        "iterations",
+        "seed",
+        "PTO",
+    ):
+        assert term in text, term
+    assert "kept for old files" in text.lower()
+    # And the keys, including how to get out again.
+    for key in ("1-5", "enter", "escape", "Recalculate"):
+        assert key in text, key
+
+
+async def test_keys_under_the_help_screen_do_not_crash(tmp_path, monkeypatch):
+    from budgie.tui import HelpScreen
+
+    _project(tmp_path, monkeypatch)
+    opened = _record_edits(monkeypatch)
+    app = BudgieTUI()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        await pilot.press("1", "d", "question_mark")
+        await pilot.pause()
+        for key in ("2", "r", "e", "d"):
+            await pilot.press(key)
+            await pilot.pause()
+        assert isinstance(app.screen, HelpScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+        # Nothing was deleted or opened from behind the help screen.
+        assert (tmp_path / "budgie.yaml").exists()
+    assert opened == []
+
+
+async def test_every_tab_says_what_it_answers_and_which_file(tmp_path, monkeypatch):
+    _project(tmp_path, monkeypatch)
+    app = BudgieTUI()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        hints = {
+            tab: _text(app, f"#{tab} .tab-hint")
+            for tab in (
+                "tab_projects",
+                "tab_inputs",
+                "tab_plan",
+                "tab_forecast",
+                "tab_assumptions",
+            )
+        }
+    assert "budgie.yaml" in hints["tab_projects"]
+    assert "e opens" in hints["tab_inputs"]
+    assert "plan.csv" in hints["tab_plan"]
+    assert hints["tab_forecast"].startswith("Will we run out?")
+    for name in ("plan.csv", "people.csv", "weekly.csv", "costs.csv", "budget"):
+        assert name in hints["tab_forecast"]
+    assert "?" in hints["tab_assumptions"]
+
+
+async def test_assumptions_tab_teaches_the_model_for_this_project(
+    tmp_path, monkeypatch
+):
+    _project(tmp_path, monkeypatch)  # scaffolded with pto: 0
+    app = BudgieTUI()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        text = _text(app, "#assumptions_text")
+
+    assert "Will we run out" in text and "Reality" in text
+    for line in ("Gross", "holidays", "PTO", "Available"):
+        assert line in text
+    assert "pro-rated by FTE" in text
+    assert "spread" in text
+    # The TUI's PTO setting is budgie.yaml, not a CLI flag, and there is no
+    # table above this text.
+    assert "--pto" not in text
+    assert "pto:" in text and "budgie.yaml" in text
+    assert "table above" not in text
+
+
+async def test_inputs_lists_budgie_yaml_and_e_opens_it(tmp_path, monkeypatch):
+    _project(tmp_path, monkeypatch)
+    opened = _record_edits(monkeypatch)
+    app = BudgieTUI()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        await pilot.press("2")
+        table = app.query_one("#inputs_table")
+        last = table.row_count - 1
+        row = [str(c) for c in table.get_row_at(last)]
+        assert "budgie.yaml" in row[1]
+        assert row[3].startswith("Settings: year, PTO, budget")
+        table.move_cursor(row=last)
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.pause()
+
+    assert opened == [tmp_path / "budgie.yaml"]
+
+
+async def test_inputs_used_by_names_the_tabs(tmp_path, monkeypatch):
+    _project(tmp_path, monkeypatch)
+    app = BudgieTUI()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        table = app.query_one("#inputs_table")
+        used = {
+            str(table.get_row_at(i)[1]): str(table.get_row_at(i)[4])
+            for i in range(table.row_count)
+        }
+    assert used["people.csv"] == "Forecast"
+    assert used["plan.csv"] == "Plan, Forecast"
+    assert used["budgie.yaml"] == "every tab"
+    assert "CLI" in used["scenarios.yaml"]
+
+
+async def test_no_code_names_on_screen(tmp_path, monkeypatch):
+    import re
+
+    _project(tmp_path, monkeypatch)
+    app = BudgieTUI()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        table = app.query_one("#inputs_table")
+        shown = [
+            _text(app, "#mc_stats"),
+            _text(app, "#mc_figures"),
+            _text(app, "#assumptions_text"),
+            *(str(c) for i in range(table.row_count) for c in table.get_row_at(i)),
+        ]
+    code = re.compile(r"util_|hours_low|effective_date|\bmode\b|\bstd\b|\bsims\b")
+    for text in shown:
+        assert not code.search(text), text

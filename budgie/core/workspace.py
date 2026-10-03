@@ -63,7 +63,7 @@ PROJECTS_DIR = "budget"
 INPUTS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "people": (
         "people.csv",
-        "Team members: hourly cost and a low/mode/high hours or utilization estimate",
+        "What an hour of each person costs, and how far their hours may run under or over the plan",
         ("forecast", "monthly", "tui", "scenario"),
     ),
     "allocations": (
