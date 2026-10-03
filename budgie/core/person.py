@@ -84,6 +84,11 @@ class Person:
     name: str
     hourly_cost: float
     hours: HoursEstimate
+    #: ``(low / likely, high / likely)``: how far real hours may stray from a
+    #: plan. None when likely was 0, so no ratio exists.
+    spread: tuple[float, float] | None = (1.0, 1.0)
+    #: This person's own PTO days from people.csv, if it gave one.
+    pto_days: float | None = None
 
     def expected_cost(self) -> float:
         """Deterministic cost using the most-likely hours."""

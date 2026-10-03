@@ -33,7 +33,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-_REQUIRED_COLS = {"name", "fte", "hours_spent"}
+# ``fte`` and ``hours_spent`` are optional: the plan supersedes one and dated
+# readings the other. A column that is present must still be filled in.
+_REQUIRED_COLS = {"name"}
 
 
 @dataclass(frozen=True)
@@ -75,8 +77,9 @@ def load_allocations(
 ) -> list[Allocation]:
     """Load allocations from CSV, resolving FTE against ``available_hours``.
 
-    Expected columns: ``name, fte, hours_spent`` and optionally ``email`` and
-    ``pto_days``.
+    Columns: ``name``, and optionally ``fte``, ``hours_spent``, ``email`` and
+    ``pto_days``. A missing ``fte`` or ``hours_spent`` column means 0: the
+    plan supplies hours and dated readings supply spend.
 
     Args:
         csv_path: Path to the allocations CSV.
@@ -98,11 +101,15 @@ def load_allocations(
         )
     rows = read_rows(csv_path, required=_REQUIRED_COLS)
     logger.info("Loaded %d allocations from %s", len(rows), csv_path)
+
+    def number(row, key: str) -> float:
+        return as_required_float(row, key) if key in rows.columns else 0.0
+
     allocations = [
         Allocation(
             name=as_str(row, "name"),
-            fte=as_required_float(row, "fte"),
-            hours_spent=as_required_float(row, "hours_spent"),
+            fte=number(row, "fte"),
+            hours_spent=number(row, "hours_spent"),
             available_hours=resolve_ceiling(available_hours, as_float(row, "pto_days")),
             email=as_str(row, "email") or None,
         )

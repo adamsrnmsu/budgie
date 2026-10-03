@@ -162,6 +162,33 @@ def _plan_for_allocations(plan_csv):
     return plan_csv, load_plan(plan_csv)
 
 
+def _on_plan(people, span, ph):
+    """The team with hours from the project's plan.csv, warnings printed.
+
+    The same rule the Snapshot (and so the TUI and perch) applies: the plan
+    sets the hours, people.csv the rate and spread. Project plan or nothing,
+    as for ``hours``. Without a plan the team comes back unchanged.
+    """
+    from budgie.core.allocation import load_allocations, pto_overrides
+    from budgie.core.project import people_on_plan
+    from budgie.singletons import console
+
+    _, plan = _plan_for_allocations(None)
+    alloc_csv = _workspace_input("allocations") if plan else None
+    flat = load_allocations(alloc_csv, ph) if alloc_csv else []
+    people, warnings = people_on_plan(
+        people,
+        plan,
+        span,
+        ph.pto_days,
+        pto_overrides(alloc_csv) if alloc_csv else None,
+        flat_fte={a.name: a.fte for a in flat},
+    )
+    for warning in warnings:
+        console.print(f"[yellow]⚠ {warning}[/yellow]")
+    return people
+
+
 def _no_project_message() -> str:
     """What to say when no workspace resolved.
 
@@ -342,6 +369,8 @@ def forecast(
 
     display_startup_message()
 
+    # A named --people file is its own team: the project's plan is not for it.
+    on_plan = people_csv is None
     people_csv = _input("people", people_csv, "team.csv")
     costs_csv = costs_csv or _workspace_input("costs")
     span = _span(year)
@@ -361,6 +390,8 @@ def forecast(
     )
 
     people = load_people(people_csv, productive_hours=ph)
+    if on_plan:
+        people = _on_plan(people, span, ph)
     costs = load_costs(costs_csv, span=span) if costs_csv else []
     # Loaded up front so its log line lands with the other loading messages
     # rather than interleaving after the tables.
@@ -976,6 +1007,8 @@ def monthly(
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
+    # A named --people file is its own team: the project's plan is not for it.
+    on_plan = people_csv is None
     people_csv = _input("people", people_csv, "team.csv")
     span = _span(year)
     pto = _setting("pto", pto, 0.0)
@@ -985,6 +1018,8 @@ def monthly(
 
     ph = productive_hours(span, pto_days=pto)
     people = load_people(people_csv, productive_hours=ph)
+    if on_plan:
+        people = _on_plan(people, span, ph)
     costs = load_costs(costs_csv, span=span) if costs_csv else []
     budget = _budget_from(budget_arg) if budget_arg else None
 

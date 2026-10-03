@@ -25,11 +25,20 @@ def test_zero_allocation_has_no_division_error():
     assert a.fraction_used == 0.0
 
 
-def test_load_allocations_requires_columns(tmp_path):
+def test_load_allocations_requires_only_a_name(tmp_path):
     bad = tmp_path / "bad.csv"
-    bad.write_text("name,fte\nAlice,0.5\n")  # missing hours_spent
+    bad.write_text("email\na@x.org\n")
     with pytest.raises(ValueError):
         load_allocations(bad, available_hours=1992)
+    # fte and hours_spent are optional: the plan and readings supersede them.
+    ok = tmp_path / "ok.csv"
+    ok.write_text("name,fte\nAlice,0.5\n")
+    assert load_allocations(ok, available_hours=1992)[0].hours_spent == 0.0
+    # A column that is there still has to be filled in.
+    blank = tmp_path / "blank.csv"
+    blank.write_text("name,fte,hours_spent\nAlice,0.5,\n")
+    with pytest.raises(ValueError):
+        load_allocations(blank, available_hours=1992)
 
 
 def test_render_email_over_budget_has_warning():

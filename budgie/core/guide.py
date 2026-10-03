@@ -249,26 +249,27 @@ PHASES: tuple[Phase, ...] = (
 TOPICS: tuple[Topic, ...] = (
     Topic(
         key="people",
-        title="Team members and their hours",
-        purpose="Drives the cost forecast. One row per person.",
+        title="What an hour costs, and how sure the hours are",
+        purpose="Prices the forecast. One row per person; plan.csv says how "
+        "many hours they work.",
         columns=_cols(
-            ("name", "Whatever you want to see in the tables"),
+            ("name", "Must match the name in plan.csv exactly"),
             ("hourly_cost", "Fully loaded hourly rate"),
-            ("util_low / util_mode / util_high", "Fraction of available hours, 0-1"),
+            ("under", "Optional. Up to this % fewer hours than planned"),
+            ("over", "Optional. Up to this % more hours than planned"),
             ("pto_days", "Optional. Overrides the project's PTO for this person"),
         ),
-        example=(
-            "name,hourly_cost,util_low,util_mode,util_high\n"
-            "Alice,95,0.80,0.90,0.98\n"
-            "Bob,110,0.70,0.85,0.95"
-        ),
+        example=("name,hourly_cost,under,over\nAlice,95,10,5\nBob,110,15,10"),
         rules=_rules(
-            "The three values are a low / most-likely / high estimate. The "
-            "forecast table uses the middle one; the Monte Carlo samples the "
-            "whole range, so the spread is where your confidence bounds come "
-            "from.",
-            "Prefer stating hours directly? Use hours_low/hours_mode/hours_high "
-            "instead of the util_* columns.",
+            "Hours come from plan.csv: each person's FTE, day by day. under and "
+            "over make a low / likely / high range around that, which the Monte "
+            "Carlo samples, so they are where your confidence bounds come from. "
+            "Leave them out for no uncertainty.",
+            "Someone here with no rows in plan.csv works 0 hours, and someone in "
+            "plan.csv but not here isn't costed; both show as a warning.",
+            "Older files with util_low/util_mode/util_high (or hours_low/"
+            "hours_mode/hours_high) still load: with a plan they become the "
+            "range around it, and without one they are the hours.",
         ),
     ),
     Topic(
@@ -293,9 +294,10 @@ TOPICS: tuple[Topic, ...] = (
             "full-time figure first, so a 0.25 FTE person gives this project a "
             "quarter of their PTO, not all of it.",
             "Leave pto_days blank to use the project default from budgie.yaml.",
-            "Keep this telling the same story as people.csv: someone at 0.90 FTE "
-            "should be forecast around 90% utilization, or the forecast and the "
-            "hours left will disagree about the same person.",
+            "With a plan.csv the plan sets everyone's hours, for hours left and "
+            "the forecast alike; fte only covers someone the plan doesn't "
+            "mention (with a warning). fte and hours_spent are optional: a file "
+            "of just name,email is fine.",
         ),
     ),
     Topic(

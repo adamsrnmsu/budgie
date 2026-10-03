@@ -48,6 +48,8 @@ imports. The front-ends (CLI, TUI, plots, emails) are thin adapters over it.
 
 .. automodule:: budgie.core.plan
 
+.. automodule:: budgie.core.solve
+
 .. automodule:: budgie.core.actuals
 
 .. automodule:: budgie.core.eac

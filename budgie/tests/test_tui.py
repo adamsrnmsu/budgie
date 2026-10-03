@@ -1,9 +1,13 @@
 """TUI behaviour: tabs, workspace awareness, and appending plan rows."""
 
+import contextlib
+import json
+import os
 from datetime import date
 
 import pytest
 
+from budgie import tui as tui_mod
 from budgie.core.plan import load_plan
 from budgie.core.scaffold import init_workspace
 from budgie.core.workspace import PROJECTS_DIR, forget_workspaces
@@ -55,16 +59,20 @@ def test_append_plan_row_handles_a_file_with_no_trailing_newline(tmp_path):
     assert len(load_plan(path).changes_for("Alice")) == 2
 
 
-def test_open_in_editor_without_an_editor_set(tmp_path, monkeypatch):
+def test_open_in_editor_falls_back_to_vim(tmp_path, monkeypatch):
     monkeypatch.delenv("EDITOR", raising=False)
     monkeypatch.delenv("VISUAL", raising=False)
     path = tmp_path / "people.csv"
     path.write_text("name\n")
+    calls = []
+    monkeypatch.setattr(
+        "budgie.tui.subprocess.run", lambda cmd, **kw: calls.append(cmd)
+    )
 
     message = open_in_editor(path)
 
-    assert "$EDITOR" in message
-    assert str(path) in message  # still tells you where the file is
+    assert calls == [["vim", str(path)]]
+    assert "Edited people.csv" in message
 
 
 def test_open_in_editor_reports_a_missing_file(tmp_path, monkeypatch):
@@ -100,13 +108,13 @@ async def test_tui_adds_a_plan_row_from_the_form(tmp_path, monkeypatch):
     app = BudgieTUI()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.query_one("#plan_name").value = "Trillian"
+        app.query_one("#plan_name").value = "Alice"
         app.query_one("#plan_date").value = "2026-07-01"
         app.query_one("#plan_fte").value = "0.5"
         app.add_plan_row()
         await pilot.pause()
 
-        assert "Trillian" in load_plan(tmp_path / "plan.csv").names
+        assert len(load_plan(tmp_path / "plan.csv").changes_for("Alice")) == 2
         # And the form clears, so the same row can't be added twice by accident.
         assert app.query_one("#plan_name").value == ""
 
@@ -426,3 +434,385 @@ async def test_a_broken_neighbour_is_listed_not_fatal(tmp_path, monkeypatch):
         assert app.project_names() == ["fy26", "fy27"]
         assert "won't load" in app.switch_project("fy27")
         assert app.workspace.root.name == "fy26"  # still on the one that works
+
+
+# -- switching to perch and gitboard (PI_SUITE, set by perch tui) ------------
+
+SUITE = {
+    "perch": {"cwd": "/ws", "argv": ["perch", "tui"]},
+    "gitboard": {"cwd": "/gb", "argv": ["gitboard", "tui", "grp/a"]},
+}
+
+
+async def test_p_and_g_exit_with_the_target(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PI_SUITE", json.dumps(SUITE))
+    for key, target in (("P", "perch"), ("G", "gitboard")):
+        app = BudgieTUI()
+        async with app.run_test() as pilot:
+            await pilot.press(key)
+            await pilot.pause()
+        assert app.return_value == target
+
+
+async def test_without_pi_suite_a_switch_key_says_where_to_start(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PI_SUITE", raising=False)
+    app = BudgieTUI()
+    said = []
+    monkeypatch.setattr(app, "notify", lambda msg, **kw: said.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.press("P")
+        await pilot.pause()
+        assert app.is_running
+    assert said == ["start from perch tui to switch apps"]
+
+
+def test_a_malformed_map_is_no_entry(monkeypatch):
+    for bad in (
+        "not json",
+        "[]",
+        '{"perch": 3}',
+        '{"perch": {"cwd": "/", "argv": []}}',
+    ):
+        monkeypatch.setenv("PI_SUITE", bad)
+        assert tui_mod.suite_entry("perch") is None
+
+
+def test_run_execs_the_target_after_the_app_exits(monkeypatch):
+    monkeypatch.setenv("PI_SUITE", json.dumps(SUITE))
+    monkeypatch.setattr(BudgieTUI, "run", lambda self: "perch")
+    calls = []
+    monkeypatch.setattr(os, "chdir", lambda d: calls.append(("chdir", d)))
+    monkeypatch.setattr(os, "execvp", lambda f, a: calls.append(("exec", f, a)))
+    tui_mod.run()
+    assert calls == [("chdir", "/ws"), ("exec", "perch", ["perch", "tui"])]
+
+
+# -- step A: safety and quick fixes (budgie-vrc, budgie-4oj) ------------------
+
+
+async def test_d_on_the_plan_tab_deletes_nothing(tmp_path, monkeypatch):
+    # The repro: one project under budget/, launched from the parent folder.
+    # On the Plan tab `d` reads as "delete this row"; it must not reach the
+    # project, and the footer must not offer it there.
+    project = tmp_path / PROJECTS_DIR / "fy26"
+    init_workspace(project, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("3")
+        await pilot.pause()
+        assert "d" not in app.active_bindings
+        await pilot.press("d", "d")
+        await pilot.pause()
+        assert project.is_dir()
+        assert app.query_one("#tabs").active == "tab_plan"
+
+        await pilot.press("1")
+        await pilot.pause()
+        assert "d" in app.active_bindings
+        await pilot.press("d")
+        await pilot.pause()
+        # The arming warning is drawn as an error, not in success green.
+        assert app.query_one("#projects_status").has_class("error")
+        assert project.is_dir()
+
+
+def _record_edits(monkeypatch):
+    """Stand in for the editor: record what `e` would open."""
+    opened = []
+
+    def fake_open(path):
+        opened.append(path)
+        return f"Edited {path.name}."
+
+    monkeypatch.setattr(tui_mod, "open_in_editor", fake_open)
+    # The headless test driver can't suspend.
+    monkeypatch.setattr(BudgieTUI, "suspend", lambda self: contextlib.nullcontext())
+    return opened
+
+
+async def test_e_opens_the_file_the_tab_shows(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    opened = _record_edits(monkeypatch)
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("3", "e")
+        await pilot.pause()
+        await pilot.press("4", "e")
+        await pilot.pause()
+        await pilot.press("2")
+        app.query_one("#inputs_table").move_cursor(row=3)
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.pause()
+        third = app.workspace.inputs()[3].path
+        # Editing recalculates; the Inputs cursor stays where it was.
+        assert app.query_one("#inputs_table").cursor_row == 3
+
+    assert opened == [tmp_path / "plan.csv", tmp_path / "people.csv", third]
+
+
+async def test_e_on_projects_edits_the_open_projects_config(tmp_path, monkeypatch):
+    container = _two_projects(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    opened = _record_edits(monkeypatch)
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.switch_project("fy26")
+        await pilot.pause()
+        await pilot.press("e")  # cursor on fy26, the open one
+        await pilot.pause()
+        app.query_one("#projects_table").move_cursor(row=1)
+        await pilot.pause()
+        await pilot.press("e")  # fy27 isn't open: nothing, and say so in red
+        await pilot.pause()
+        assert app.query_one("#projects_status").has_class("error")
+
+    assert opened == [(container / "fy26" / "budgie.yaml").resolve()]
+
+
+async def test_e_on_forecast_wont_edit_the_bundled_sample(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    opened = _record_edits(monkeypatch)
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("4", "e")
+        await pilot.pause()
+
+    assert opened == []
+
+
+async def test_failures_are_red_and_successes_are_not(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        status = app.query_one("#plan_status")
+        app.query_one("#plan_name").value = "Alice"
+        app.query_one("#plan_date").value = "next tuesday"
+        app.query_one("#plan_fte").value = "0.5"
+        app.add_plan_row()
+        assert status.has_class("error")
+
+        app.query_one("#plan_date").value = "2026-07-01"
+        app.add_plan_row()
+        assert not status.has_class("error")
+
+
+async def test_escape_leaves_the_plan_form(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("3")
+        app.query_one("#plan_name").focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.focused is app.query_one("#plan_table")
+        # The digit keys switch tabs again instead of typing into the form.
+        await pilot.press("4")
+        await pilot.pause()
+        assert app.query_one("#tabs").active == "tab_forecast"
+        assert app.query_one("#plan_name").value == ""
+
+
+async def _plan_form(app, pilot, name, fte="0.5"):
+    app.query_one("#plan_name").value = name
+    app.query_one("#plan_date").value = "2026-07-01"
+    app.query_one("#plan_fte").value = fte
+    message = app.add_plan_row()
+    await pilot.pause()
+    return message
+
+
+async def test_plan_form_rejects_fte_above_one(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    before = (tmp_path / "plan.csv").read_text()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        message = await _plan_form(app, pilot, "Alice", fte="5")
+        assert message == "FTE is a share of full time: 0 to 1"
+        assert app.query_one("#plan_status").has_class("error")
+    assert (tmp_path / "plan.csv").read_text() == before
+
+
+async def test_plan_form_rejects_a_mis_cased_name(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    before = (tmp_path / "plan.csv").read_text()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert "Did you mean Alice?" in await _plan_form(app, pilot, "alice")
+        # Pressing again doesn't push it through: it's a typo, not a new person.
+        assert "Did you mean Alice?" in await _plan_form(app, pilot, "alice")
+    assert (tmp_path / "plan.csv").read_text() == before
+
+
+async def test_plan_form_asks_twice_before_adding_an_unknown_name(
+    tmp_path, monkeypatch
+):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    plan = tmp_path / "plan.csv"
+    before = plan.read_text()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        message = await _plan_form(app, pilot, "Zed")
+        assert message == (
+            "Zed isn't in people.csv, so they won't be costed. "
+            "Press Add again to add them anyway."
+        )
+        assert app.query_one("#plan_status").has_class("error")
+        assert plan.read_text() == before
+
+        await _plan_form(app, pilot, "Zed")
+        assert "Zed" in load_plan(plan).names
+
+
+SAMPLE = "SAMPLE DATA — no project open."
+
+
+async def test_sample_data_is_labelled_as_such(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one("#forecast_banner").display is True
+        assert SAMPLE in _text(app, "#forecast_banner")
+        assert "SAMPLE DATA" in _text(app, "#titlebar")
+
+
+async def test_with_several_projects_it_says_pick_one_not_init(tmp_path, monkeypatch):
+    _two_projects(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        context = _text(app, "#contextbar")
+        inputs_row = " ".join(map(str, app.query_one("#inputs_table").get_row_at(0)))
+        assert "pick a project on the Projects tab" in context
+        assert "budgie init" not in context
+        assert "pick a project on the Projects tab" in inputs_row
+        assert "budgie init" not in inputs_row
+        assert SAMPLE in _text(app, "#forecast_banner")
+
+        app.switch_project("fy26")
+        await pilot.pause()
+        # A real project: the banner goes, and so does the label.
+        assert app.query_one("#forecast_banner").display is False
+        assert "SAMPLE DATA" not in _text(app, "#titlebar")
+
+
+async def test_a_project_without_people_csv_is_sample_data_too(tmp_path, monkeypatch):
+    # people_path falls back to the bundled team when the project has no
+    # people.csv: `e` must not open the package's own file, and the numbers
+    # must be labelled.
+    init_workspace(tmp_path, year=2026)
+    (tmp_path / "people.csv").unlink()
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    opened = _record_edits(monkeypatch)
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("4", "e")
+        await pilot.pause()
+        assert app.query_one("#forecast_banner").display is True
+        assert "SAMPLE DATA" in _text(app, "#forecast_banner")
+        assert "people.csv" in _text(app, "#forecast_banner")
+
+    assert opened == []
+
+
+# --- one model: the Forecast tab reads the project the way the CLI does ----
+
+
+def _p50(text: str) -> float:
+    import re
+
+    return float(re.search(r"P50 \$([\d,]+)", text).group(1).replace(",", ""))
+
+
+async def test_forecast_headline_matches_the_cli(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+
+    from budgie.budgie import cli
+
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    cli_out = CliRunner().invoke(cli, ["forecast"]).output
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        headline = _text(app, "#forecast_headline")
+        # Same project, same seed and iterations from budgie.yaml: same P50.
+        assert _p50(headline) == _p50(cli_out)
+        assert headline.startswith("Budget $425,000")
+        assert "headroom" in headline and "chance over" in headline
+
+
+async def test_a_plan_row_moves_the_forecast_tab(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        before = _p50(_text(app, "#forecast_headline"))
+        append_plan_row(tmp_path / "plan.csv", "Bob", date(2026, 7, 1), 0.0)
+        append_plan_row(tmp_path / "plan.csv", "Zed", date(2026, 7, 1), 1.0)
+        await pilot.press("r")
+        await pilot.pause()
+        assert _p50(_text(app, "#forecast_headline")) < before
+        banner = _text(app, "#forecast_banner")
+        assert app.query_one("#forecast_banner").display is True
+        assert "Zed is in plan.csv but has no rate" in banner
+
+
+async def test_the_forecast_tab_has_no_unsaved_setting_boxes(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        for gone in ("#year", "#pto", "#iterations", "#seed", "#recalc"):
+            assert not app.query(gone)
