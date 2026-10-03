@@ -78,6 +78,15 @@ def test_committed_rows_cost_what_the_grid_showed(project):
     assert costing_for(load_snapshot(project)).cost() == pytest.approx(shown)
 
 
+def test_a_fiscal_year_grid_runs_in_the_spans_order(tmp_path):
+    init_workspace(tmp_path, year=2027, year_start="10-01")
+    model = GridModel(load_snapshot(tmp_path))
+    assert model.months[:3] == ["Oct", "Nov", "Dec"] and model.months[-1] == "Sep"
+    cost = model.readout()["cost"]
+    model.set({("Bob", m) for m in range(10, 13)}, 0.0)  # Jul..Sep, the span's end
+    assert model.readout()["cost"] < cost
+
+
 async def test_select_target_solve_commit_in_the_tui(project, monkeypatch):
     monkeypatch.chdir(project)
     forget_workspaces()

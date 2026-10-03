@@ -6,7 +6,7 @@ work in a year: a full 40-hour week baseline, minus US federal holidays, and
 optionally minus paid time off / sick leave to reach "available hours" (the
 productivity-factor model common in government contracting).
 
-All calculations are anchored to a real calendar year via the ``holidays``
+All calculations are anchored to a real year span (:class:`YearSpan`: a calendar or fiscal year) via the ``holidays``
 package, so weekend-observed holidays and leap years are handled correctly
 rather than assuming a flat 2080-hour year.
 """
@@ -14,6 +14,7 @@ rather than assuming a flat 2080-hour year.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -30,16 +31,104 @@ WEEKS_PER_YEAR = 52.0
 GROSS_ANNUAL_HOURS = HOURS_PER_WEEK * WEEKS_PER_YEAR  # 2080.0
 
 
-def federal_holiday_workdays(year: int) -> int:
-    """Number of US federal holidays that fall on a workday (Mon-Fri) in ``year``.
+_YEAR_START = re.compile(r"(\d{2})-01")
+
+
+def year_start_month(text) -> int:
+    """The month a ``year_start`` setting names; it must be a month's first day."""
+    match = _YEAR_START.fullmatch(str(text).strip())
+    if not match or not 1 <= int(match[1]) <= 12:
+        raise ValueError(
+            f"year_start must be MM-01, the first day of a month "
+            f'(e.g. "10-01" for a federal fiscal year), got {text!r}'
+        )
+    return int(match[1])
+
+
+@dataclass(frozen=True)
+class YearSpan:
+    """The money year: ``first`` to ``last`` inclusive, twelve whole months.
+
+    A calendar year starts Jan 1. A fiscal year is named for the calendar year
+    it ends in: FY27 is 2026-10-01 to 2027-09-30.
+    """
+
+    first: date
+    last: date
+
+    @property
+    def year(self) -> int:
+        return self.last.year
+
+    @property
+    def fiscal(self) -> bool:
+        return (self.first.month, self.first.day) != (1, 1)
+
+    @property
+    def label(self) -> str:
+        """How the year prints: ``2026``, or ``FY27`` for a fiscal year."""
+        return f"FY{self.year % 100:02d}" if self.fiscal else str(self.year)
+
+    @property
+    def days(self) -> int:
+        return (self.last - self.first).days + 1
+
+    @property
+    def zero(self) -> date:
+        """The day before ``first``: where a cumulative curve is 0."""
+        return self.first - timedelta(days=1)
+
+    @property
+    def months(self) -> list[tuple[int, int]]:
+        """The twelve ``(calendar year, month)`` pairs, in the year's order."""
+        year, month, out = self.first.year, self.first.month, []
+        for _ in range(12):
+            out.append((year, month))
+            year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+        return out
+
+    @property
+    def quarters(self) -> tuple[tuple[date, date], ...]:
+        """Four ``(first, last)`` quarters of three whole months each."""
+        starts = [date(y, m, 1) for y, m in self.months[::3]]
+        ends = [s - timedelta(days=1) for s in starts[1:]] + [self.last]
+        return tuple(zip(starts, ends))
+
+    def contains(self, day: date) -> bool:
+        return self.first <= day <= self.last
+
+
+def year_span(year: int, year_start: str = "01-01") -> YearSpan:
+    """The span ``year`` names: Jan 1-Dec 31, or the twelve months ending in
+    ``year`` that start on ``year_start`` (``"10-01"``: Oct 1 of year - 1)."""
+    month = year_start_month(year_start)
+    if month == 1:
+        return YearSpan(date(year, 1, 1), date(year, 12, 31))
+    return YearSpan(date(year - 1, month, 1), date(year, month, 1) - timedelta(days=1))
+
+
+def current_year(year_start: str, today: date) -> int:
+    """The year whose span contains ``today``."""
+    month = year_start_month(year_start)
+    return today.year + 1 if month > 1 and today.month >= month else today.year
+
+
+def federal_holidays(span: YearSpan) -> holidays.HolidayBase:
+    """US federal holidays for every calendar year ``span`` touches."""
+    return holidays.UnitedStates(years=range(span.first.year, span.last.year + 1))
+
+
+def federal_holiday_workdays(span: YearSpan) -> int:
+    """Number of US federal holidays that fall on a workday (Mon-Fri) in ``span``.
 
     Holidays observed on a weekend are shifted by the federal government to an
     adjacent weekday; the ``holidays`` package already encodes those observed
     dates, so counting weekday holidays here reflects days genuinely lost from a
-    Mon-Fri schedule.
+    Mon-Fri schedule. A fiscal year draws on two calendar years' holidays.
     """
-    us_holidays = holidays.UnitedStates(years=year)
-    return sum(1 for day in us_holidays if day.weekday() < 5)
+    return sum(
+        1 for day in federal_holidays(span) if day.weekday() < 5 and span.contains(day)
+    )
 
 
 def workdays_between(start: date, end: date) -> int:
@@ -57,12 +146,12 @@ def workdays_between(start: date, end: date) -> int:
     return count
 
 
-def workdays_in_year(year: int) -> int:
-    """Working days in the whole calendar year."""
-    return workdays_between(date(year, 1, 1), date(year, 12, 31))
+def workdays_in_year(span: YearSpan) -> int:
+    """Working days in the whole span."""
+    return workdays_between(span.first, span.last)
 
 
-def hours_per_workday(year: int, pto_days: float = 0.0) -> float:
+def hours_per_workday(span: YearSpan, pto_days: float = 0.0) -> float:
     """Available hours spread evenly across the year's real working days.
 
     The year's available-hours figure comes from the 52-week model (2080 gross),
@@ -70,17 +159,17 @@ def hours_per_workday(year: int, pto_days: float = 0.0) -> float:
     other keeps day-level math reconciling exactly to the annual total instead
     of drifting by the difference.
     """
-    workdays = workdays_in_year(year)
+    workdays = workdays_in_year(span)
     if workdays == 0:
         return 0.0
-    return productive_hours(year, pto_days=pto_days).available_hours / workdays
+    return productive_hours(span, pto_days=pto_days).available_hours / workdays
 
 
 @dataclass(frozen=True)
 class ProductiveHours:
     """Breakdown of how gross annual hours reduce to productive/available hours."""
 
-    year: int
+    span: YearSpan
     gross_hours: float
     holiday_hours: float
     pto_hours: float
@@ -137,14 +226,14 @@ def resolve_ceiling(ceiling: float | ProductiveHours, pto_days: float | None) ->
 
 
 def productive_hours(
-    year: int,
+    span: YearSpan,
     pto_days: float = 0.0,
     hours_per_day: float = HOURS_PER_DAY,
 ) -> ProductiveHours:
-    """Compute productive/available hours for a given calendar ``year``.
+    """Compute productive/available hours for a given ``span``.
 
     Args:
-        year: Calendar year to anchor federal holidays to.
+        span: The year to anchor federal holidays to (see :func:`year_span`).
         pto_days: Paid time off + sick days to additionally subtract. Defaults
             to 0, which yields pure "productive hours" (holidays only).
         hours_per_day: Length of a workday, used to convert holiday/PTO days to
@@ -153,9 +242,9 @@ def productive_hours(
     Returns:
         A :class:`ProductiveHours` breakdown.
     """
-    holiday_days = federal_holiday_workdays(year)
+    holiday_days = federal_holiday_workdays(span)
     return ProductiveHours(
-        year=year,
+        span=span,
         gross_hours=GROSS_ANNUAL_HOURS,
         holiday_hours=holiday_days * hours_per_day,
         pto_hours=pto_days * hours_per_day,

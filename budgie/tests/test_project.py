@@ -9,7 +9,7 @@ from click.testing import CliRunner
 from budgie.budgie import cli
 from budgie.core.allocation import Allocation
 from budgie.core.budget import Budget
-from budgie.core.calendar import productive_hours
+from budgie.core.calendar import productive_hours, year_span
 from budgie.core.plan import AllocationPlan, PlanEntry
 from budgie.core.project import (
     Snapshot,
@@ -47,13 +47,15 @@ def test_a_named_readings_file_beats_the_projects(project):
 
 
 def test_weekly_beats_monthly(project):
-    both = load_observations(2026, project / "actuals.csv", project / "weekly.csv")
-    monthly = load_observations(2026, project / "actuals.csv")
+    both = load_observations(
+        year_span(2026), project / "actuals.csv", project / "weekly.csv"
+    )
+    monthly = load_observations(year_span(2026), project / "actuals.csv")
 
     # The scaffold's weekly Alice ends at 660 in week 20; monthly at 290 in Feb.
     assert both["Alice"][-1] == (date(2026, 5, 17), 660)
     assert monthly["Alice"][-1] == (date(2026, 2, 28), 290)
-    assert load_observations(2026) == {}
+    assert load_observations(year_span(2026)) == {}
 
 
 def test_the_latest_reading_on_or_before_as_of_is_the_spent_figure():
@@ -88,7 +90,7 @@ def test_a_pinned_budget_beats_budget_csv(project):
 def test_snapshot_applies_every_rule(project):
     snap = load_snapshot(project)
 
-    assert snap.year == 2026
+    assert snap.span.year == 2026
     # Weekly readings are the spent figure (they match the scaffold's scalar).
     assert snap.spent == {"Alice": 660, "Bob": 620}
     assert {"Alice", "Bob"} <= set(snap.allocated)
@@ -163,9 +165,9 @@ def test_pinned_budget_has_no_revisions_and_no_plan_csv_means_no_plan(project):
 # (7.968 h each), and 126 of those days fall from 1 July to 31 December:
 # 126 x 7.968 = 1,003.968 h.
 def _alice(plan=None):
-    ceiling = productive_hours(2026, pto_days=0)
+    ceiling = productive_hours(year_span(2026), pto_days=0)
     return Snapshot(
-        year=2026,
+        span=year_span(2026),
         pto=0.0,
         ceiling=ceiling,
         people=[],

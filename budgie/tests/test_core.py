@@ -5,6 +5,7 @@ from budgie.core.calendar import (
     GROSS_ANNUAL_HOURS,
     federal_holiday_workdays,
     productive_hours,
+    year_span,
 )
 from budgie.core.forecast import forecast
 from budgie.core.montecarlo import simulate
@@ -13,14 +14,14 @@ from budgie.core.person import HoursEstimate, Person
 
 def test_productive_hours_matches_definition():
     # 40 hrs/week x 52 - 11 federal holidays x 8 = 1992.
-    ph = productive_hours(2026)
+    ph = productive_hours(year_span(2026))
     assert ph.gross_hours == GROSS_ANNUAL_HOURS == 2080
-    assert federal_holiday_workdays(2026) == 11
+    assert federal_holiday_workdays(year_span(2026)) == 11
     assert ph.productive_hours == 1992
 
 
 def test_pto_reduces_available_hours():
-    ph = productive_hours(2026, pto_days=15)
+    ph = productive_hours(year_span(2026), pto_days=15)
     assert ph.available_hours == ph.productive_hours - 15 * 8
 
 

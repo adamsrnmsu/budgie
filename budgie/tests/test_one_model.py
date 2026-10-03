@@ -7,7 +7,7 @@ import pytest
 from click.testing import CliRunner
 
 from budgie.budgie import cli
-from budgie.core.calendar import productive_hours
+from budgie.core.calendar import productive_hours, year_span
 from budgie.core.forecast import forecast
 from budgie.core.loader import load_people
 from budgie.core.person import HoursEstimate, Person
@@ -17,7 +17,8 @@ from budgie.core.scaffold import init_workspace
 from budgie.core.workspace import forget_workspaces
 
 YEAR = 2026
-PH = productive_hours(YEAR)  # 1992 available hours at 1.0 FTE
+SPAN = year_span(YEAR)
+PH = productive_hours(SPAN)  # 1992 available hours at 1.0 FTE
 FULL = AllocationPlan((PlanEntry("Alice", date(YEAR, 1, 1), 1.0),))
 
 
@@ -87,7 +88,7 @@ def _person(name="Alice", spread=(0.9, 1.1), pto_days=None):
 
 
 def test_planned_hours_come_from_the_plan_scaled_by_the_spread():
-    (alice,), warnings = people_on_plan([_person()], FULL, YEAR)
+    (alice,), warnings = people_on_plan([_person()], FULL, SPAN)
     assert alice.hours.mode == pytest.approx(1992)
     assert (alice.hours.low, alice.hours.high) == pytest.approx(
         (1992 * 0.9, 1992 * 1.1)
@@ -96,7 +97,7 @@ def test_planned_hours_come_from_the_plan_scaled_by_the_spread():
 
 
 def test_a_rate_with_no_plan_rows_is_zero_hours_and_says_so():
-    (_, bob), warnings = people_on_plan([_person(), _person("Bob")], FULL, YEAR)
+    (_, bob), warnings = people_on_plan([_person(), _person("Bob")], FULL, SPAN)
     assert bob.hours == HoursEstimate.constant(0.0)
     assert warnings == [
         "Bob has a rate in people.csv but no rows in plan.csv, so 0 hours."
@@ -105,7 +106,7 @@ def test_a_rate_with_no_plan_rows_is_zero_hours_and_says_so():
 
 def test_a_plan_name_with_no_rate_is_not_costed_and_a_case_slip_is_named():
     plan = AllocationPlan((*FULL.entries, PlanEntry("alice", date(YEAR, 6, 1), 0.5)))
-    _, warnings = people_on_plan([_person()], plan, YEAR)
+    _, warnings = people_on_plan([_person()], plan, SPAN)
     expected = (
         "alice is in plan.csv but has no rate in people.csv (people.csv has "
         "'Alice'), so not costed."
@@ -114,19 +115,19 @@ def test_a_plan_name_with_no_rate_is_not_costed_and_a_case_slip_is_named():
 
 
 def test_zero_spread_falls_back_to_the_plan_alone():
-    (alice,), warnings = people_on_plan([_person(spread=None)], FULL, YEAR)
+    (alice,), warnings = people_on_plan([_person(spread=None)], FULL, SPAN)
     h = alice.hours
     assert (h.low, h.mode, h.high) == pytest.approx((1992, 1992, 1992))
     assert "no spread" in warnings[0]
 
 
 def test_pto_comes_from_people_then_allocations_then_the_team():
-    ten = productive_hours(YEAR, pto_days=10).available_hours
-    (alice,), _ = people_on_plan([_person()], FULL, YEAR, pto_by_name={"Alice": 10})
+    ten = productive_hours(SPAN, pto_days=10).available_hours
+    (alice,), _ = people_on_plan([_person()], FULL, SPAN, pto_by_name={"Alice": 10})
     assert alice.hours.mode == pytest.approx(ten)
 
     (alice,), warnings = people_on_plan(
-        [_person(pto_days=10)], FULL, YEAR, pto=5, pto_by_name={"Alice": 3}
+        [_person(pto_days=10)], FULL, SPAN, pto=5, pto_by_name={"Alice": 3}
     )
     assert alice.hours.mode == pytest.approx(ten)
     assert "using people.csv" in warnings[0]
@@ -134,7 +135,7 @@ def test_pto_comes_from_people_then_allocations_then_the_team():
 
 def test_no_plan_leaves_the_team_and_flags_a_plain_rate_with_no_hours():
     util = Person("Bob", 1.0, HoursEstimate(1, 2, 3))
-    people, warnings = people_on_plan([_person(), util], None, YEAR)
+    people, warnings = people_on_plan([_person(), util], None, SPAN)
     assert people == [_person(), util]
     assert warnings == [
         "Alice has a rate but no hours: people.csv gives none and there is no plan.csv."

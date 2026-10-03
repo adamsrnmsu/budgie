@@ -6,7 +6,7 @@ Answers the two questions an hours email actually needs to answer:
     "Am I ahead of or behind pace right now?"
     "If I keep going at this rate, when do I run out?"
 
-Pace is the straight line from 0 hours on Jan 1 to the full allocation on Dec 31 --
+Pace is the straight line from 0 hours on the year's first day to the full allocation on its last --
 or, when the person is in a plan.csv, the plan's own hours accumulated through each
 date, ending on their last planned working day.
 Actual burn rate is derived from hours spent over the days elapsed so far, and
@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 
 from budgie.core.actuals import Observation
 from budgie.core.allocation import Allocation
-from budgie.core.calendar import HOURS_PER_WEEK, workdays_between
+from budgie.core.calendar import HOURS_PER_WEEK, YearSpan, workdays_between
 
 if TYPE_CHECKING:
     from budgie.core.plan import AllocationPlan
@@ -87,7 +87,7 @@ class BurndownStatus:
     """Where a person stands against an even-pace burn of their allocation."""
 
     allocation: Allocation
-    year: int
+    span: YearSpan
     as_of: date
     days_in_year: int
     days_elapsed: int
@@ -99,7 +99,7 @@ class BurndownStatus:
         """Whether the plan has hours for this person (else pace is an even burn)."""
         return (
             self.plan is not None
-            and self.plan.fraction_through(self.allocation.name, self.year, self.as_of)
+            and self.plan.fraction_through(self.allocation.name, self.span, self.as_of)
             is not None
         )
 
@@ -109,13 +109,13 @@ class BurndownStatus:
         The plan's hours accumulated through ``day`` when they have a plan,
         otherwise an even burn across the year.
         """
-        day = min(max(day, date(self.year, 1, 1)), date(self.year, 12, 31))
+        day = min(max(day, self.span.first), self.span.last)
         name = self.allocation.name
         fraction = (
-            self.plan.fraction_through(name, self.year, day) if self.plan else None
+            self.plan.fraction_through(name, self.span, day) if self.plan else None
         )
         if fraction is None:
-            fraction = ((day - date(self.year, 1, 1)).days + 1) / self.days_in_year
+            fraction = ((day - self.span.first).days + 1) / self.days_in_year
         return self.allocation.allocated_hours * fraction
 
     @property
@@ -169,11 +169,11 @@ class BurndownStatus:
         Counted over the *real working days* left after ``as_of`` -- Mon-Fri
         minus federal holidays -- so a December reading doesn't imply there are
         four more weeks of capacity than there are. With a plan the window ends
-        on the person's last planned working day, not Dec 31.
+        on the person's last planned working day, not the year's last day.
         """
-        end = date(self.year, 12, 31)
+        end = self.span.last
         if self.planned:
-            end = self.plan.last_planned_day(self.allocation.name, self.year) or end
+            end = self.plan.last_planned_day(self.allocation.name, self.span) or end
         return RequiredPace(
             hours_remaining=self.allocation.allocated_hours - self.hours_spent,
             workdays_remaining=workdays_between(self.as_of + timedelta(days=1), end),
@@ -188,12 +188,12 @@ class BurndownStatus:
         day = self.allocation.allocated_hours / rate
         if day > self.days_in_year:
             return None
-        return date(self.year, 1, 1) + timedelta(days=day)
+        return self.span.first + timedelta(days=day)
 
 
 def burndown(
     allocation: Allocation,
-    year: int,
+    span: YearSpan,
     as_of: date | None = None,
     observations: Sequence[Observation] | None = None,
     plan: AllocationPlan | None = None,
@@ -202,7 +202,7 @@ def burndown(
 
     Args:
         allocation: The person's FTE allocation and hours spent.
-        year: The budget year.
+        span: The budget year (see :func:`~budgie.core.calendar.year_span`).
         as_of: Date to measure against. Defaults to the date of the latest
             observation when there is one (a dated reading beats "today", which
             would otherwise stretch the elapsed window and understate the burn
@@ -212,9 +212,8 @@ def burndown(
         plan: The allocation plan. Someone it has hours for gets a plan-shaped
             pace line and a pace window ending on their last planned day.
     """
-    start = date(year, 1, 1)
-    end = date(year, 12, 31)
-    days_in_year = (end - start).days + 1
+    start, end = span.first, span.last
+    days_in_year = span.days
 
     obs = tuple(sorted(observations, key=lambda o: o[0])) if observations else ()
 
@@ -240,7 +239,7 @@ def burndown(
     )
     return BurndownStatus(
         allocation=allocation,
-        year=year,
+        span=span,
         as_of=as_of,
         days_in_year=days_in_year,
         days_elapsed=(as_of - start).days + 1,

@@ -16,6 +16,7 @@ the rows, the same way the Plan form does.
 
 from __future__ import annotations
 
+import calendar
 import re
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -32,9 +33,6 @@ from budgie.core.montecarlo import simulate
 from budgie.core.plan import AllocationPlan, PlanEntry
 from budgie.core.project import Snapshot
 from budgie.core.solve import Cell, PlanCosting, entries_for, solve
-
-MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
-          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")  # fmt: skip
 
 #: Monte Carlo runs behind the readout's P50/P80. Fewer than the Forecast tab
 #: so every keystroke stays instant; the Forecast tab has the full figures.
@@ -54,7 +52,7 @@ def costing_for(snap: Snapshot) -> PlanCosting:
     return PlanCosting(
         plan=snap.plan or AllocationPlan(()),
         rates={p.name: p.hourly_cost for p in snap.people},
-        year=snap.year,
+        span=snap.span,
         pto=snap.pto,
         pto_by_name=snap._allocation_pto(),
         non_labor=snap.non_labor,
@@ -85,6 +83,11 @@ class GridModel:
         return costing_for(self.snap)
 
     @property
+    def months(self) -> list[str]:
+        """Column labels in the span's order (a fiscal year may start in Oct)."""
+        return [calendar.month_abbr[m] for _, m in self.snap.span.months]
+
+    @property
     def names(self) -> list[str]:
         """Everyone with a rate, then anyone only the plan names."""
         names = dict.fromkeys(p.name for p in self.snap.people)
@@ -110,7 +113,7 @@ class GridModel:
         booked = sorted({m for _, m in cells if not self.base.editable(m)})
         if booked:
             raise ValueError(
-                f"{', '.join(MONTHS[m - 1] for m in booked)} already booked"
+                f"{', '.join(self.months[m - 1] for m in booked)} already booked"
             )
         self.edits.update(dict.fromkeys(cells, fte))
 
@@ -134,7 +137,7 @@ class GridModel:
         people = snap.people
         if snap.readings:
             people = at_completion(
-                people, snap.readings, snap.year, plan=snap.plan
+                people, snap.readings, snap.span, plan=snap.plan
             ).people
         pct = simulate(
             people, iterations=READOUT_RUNS, seed=snap.seed, costs=snap.costs
@@ -230,7 +233,7 @@ class PlanGrid(Vertical):
         cursor = table.cursor_coordinate
         table.clear(columns=True)
         table.add_column("Name", key="name")
-        for m, label in enumerate(MONTHS, 1):
+        for m, label in enumerate(model.months, 1):
             table.add_column(label if model.base.editable(m) else f"[dim]{label}[/dim]")
         scratch = model.scratch
         for name in model.names:

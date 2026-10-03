@@ -104,7 +104,7 @@ INPUTS: dict[str, tuple[str, str, tuple[str, ...]]] = {
 }
 
 # Settings a workspace can pin so you stop retyping them on every command.
-SETTINGS = ("year", "pto", "iterations", "seed")
+SETTINGS = ("year", "year_start", "pto", "iterations", "seed")
 
 
 @dataclass(frozen=True)
@@ -175,7 +175,7 @@ class Workspace:
         return str(path) if path.is_file() else None
 
     def setting(self, key: str, default=None):
-        """A pinned default from ``budgie.yaml`` (year, pto, iterations, seed)."""
+        """A pinned default from ``budgie.yaml`` (year, year_start, pto, iterations, seed)."""
         value = self.settings.get(key)
         return default if value is None else value
 
@@ -329,6 +329,13 @@ def load_workspace(config_path: str | Path) -> Workspace:
         raise TypeError(f"{path.name} must be a mapping, got {type(data).__name__}")
 
     settings = {k: data[k] for k in SETTINGS if k in data}
+    if "year_start" in settings:
+        from budgie.core.calendar import year_start_month
+
+        try:
+            year_start_month(settings["year_start"])
+        except ValueError as exc:
+            raise ValueError(f"{path.name}: {exc}") from None
     # Anything under `inputs:` overrides a default filename; `budget:` doubles
     # as a plain number, so it is only a path when it looks like one.
     paths = dict(data.get("inputs") or {})
