@@ -133,6 +133,8 @@ def test_a_project_setting_supplies_the_default(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert "Assumptions in force for 2031" in result.output
     assert "12 days" in result.output
+    assert "Where numbers come from" in result.output
+    assert "edit the module" not in " ".join(result.output.split())
 
 
 def test_an_explicit_option_still_beats_the_project(tmp_path, monkeypatch):

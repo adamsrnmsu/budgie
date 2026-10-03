@@ -148,20 +148,22 @@ PHASES: tuple[Phase, ...] = (
     Phase(
         number=2,
         title="Describe the team",
-        goal="Two files carry almost all the signal: who costs what, and who is "
-        "assigned how much.",
+        goal="Two files carry almost all the signal: plan.csv (who, how much, "
+        "from when) and people.csv (what an hour costs, how far hours may stray).",
         steps=(
             Step(
                 "people.csv",
-                "One row per person: their hourly cost, and a low/likely/high "
-                "guess at their hours. The guess is what becomes a confidence "
-                "range -- widen it when you genuinely don't know.",
+                "One row per person: hourly cost, plus optional under / over "
+                "percentages for how far hours may stray from the plan. That "
+                "spread becomes the confidence range -- widen it when you "
+                "genuinely don't know.",
                 is_command=False,
             ),
             Step(
-                "allocations.csv",
-                "Each person's FTE share and the hours they've already spent. "
-                "This is what `hours` and `emails` report on.",
+                "plan.csv",
+                "Who works how much, from when: name, effective_date, fte. "
+                "Append a row when allocations change; this sets everyone's "
+                "hours. allocations.csv is now only email and pto_days.",
                 is_command=False,
             ),
             Step(

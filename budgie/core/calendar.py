@@ -270,8 +270,8 @@ def explain_pto(ph: ProductiveHours, fte: float = 0.25) -> str:
         return (
             f"No PTO is set, so there is nothing to pro-rate: {fte:g} FTE is "
             f"{fte:g} x {ph.productive_hours:,.0f} = "
-            f"{fte * ph.productive_hours:,.0f} h. Set --pto (or a pto_days "
-            f"column) to see the difference this rule makes."
+            f"{fte * ph.productive_hours:,.0f} h. Set pto in budgie.yaml or --pto (or a "
+            f"pto_days column in people.csv) to see the difference this rule makes."
         )
     full_time = ph.available_hours
     prorated = fte * full_time
