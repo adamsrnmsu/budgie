@@ -310,6 +310,55 @@ def test_what_if_seeds_a_flat_fte_at_the_spans_first_day(tmp_path):
     assert after.plan.entries[0] == PlanEntry("Alice", date(2026, 10, 1), 0.5)
 
 
+def _fy27_planned(tmp_path):
+    """Alice 1.0 all year, Bob 0.5 from Apr 1, Carol only in allocations.csv."""
+    (tmp_path / "budgie.yaml").write_text('year: 2027\nyear_start: "10-01"\n')
+    (tmp_path / "people.csv").write_text(
+        "name,hourly_cost\nAlice,100\nBob,50\nCarol,80\n"
+    )
+    (tmp_path / "plan.csv").write_text(
+        "name,effective_date,fte\nAlice,2026-10-01,1\nBob,2027-04-01,0.5\n"
+    )
+    (tmp_path / "allocations.csv").write_text("name,fte\nCarol,0.25\n")
+    return tmp_path
+
+
+def test_plan_csv_sets_the_snapshots_hours_over_fy27(tmp_path):
+    # Bob: Apr..Sep = 22+20+21+21+22+21 = 127 days x 7.968 x 0.5 = 505.968.
+    # Carol is seeded at 0.25 from Oct 1: 1992 x 0.25 = 498.
+    from budgie.core.forecast import forecast
+
+    snap = load_snapshot(_fy27_planned(tmp_path))
+    hours = {p.name: p.hours.mode for p in snap.people}
+    assert hours == pytest.approx({"Alice": 1992.0, "Bob": 505.968, "Carol": 498.0})
+    assert snap.warnings == [
+        "Carol has no rows in plan.csv; using allocations.csv fte 0.25 from Oct 1."
+    ]
+    assert forecast(snap.people).labor_cost == pytest.approx(
+        1992 * 100 + 505.968 * 50 + 498 * 80
+    )
+
+
+def test_the_solver_prices_and_edits_fy27_months_in_fiscal_order():
+    # Month 1 is Oct 2026, 12 is Sep 2027. Halving Alice in Dec 2026 and
+    # Jan 2027 (months 3 and 4: 22 + 19 days) saves 0.5 x 41 x 7.968 x 100.
+    from budgie.core.solve import PlanCosting, entries_for, months
+
+    assert months(FY27)[0] == (date(2026, 10, 1), date(2026, 10, 31))
+    assert months(FY27)[11] == (date(2027, 9, 1), date(2027, 9, 30))
+    plan = AllocationPlan((PlanEntry("Alice", date(2026, 10, 1), 1.0),))
+    c = PlanCosting(plan=plan, rates={"Alice": 100.0}, span=FY27)
+    assert c.cost() == pytest.approx(199_200)
+
+    rows = entries_for(c, {("Alice", 3): 0.5, ("Alice", 4): 0.5})
+    assert rows == [
+        PlanEntry("Alice", date(2026, 12, 1), 0.5),
+        PlanEntry("Alice", date(2027, 2, 1), 1.0),
+    ]
+    edited = AllocationPlan((*plan.entries, *rows))
+    assert c.cost(edited) == pytest.approx(199_200 - 0.5 * 41 * 7.968 * 100)
+
+
 def test_a_scenario_without_a_year_is_an_error(tmp_path):
     shutil.copy(TESTS_DIR / "team.csv", tmp_path / "team.csv")
     config = tmp_path / "scenarios.yaml"
