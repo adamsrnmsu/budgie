@@ -65,7 +65,7 @@ plan cost = Σ people: rate × (hours up to as_of + plan hours after as_of) + no
   - Preview is `cost(AllocationPlan(plan.entries + entries))`. Commit
     appends the same rows, so preview and commit cannot disagree.
 
-## Grid (budgie-w3l.2, blocked on budgie-3oj)
+## Grid (budgie-w3l.2, built in `budgie/plan_grid.py`)
 
 The grid gets built after step B, so the Forecast tab agrees with the grid's
 readout. It lives in its own module, which the TUI imports, so it does not

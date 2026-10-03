@@ -629,7 +629,8 @@ async def test_escape_leaves_the_plan_form(tmp_path, monkeypatch):
         await pilot.pause()
         await pilot.press("escape")
         await pilot.pause()
-        assert app.focused is app.query_one("#plan_table")
+        # The month grid is the Plan tab's default view, so Escape lands there.
+        assert app.focused is app.query_one("#grid_table")
         # The digit keys switch tabs again instead of typing into the form.
         await pilot.press("4")
         await pilot.pause()
