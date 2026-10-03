@@ -31,7 +31,7 @@ from pathlib import Path
 import yaml
 
 from budgie.core.budget import coerce_budget
-from budgie.core.calendar import productive_hours, year_span
+from budgie.core.calendar import productive_hours, year_span, year_start_month
 from budgie.core.costs import load_costs
 from budgie.core.forecast import Forecast
 from budgie.core.forecast import forecast as run_forecast
@@ -78,6 +78,10 @@ def run_scenarios(config_path: str | Path) -> tuple[list[ScenarioResult], float]
     seed = config.get("seed")
     cost_spec = config.get("costs")
     year_start = str(config.get("year_start", "01-01"))
+    try:
+        year_start_month(year_start)
+    except ValueError as exc:
+        raise ValueError(f"{config_path.name}: {exc}") from None
     specs = config["scenarios"]
     if not specs:
         raise ValueError("config must define at least one scenario")
@@ -91,7 +95,12 @@ def run_scenarios(config_path: str | Path) -> tuple[list[ScenarioResult], float]
             raise ValueError(
                 f"{config_path}: scenario {spec.get('name', '?')!r} has no year"
             )
-        span = year_span(int(spec["year"]), str(spec.get("year_start", year_start)))
+        try:
+            span = year_span(int(spec["year"]), str(spec.get("year_start", year_start)))
+        except ValueError as exc:
+            raise ValueError(
+                f"{config_path.name}: scenario {spec.get('name', '?')!r}: {exc}"
+            ) from None
         ph = productive_hours(span, pto_days=float(spec.get("pto", 0.0)))
         costs = (
             load_costs(_resolve(cost_spec, base_dir), span=span) if cost_spec else []
