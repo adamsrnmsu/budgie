@@ -225,8 +225,8 @@ async def test_narrow_terminal_drops_the_percentile_glosses(tmp_path, monkeypatc
     # wrapped label costs a row and separates the figure from its explanation.
     assert narrow.count("\n") == wide.count("\n") == 2
     assert "P90" in narrow and "P90" in wide
-    assert "reserve this" in wide
-    assert "reserve this" not in narrow
+    assert "Reserve" in wide
+    assert "Reserve" not in narrow
     assert max(len(line) for line in narrow.splitlines()) < 34
 
 
@@ -816,3 +816,27 @@ async def test_the_forecast_tab_has_no_unsaved_setting_boxes(tmp_path, monkeypat
         await pilot.pause()
         for gone in ("#year", "#pto", "#iterations", "#seed", "#recalc"):
             assert not app.query(gone)
+
+
+async def test_forecast_shows_settings_planned_hours_and_range(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    with (tmp_path / "people.csv").open("a") as people:
+        people.write("Carol,90,0.5,0.5,0.5\n")  # a rate, but no plan rows
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert _text(app, "#forecast_settings").startswith(
+            "2026 · PTO 0d · 10,000 runs"
+        )
+        table = app.query_one("#forecast")
+        rows = {
+            str(table.get_row_at(i)[0]): table.get_row_at(i)
+            for i in range(table.row_count)
+        }
+        assert rows["Alice"][1] == "$95/h"
+        low, high = (float(x.replace(",", "")) for x in rows["Alice"][3].split("–"))
+        assert low < float(rows["Alice"][2].replace(",", "")) < high
+        assert rows["Carol"][2] == "0" and rows["Carol"][3] == "—"
