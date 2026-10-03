@@ -1173,6 +1173,7 @@ def monthly(
     people = load_people(people_csv, productive_hours=ph)
     if on_plan:
         people = _on_plan(people, span, ph)
+    costs_csv = costs_csv or _workspace_input("costs")
     costs = load_costs(costs_csv, span=span) if costs_csv else []
     budget = _budget_from(budget_arg) if budget_arg else None
 

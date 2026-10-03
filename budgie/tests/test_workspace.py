@@ -211,3 +211,19 @@ def test_hours_uses_the_project_allocations(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert "Slartibartfast" in result.output
+
+
+def test_monthly_uses_the_project_costs_like_forecast(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    args = ["monthly", "--iterations", "200", "--seed", "1"]
+    header = "name,category,date,amount,low,high,recurring\n"
+    (tmp_path / "costs.csv").write_text(header)
+    without = _run_in(tmp_path, monkeypatch, args)
+    (tmp_path / "costs.csv").write_text(
+        header + "Zorp hosting,hosting,2026-01-01,123457,,,yes\n"
+    )
+
+    result = _run_in(tmp_path, monkeypatch, args)
+
+    assert result.exit_code == 0, result.output
+    assert result.output != without.output
