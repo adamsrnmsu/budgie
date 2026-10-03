@@ -1,7 +1,7 @@
 # One model: the plan sets the hours, everyone quotes the same number
 
 Date: 2026-10-02
-Status: approved 2026-10-02 ("B now"); implemented, plan docs/superpowers/plans/2026-10-02-one-model.md
+Status: approved 2026-10-02 (choices picked from mocks: under/over %, controls removed, unplanned = 0 h + warning)
 Review: `2026-10-02-ux-review.md`, step B. Step C (editing the Plan tab in the
 TUI) and step D (teaching) get their own specs once this one is approved;
 they build on the interfaces named under "Hooks for later steps".
@@ -112,11 +112,30 @@ Budget $425,000 · spent $96,450 · forecast P50 $331,220 · headroom $93,780 ·
 Under it come the per-person table, the cost lines, the P10/P50/P90 pane and
 any warnings.
 
-**The Year / PTO / Iterations / Seed boxes are removed.** They change numbers
-for one session without saving, which the review found confusing. Those
-settings live in budgie.yaml.
-- **Proposed:** budgie.yaml is opened with `e` from the Projects tab.
-- **Alternative:** keep the boxes, relabelled "What-if (not saved)".
+**The Year / PTO / Iterations / Seed boxes are removed** (decided). They
+changed numbers for one session without saving. Those settings live in
+budgie.yaml, which `e` on the Projects tab opens. A one-line settings summary
+replaces the boxes: `2026 · PTO 0d · 10,000 runs (e on Projects edits)`.
+
+**Layout** (agreed from the mock):
+
+```
+Budget $425,000 · spent $96,450 · forecast P50 $331,220 · headroom $93,780 · ● GOOD (3% over)
+2026 · PTO 0d · 10,000 runs   (e on Projects edits)
+⚠ warnings, one per line
+
+Name   Rate    Planned h   Range          Cost
+Alice  $95/h     1,465     1,319–1,538    $139,175
+Carol  $90/h         0     —              $0
+Non-labour                                $36,000
+
+Likely low  P10  $318,900
+Expected    P50  $331,220
+Reserve     P90  $343,100
+```
+
+"Planned h" is the hours at completion: what's already spent plus the
+remaining plan. "Range" is that figure's low to high.
 
 The CLI `forecast` uses the same Snapshot, so its numbers match the TUI's to
 the dollar for the same project, seed and iterations.

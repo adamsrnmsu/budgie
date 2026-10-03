@@ -325,18 +325,17 @@ def _fy27_planned(tmp_path):
 
 def test_plan_csv_sets_the_snapshots_hours_over_fy27(tmp_path):
     # Bob: Apr..Sep = 22+20+21+21+22+21 = 127 days x 7.968 x 0.5 = 505.968.
-    # Carol is seeded at 0.25 from Oct 1: 1992 x 0.25 = 498.
+    # Carol has a rate and an allocations.csv fte but no plan rows: 0 hours
+    # (budgie-y5r).
     from budgie.core.forecast import forecast
 
     snap = load_snapshot(_fy27_planned(tmp_path))
     hours = {p.name: p.hours.mode for p in snap.people}
-    assert hours == pytest.approx({"Alice": 1992.0, "Bob": 505.968, "Carol": 498.0})
+    assert hours == pytest.approx({"Alice": 1992.0, "Bob": 505.968, "Carol": 0.0})
     assert snap.warnings == [
-        "Carol has no rows in plan.csv; using allocations.csv fte 0.25 from Oct 1."
+        "Carol has a rate in people.csv but no rows in plan.csv, so 0 hours."
     ]
-    assert forecast(snap.people).labor_cost == pytest.approx(
-        1992 * 100 + 505.968 * 50 + 498 * 80
-    )
+    assert forecast(snap.people).labor_cost == pytest.approx(1992 * 100 + 505.968 * 50)
 
 
 def test_the_solver_prices_and_edits_fy27_months_in_fiscal_order():

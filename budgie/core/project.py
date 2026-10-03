@@ -114,21 +114,16 @@ def people_on_plan(
     span: YearSpan,
     pto: float = 0.0,
     pto_by_name: Mapping[str, float] | None = None,
-    flat_fte: Mapping[str, float] | None = None,
 ) -> tuple[list[Person], list[str]]:
     """The team with each person's hours taken from ``plan``, plus warnings.
 
     A planned person's likely hours are ``plan.allocated_hours`` and their low
     and high are that figure scaled by ``Person.spread``, so people.csv says
     what an hour costs and how far real hours may stray, and the plan says how
-    many there are. Someone in people.csv with no plan rows gets 0 hours;
-    someone in the plan with no rate is not costed. Both are warned about,
-    because either one quietly changes the total.
-
-    ``flat_fte`` is allocations.csv's ``fte`` column: someone it gives a
-    non-zero FTE whom the plan doesn't mention is carried at that FTE from
-    ``span.first`` -- the rule allocated hours already follow -- so hours and
-    cost agree. That is a warning too.
+    many there are. Someone in people.csv with no plan rows gets 0 hours --
+    no plan rows means not on the project, whatever allocations.csv's ``fte``
+    says; someone in the plan with no rate is not costed. Both are warned
+    about, because either one quietly changes the total.
 
     PTO is the person's own ``pto_days`` from people.csv, else ``pto_by_name``
     (allocations.csv), else ``pto``; when both files give one and they differ,
@@ -147,19 +142,7 @@ def people_on_plan(
         ]
 
     rated = {p.name for p in people}
-    seeds = [
-        PlanEntry(name, span.first, fte)
-        for name, fte in (flat_fte or {}).items()
-        if fte and name in rated and name not in plan.names
-    ]
-    start = f"{span.first:%b} {span.first.day}"
-    warnings = [
-        f"{e.name} has no rows in plan.csv; using allocations.csv fte {e.fte:g} "
-        f"from {start}."
-        for e in seeds
-    ]
-    if seeds:
-        plan = AllocationPlan((*plan.entries, *seeds))
+    warnings: list[str] = []
     planned = set(plan.names)
     out = []
     for person in people:
@@ -294,19 +277,9 @@ class Snapshot:
         return replace(self, **changes)._on_plan()
 
     def _on_plan(self) -> Snapshot:
-        """``people`` and ``warnings`` re-derived from ``plan``.
-
-        Someone in allocations.csv the plan doesn't mention keeps their flat
-        ``fte`` from the year's first day -- the same rule allocated hours
-        follow -- so hours and cost agree; that is still worth a warning.
-        """
+        """``people`` and ``warnings`` re-derived from ``plan``."""
         people, warnings = people_on_plan(
-            self.people,
-            self.plan,
-            self.span,
-            self.pto,
-            self._allocation_pto(),
-            flat_fte={a.name: a.fte for a in self.allocations},
+            self.people, self.plan, self.span, self.pto, self._allocation_pto()
         )
         return replace(self, people=people, warnings=warnings)
 

@@ -182,7 +182,8 @@ def test_what_if_and_with_plan_move_cost_not_just_hours(project):
     assert any("Zed is in plan.csv but has no rate" in w for w in hired.warnings)
 
 
-def test_an_allocation_without_plan_rows_keeps_its_flat_fte(project):
+def test_no_plan_rows_is_zero_hours_even_with_an_allocation_fte(project):
+    # Decided from the mocks: no plan rows means not on the project.
     (project / "plan.csv").write_text(
         f"name,effective_date,fte\nAlice,{YEAR}-01-01,0.9\n"
     )
@@ -190,11 +191,26 @@ def test_an_allocation_without_plan_rows_keeps_its_flat_fte(project):
     snap = load_snapshot(project)
 
     bob = {p.name: p for p in snap.people}["Bob"]
-    assert bob.hours.mode == pytest.approx(snap.allocated["Bob"])
-    assert bob.hours.mode > 0
+    assert bob.hours == HoursEstimate.constant(0.0)
     assert snap.warnings == [
-        "Bob has no rows in plan.csv; using allocations.csv fte 0.85 from Jan 1."
+        "Bob has a rate in people.csv but no rows in plan.csv, so 0 hours."
     ]
+
+
+def test_previewing_two_plans_in_a_row_drops_a_removed_person(project):
+    # budgie-y5r: a second with_plan must not carry Bob at the first plan's
+    # average once his rows are gone.
+    snap = load_snapshot(project)
+    first = snap.what_if(plan_entries=[PlanEntry("Bob", date(YEAR, 7, 1), 0.5)])
+    without_bob = AllocationPlan(
+        tuple(e for e in first.plan.entries if e.name != "Bob")
+    )
+
+    second = first.with_plan(without_bob)
+
+    bob = {p.name: p for p in second.people}["Bob"]
+    assert bob.hours == HoursEstimate.constant(0.0)
+    assert second.people == snap.with_plan(without_bob).people
 
 
 def test_without_a_plan_the_numbers_are_unchanged(project):

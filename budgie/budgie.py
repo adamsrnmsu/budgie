@@ -169,20 +169,14 @@ def _on_plan(people, span, ph):
     sets the hours, people.csv the rate and spread. Project plan or nothing,
     as for ``hours``. Without a plan the team comes back unchanged.
     """
-    from budgie.core.allocation import load_allocations, pto_overrides
+    from budgie.core.allocation import pto_overrides
     from budgie.core.project import people_on_plan
     from budgie.singletons import console
 
     _, plan = _plan_for_allocations(None)
     alloc_csv = _workspace_input("allocations") if plan else None
-    flat = load_allocations(alloc_csv, ph) if alloc_csv else []
     people, warnings = people_on_plan(
-        people,
-        plan,
-        span,
-        ph.pto_days,
-        pto_overrides(alloc_csv) if alloc_csv else None,
-        flat_fte={a.name: a.fte for a in flat},
+        people, plan, span, ph.pto_days, pto_overrides(alloc_csv) if alloc_csv else None
     )
     for warning in warnings:
         console.print(f"[yellow]⚠ {warning}[/yellow]")
