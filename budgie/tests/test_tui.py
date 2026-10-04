@@ -496,6 +496,7 @@ def test_run_execs_the_target_after_the_app_exits(monkeypatch):
 SUITE_TMUX = "/private/tmp/tmux-501/pi,123,0"
 TMUX = ["tmux", "-L", "pi"]
 G_KEY = json.dumps(SUITE["gitboard"], sort_keys=True)
+LIST = [*TMUX, "list-windows", "-t", "pi", "-F", "#{window_name}\t#{@entry}"]
 
 
 @pytest.fixture
@@ -506,17 +507,25 @@ def hops(monkeypatch):
     class Fake:
         listing = ""
         stderr = ""
+        list_fail = ""  # non-empty: list-windows itself fails with it
+        dies = False  # True: a spawned window is gone when looked at again
 
     def run(argv, **kw):
         calls.append(list(argv))
         if "list-windows" in argv:
-            return subprocess.CompletedProcess(argv, 0, Fake.listing, "")
+            if Fake.list_fail:
+                return subprocess.CompletedProcess(argv, 1, "", Fake.list_fail)
+            spawned = any(c[3] in ("new-window", "respawn-window") for c in calls)
+            up = spawned and not Fake.dies
+            listing = "perch\t{}\ngitboard\t{}\n" if up else Fake.listing
+            return subprocess.CompletedProcess(argv, 0, listing, "")
         return subprocess.CompletedProcess(
             argv, 1 if Fake.stderr else 0, "", Fake.stderr
         )
 
     Fake.calls = calls
     monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(tui_mod.time, "sleep", lambda s: None)
     monkeypatch.setenv("TMUX", SUITE_TMUX)
     monkeypatch.setenv("PI_SUITE", json.dumps(SUITE))
     return Fake
@@ -564,13 +573,14 @@ def test_hop_to_a_missing_window_opens_it(hops):
             "@entry",
             G_KEY,
         ],
+        LIST,  # did the new window survive startup?
     ]
 
 
 def test_hop_to_another_entry_respawns_only_that_window(hops):
     hops.listing = 'gitboard\t{"argv": ["gitboard", "tui", "grp/b"], "cwd": "/gb"}\n'
     tui_mod.hop("gitboard", SUITE["gitboard"])
-    assert hops.calls[-1] == [
+    assert hops.calls[-2] == [
         *TMUX,
         "respawn-window",
         "-k",
@@ -600,7 +610,7 @@ def test_hop_to_another_entry_respawns_only_that_window(hops):
 def test_hop_without_a_recorded_entry_respawns(hops):
     hops.listing = "gitboard\t\n"
     tui_mod.hop("gitboard", SUITE["gitboard"])
-    assert hops.calls[-1][3:5] == ["respawn-window", "-k"]
+    assert hops.calls[-2][3:5] == ["respawn-window", "-k"]
 
 
 def test_hop_that_tmux_refuses_says_why(hops):
@@ -618,7 +628,7 @@ async def test_in_the_suite_p_hops_and_budgie_keeps_running(
         await pilot.press("P")
         await pilot.pause()
         assert app.is_running
-    assert hops.calls[-1][3] == "new-window"
+    assert hops.calls[-2][3] == "new-window"
 
 
 async def test_in_the_suite_a_failed_hop_says_why(tmp_path, monkeypatch, hops):
@@ -1258,3 +1268,35 @@ async def test_the_plan_tab_has_one_hint_and_it_describes_the_grid(
     assert "plan.csv" in hint
     for key in ("c ", "x ", "g "):
         assert key in hint
+
+
+def test_hop_with_a_failed_list_windows_says_why_and_spawns_nothing(hops):
+    hops.list_fail = "no server running"
+    assert tui_mod.hop("gitboard", SUITE["gitboard"]) == "no server running"
+    assert hops.calls == [LIST]
+
+
+def test_hop_with_duplicate_windows_uses_the_first(hops):
+    hops.listing = f"gitboard\t{G_KEY}\ngitboard\t{{}}\n"
+    assert tui_mod.hop("gitboard", SUITE["gitboard"]) is None
+    assert hops.calls[-1][3] == "select-window"
+
+
+def test_hop_to_an_app_that_dies_at_startup_says_so(hops):
+    hops.listing = "perch\t{}\n"
+    hops.dies = True
+    assert tui_mod.hop("gitboard", SUITE["gitboard"]) == "gitboard exited at startup"
+
+
+def test_the_project_in_an_entry_makes_another_project_respawn(hops):
+    old = {**SUITE["gitboard"], "project": "a"}
+    new = {**SUITE["gitboard"], "project": "b"}
+    hops.listing = f"gitboard\t{json.dumps(old, sort_keys=True)}\n"
+    tui_mod.hop("gitboard", new)
+    assert hops.calls[-2][3] == "respawn-window"
+
+
+def test_suite_entry_keeps_the_project(monkeypatch):
+    m = {"gitboard": {**SUITE["gitboard"], "project": "a"}}
+    monkeypatch.setenv("PI_SUITE", json.dumps(m))
+    assert tui_mod.suite_entry("gitboard") == m["gitboard"]
