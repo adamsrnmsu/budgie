@@ -20,6 +20,10 @@ Like every other front-end this file contains no budgeting math -- it wires
 widgets to the engine. The one thing it *writes* is a plan row, and it appends
 rather than edits, because that is what :mod:`budgie.core.plan` models: history
 is a record, not mutable current state.
+
+Keys: ``1``-``5`` tabs, ``r`` recalculate, ``e`` edit, ``?`` help, ``q`` quit; ``P``
+and ``G`` hop to perch / gitboard via ``$PI_SUITE`` (set by ``perch tui``; started
+standalone they say "start from perch tui to switch apps").
 """
 
 from __future__ import annotations
