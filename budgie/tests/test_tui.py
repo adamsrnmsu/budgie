@@ -1244,3 +1244,17 @@ async def test_no_code_names_on_screen(tmp_path, monkeypatch):
     code = re.compile(r"util_|hours_low|effective_date|\bmode\b|\bstd\b|\bsims\b")
     for text in shown:
         assert not code.search(text), text
+
+
+async def test_the_plan_tab_has_one_hint_and_it_describes_the_grid(
+    tmp_path, monkeypatch
+):
+    _project(tmp_path, monkeypatch)
+    app = BudgieTUI()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        assert len(app.query("#tab_plan .hint, #tab_plan .tab-hint")) == 1
+        hint = _text(app, "#tab_plan .tab-hint")
+    assert "plan.csv" in hint
+    for key in ("c ", "x ", "g "):
+        assert key in hint

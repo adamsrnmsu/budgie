@@ -116,8 +116,9 @@ _HINTS = {
     "settings (budgie.yaml), d twice deletes it.",
     "tab_inputs": "The files behind every number — e opens the highlighted one "
     "in $EDITOR, then r recalculates.",
-    "tab_plan": "Who works on this, and when? plan.csv: one row per change — "
-    "a name, the date it starts, an FTE.",
+    "tab_plan": "Who works on this, and when? Each month's FTE from plan.csv — "
+    "edits preview the cost, c appends them as dated rows (history is never "
+    "edited), x discards, g lists the changes. 0 FTE takes someone off.",
     "tab_forecast": "Will we run out? Built from plan.csv (hours), people.csv "
     "(rates), weekly.csv (spent), costs.csv, budget.",
     "tab_assumptions": "How is each number built? The model, this year's hours "
@@ -605,7 +606,6 @@ class BudgieTUI(App):
         background: $error 20%;
         color: $text;
     }
-    .hint { padding: 1 2; color: $text-muted; }
     .tab-hint { height: auto; padding: 1 2 0 2; }
     .status { padding: 0 2; color: $success; height: 1; }
     .status.error { color: $error; }
@@ -763,11 +763,6 @@ class BudgieTUI(App):
                 yield Static(id="source")
 
     def _compose_plan(self) -> ComposeResult:
-        yield Static(
-            "Re-planning appends a dated row -- it never edits history. "
-            "0 FTE takes someone off the project.",
-            classes="hint",
-        )
         form = Horizontal(id="plan_form")
         form.border_title = "Append a change"
         with form:
