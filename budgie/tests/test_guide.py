@@ -337,3 +337,12 @@ def test_delete_rejects_an_unknown_name(tmp_path, monkeypatch):
     assert result.exit_code != 0
     assert "No project called nope" in result.output
     assert (tmp_path / DEFAULT_PROJECT_DIR / "fy26" / "budgie.yaml").is_file()
+
+
+def test_the_guide_explains_year_start(tmp_path, monkeypatch):
+    text = " ".join(_run(["guide"], tmp_path, monkeypatch).output.split())
+
+    assert "year_start" in text
+    assert "--year-start 10-01" in text
+    assert "FY27" in text
+    assert "ISO weeks 40-53" in text

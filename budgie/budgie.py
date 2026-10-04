@@ -17,6 +17,8 @@ from pathlib import Path
 
 import click
 
+from budgie import blocks
+
 # Stoplight glyph + rich color per signal, keyed by Signal.name so rendering the
 # table never has to import the engine's enum.
 _SIGNAL_STYLE = {
@@ -442,14 +444,26 @@ def forecast(
     sim = simulate(people, iterations=iterations, seed=seed, costs=costs)
     pct = sim.percentiles()
 
-    if readings:
-        _print_eac_note(readings, len(people))
-    _print_forecast_table(det, readings)
-    if costs:
-        _print_costs_table(det)
-    _print_montecarlo_summary(sim, pct)
-    if budget is not None:
-        _print_signal(sim, budget)
+    if blocks.wanted():
+        out = []
+        if readings:
+            out += _eac_note_blocks(readings, len(people))
+        out += _forecast_table_blocks(det, readings)
+        if costs:
+            out += _costs_table_blocks(det)
+        out += _montecarlo_blocks(sim, pct)
+        if budget is not None:
+            out += _signal_blocks(sim, budget)
+        blocks.emit(out)
+    else:
+        if readings:
+            _print_eac_note(readings, len(people))
+        _print_forecast_table(det, readings)
+        if costs:
+            _print_costs_table(det)
+        _print_montecarlo_summary(sim, pct)
+        if budget is not None:
+            _print_signal(sim, budget)
 
     if plots:
         from budgie.plots import forecast_bars, montecarlo_histogram
@@ -458,7 +472,10 @@ def forecast(
         out.mkdir(parents=True, exist_ok=True)
         hist = montecarlo_histogram(sim, out / "montecarlo.png")
         bars = forecast_bars(det, out / "forecast.png")
-        console.print(f"[bold]Wrote[/bold] {hist} and {bars}")
+        if blocks.wanted():
+            blocks.emit([blocks.text(f"Wrote {hist} and {bars}")])
+        else:
+            console.print(f"[bold]Wrote[/bold] {hist} and {bars}")
 
 
 def _with_actuals(people, span, actuals_csv, weekly_csv, as_of, ignore_actuals):
@@ -492,20 +509,75 @@ def _with_actuals(people, span, actuals_csv, weekly_csv, as_of, ignore_actuals):
     return eac.people, eac.readings, observations
 
 
+def _eac_note_parts(readings, team_size):
+    """(sentence, aside or None) of the estimate-at-completion note."""
+    dates = sorted({when for when, _ in readings.values()})
+    as_of = f"{dates[0]}" if len(dates) == 1 else f"{dates[0]} to {dates[-1]}"
+    note = f"Estimate at completion — hours booked as of {as_of}"
+    note += ", plus a forecast of the time left."
+    aside = None
+    if len(readings) < team_size:
+        aside = (
+            f"{len(readings)} of {team_size} people have readings;"
+            " the rest are the full-year plan."
+        )
+    return note, aside
+
+
+def _eac_note_blocks(readings, team_size):
+    note, aside = _eac_note_parts(readings, team_size)
+    return [blocks.text(note + (f" {aside}" if aside else ""), tone="dim")]
+
+
 def _print_eac_note(readings, team_size):
     """One line saying the table is an estimate at completion, and as of when."""
     from budgie.singletons import console
 
-    dates = sorted({when for when, _ in readings.values()})
-    as_of = f"{dates[0]}" if len(dates) == 1 else f"{dates[0]} to {dates[-1]}"
-    note = f"[bold]Estimate at completion[/bold] — hours booked as of {as_of}"
-    note += ", plus a forecast of the time left."
-    if len(readings) < team_size:
-        note += (
-            f" [dim]{len(readings)} of {team_size} people have readings;"
-            " the rest are the full-year plan.[/dim]"
-        )
+    note, aside = _eac_note_parts(readings, team_size)
+    note = note.replace("Estimate at completion", "[bold]Estimate at completion[/bold]")
+    if aside:
+        note += f" [dim]{aside}[/dim]"
     console.print(note)
+
+
+def _forecast_table_blocks(det, readings=None):
+    """Blocks twin of :func:`_print_forecast_table`: same cells, plain strings."""
+    eac = bool(readings)
+    columns = ["Name", "$/hr"] + (["Spent"] if eac else [])
+    columns += ["At completion" if eac else "Hours", "Cost"]
+    rows = []
+    for item in det.line_items:
+        spent = []
+        if eac:
+            reading = readings.get(item.name)
+            spent = [f"{reading[1]:,.0f}" if reading else "—"]
+        rows.append(
+            [
+                item.name,
+                f"${item.hourly_cost:,.0f}",
+                *spent,
+                f"{item.hours:,.0f}",
+                f"${item.cost:,.0f}",
+            ]
+        )
+    total_spent = sum(hours for _, hours in (readings or {}).values())
+    rows.append(
+        [
+            "Total",
+            "",
+            *([f"{total_spent:,.0f}"] if eac else []),
+            f"{det.total_hours:,.0f}",
+            f"${det.labor_cost:,.0f}",
+        ]
+    )
+    return [
+        blocks.table(
+            columns,
+            rows,
+            title="Estimate at completion" if eac else "Deterministic forecast",
+            align=["l"] + ["r"] * (len(columns) - 1),
+        )
+    ]
 
 
 def _print_forecast_table(det, readings=None):
@@ -590,6 +662,79 @@ def _print_costs_table(det):
         "[bold]Labor + non-labor[/bold]", "", "", f"[bold]${det.total_cost:,.0f}[/bold]"
     )
     console.print(table)
+
+
+def _costs_table_blocks(det):
+    """Blocks twin of :func:`_print_costs_table`."""
+    from budgie.core.costs import by_category
+
+    rows = [
+        [
+            item.name,
+            item.category,
+            f"{item.when:%b %-d}" + (" (monthly)" if item.recurring else ""),
+            f"${item.total:,.0f}",
+        ]
+        for item in det.cost_items
+    ]
+    rows += [
+        [category, "", "", f"${amount:,.0f}"]
+        for category, amount in sorted(by_category(det.cost_items).items())
+    ]
+    rows += [
+        ["Non-labor", "", "", f"${det.non_labor_cost:,.0f}"],
+        ["Labor + non-labor", "", "", f"${det.total_cost:,.0f}"],
+    ]
+    return [
+        blocks.table(
+            ["Item", "Category", "When", "Total"],
+            rows,
+            title="Non-labor costs",
+            align=["l", "l", "l", "r"],
+        )
+    ]
+
+
+def _montecarlo_blocks(sim, pct):
+    """Blocks twin of :func:`_print_montecarlo_summary`."""
+    return [
+        blocks.heading(f"Monte Carlo ({sim.iterations:,} sims)", level=3),
+        blocks.figures(
+            [
+                blocks.figure("P10", f"${pct[10]:,.0f}"),
+                blocks.figure("P50", f"${pct[50]:,.0f}"),
+                blocks.figure("P90", f"${pct[90]:,.0f}"),
+                blocks.figure("mean", f"${sim.mean:,.0f}"),
+                blocks.figure("std", f"${sim.std:,.0f}"),
+            ]
+        ),
+    ]
+
+
+# rich colour -> block tone. BLUE (no change) has no tone.
+_SIGNAL_TONE = {"green": "good", "yellow": "warn", "red": "bad"}
+
+
+def _signal_blocks(sim, budget):
+    """Blocks twin of :func:`_print_signal`."""
+    from budgie.core.signals import evaluate
+
+    result = evaluate(sim, budget.latest)
+    _, color, word = _style(result.signal)
+    out = []
+    if budget.has_revisions:
+        out.append(
+            blocks.text(
+                f"Budget: original ${budget.original:,.0f} → current "
+                f"${budget.latest:,.0f} ({budget.net_change:+,.0f} over "
+                f"{len(budget.revisions)} revisions)",
+                tone="dim",
+            )
+        )
+    out.append(
+        blocks.text(f"● {word} — {result.rationale}", tone=_SIGNAL_TONE.get(color))
+    )
+    return out
 
 
 def _print_signal(sim, budget):
@@ -808,6 +953,20 @@ def emails(
         paths, charts_dir = _write_html_emails(statuses, span, out_dir)
     else:
         paths, charts_dir = write_drafts(statuses, span.label, out_dir), None
+
+    if blocks.wanted():
+        out = [
+            blocks.text(
+                f"Wrote {len(paths)} draft(s) to {out_dir}/ (review before sending)"
+            ),
+            blocks.bullets([str(p) for p in paths]),
+        ]
+        if charts_dir:
+            out.append(blocks.text(f"Burn-down charts in {charts_dir}/", tone="dim"))
+        blocks.emit(out)
+        # No preview: raw email text would not be a block, and the TUI's
+        # stdout is blocks only.
+        return
 
     console.print(
         f"[bold]Wrote {len(paths)} draft(s)[/bold] to {out_dir}/ (review before sending)"
@@ -1053,6 +1212,7 @@ def monthly(
     people = load_people(people_csv, productive_hours=ph)
     if on_plan:
         people = _on_plan(people, span, ph)
+    costs_csv = costs_csv or _workspace_input("costs")
     costs = load_costs(costs_csv, span=span) if costs_csv else []
     budget = _budget_from(budget_arg) if budget_arg else None
 
@@ -1356,6 +1516,9 @@ def status():
 
     display_startup_message()
     workspace = _workspace()
+    if blocks.wanted():
+        blocks.emit(_status_blocks(workspace))
+        return
     if workspace is None:
         console.print(
             "[yellow]No budgie.yaml found[/yellow] above "
@@ -1373,6 +1536,58 @@ def status():
             f"is only needed by the commands listed against it.[/dim]"
         )
     console.print(f"[dim]Settings from {workspace.config_path}[/dim]")
+
+
+def _status_blocks(workspace):
+    """Blocks twin of the `status` output (and :func:`_print_status_table`)."""
+    if workspace is None:
+        return [
+            blocks.text(
+                f"No budgie.yaml found above {Path.cwd()}. Commands are running "
+                f"against the bundled sample data in {THIS_DIR / 'tests'}.",
+                tone="warn",
+            ),
+            blocks.text(_no_project_message()),
+        ]
+    out = []
+    if workspace.settings:
+        out.append(
+            blocks.figures(
+                [
+                    blocks.figure(str(k), str(v))
+                    for k, v in sorted(workspace.settings.items())
+                ]
+            )
+        )
+    items = workspace.inputs()
+    out.append(
+        blocks.table(
+            ["", "File", "Rows", "What it is", "Used by"],
+            [
+                [
+                    "✓" if i.exists else "·",
+                    i.path.name,
+                    "" if i.rows is None else f"{i.rows}",
+                    i.description,
+                    " ".join(i.used_by),
+                ]
+                for i in items
+            ],
+            title=f"Project inputs — {workspace.root}",
+            align=["l", "l", "r", "l", "l"],
+        )
+    )
+    missing = [i for i in items if not i.exists]
+    if missing:
+        out.append(
+            blocks.text(
+                f"{len(missing)} input(s) not created yet. That's fine -- each "
+                "is only needed by the commands listed against it.",
+                tone="dim",
+            )
+        )
+    out.append(blocks.text(f"Settings from {workspace.config_path}", tone="dim"))
+    return out
 
 
 def _print_status_table(workspace):

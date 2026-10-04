@@ -4,10 +4,11 @@ Budgie Textual TUI.
 An interactive front-end over ``budgie.core``, laid out as the workflow the CLI
 teaches -- left to right, data to conclusion:
 
-    1 Inputs       the project's files: what exists, and open one in $EDITOR (default vim)
-    2 Plan         who is on the project and when; re-plan by appending a row
-    3 Forecast     assumptions in, cost + Monte Carlo out, recomputed live
-    4 Assumptions  what the engine assumes, so it isn't folklore
+    1 Projects     every budget under budget/; switch between them
+    2 Inputs       the project's files: what exists, and open one in $EDITOR (default vim)
+    3 Plan         who is on the project and when; re-plan by appending a row
+    4 Forecast     assumptions in, cost + Monte Carlo out, recomputed live
+    5 Assumptions  what the engine assumes, so it isn't folklore
 
 That order is the point: you cannot read a forecast sensibly without knowing
 what went into it, so the inputs come first and the model's assumptions are one

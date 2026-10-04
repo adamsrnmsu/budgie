@@ -191,6 +191,15 @@ PHASES: tuple[Phase, ...] = (
                 "you stop passing them on every command.",
                 is_command=False,
             ),
+            Step(
+                "year_start",
+                'In budgie.yaml next to `year:`, `year_start: "10-01"` makes '
+                "a federal fiscal year: year 2027 is Oct 2026 - Sep 2027, "
+                "labelled FY27. `budgie init --year-start 10-01` writes it. "
+                "Bare week and month numbers follow it: in FY27, months 10-12 "
+                "and ISO weeks 40-53 are 2026.",
+                is_command=False,
+            ),
         ),
     ),
     Phase(

@@ -494,3 +494,25 @@ def test_the_html_email_names_the_span_end():
     )
     assert "rate to year end (Sep 30)" in fy
     assert "rate to year end (Dec 31)" in cal
+
+
+def test_a_bad_scenarios_year_start_names_the_file_and_key(tmp_path):
+    shutil.copy(TESTS_DIR / "team.csv", tmp_path / "team.csv")
+    config = tmp_path / "scenarios.yaml"
+    config.write_text(
+        'year_start: "10-15"\nbudget: 1000\n'
+        "scenarios:\n  - name: A\n    people: team.csv\n    year: 2027\n"
+    )
+    with pytest.raises(ValueError, match=r"scenarios\.yaml: year_start must be MM-01"):
+        run_scenarios(config)
+
+
+def test_a_bad_per_scenario_year_start_names_the_scenario(tmp_path):
+    shutil.copy(TESTS_DIR / "team.csv", tmp_path / "team.csv")
+    config = tmp_path / "scenarios.yaml"
+    config.write_text(
+        "budget: 1000\nscenarios:\n  - name: A\n    people: team.csv\n"
+        '    year: 2027\n    year_start: "10-15"\n'
+    )
+    with pytest.raises(ValueError, match=r"scenarios\.yaml: scenario 'A': year_start"):
+        run_scenarios(config)
