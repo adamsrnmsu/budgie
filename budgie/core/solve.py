@@ -18,15 +18,18 @@ rows -- they cannot disagree. Nothing here writes a file.
 
 from __future__ import annotations
 
+import calendar
+import csv
 import logging
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from functools import cache, cached_property
+from pathlib import Path
 from typing import Literal
 
 from budgie.core.calendar import YearSpan, federal_holidays, hours_per_workday
-from budgie.core.csvio import last_day_of_month
+from budgie.core.csvio import as_float, last_day_of_month, read_rows, row_error
 from budgie.core.plan import AllocationPlan, PlanEntry
 
 logger = logging.getLogger(__name__)
@@ -252,3 +255,51 @@ def entries_for(costing: PlanCosting, edits: Mapping[Cell, float]) -> list[PlanE
                 nxt = bounds[m][0]
                 rows.append(PlanEntry(name, nxt, costing.plan.fte_on(name, nxt)))
     return rows
+
+
+#: ``jan``/``january`` -> 1, and so on: what a month column may be called.
+_MONTH_NUMBERS = {
+    name.lower(): m
+    for names in (calendar.month_abbr, calendar.month_name)
+    for m, name in enumerate(names)
+    if name
+}
+
+
+def read_month_sheet(path: str | Path, span: YearSpan) -> dict[Cell, float]:
+    """Cell FTEs from a wide sheet: ``name`` then one column per month of ``span``.
+
+    The months must run in the span's order (``name,Oct,...,Sep`` for an
+    Oct-start fiscal year), so a calendar sheet can't land a year off. ``Jan``,
+    ``January`` and ``JAN`` all work. A blank cell is left out -- the grid keeps
+    what it has there.
+
+    Raises:
+        ValueError: the header doesn't match the span, or a cell isn't an FTE
+            0 to 1 (``sheet.csv line 3: dec: ...``).
+    """
+    path = Path(path)
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        header = [h.strip().lower() for h in next(csv.reader(handle), [])]
+    if header[:1] != ["name"] or [_MONTH_NUMBERS.get(h) for h in header[1:]] != [
+        m for _, m in span.months
+    ]:
+        want = ",".join(calendar.month_abbr[m] for _, m in span.months)
+        raise ValueError(f"{path.name}: expected columns name,{want}")
+    cells: dict[Cell, float] = {}
+    seen: dict[str, int] = {}
+    for row in read_rows(path):
+        name = row["name"]
+        if not name:
+            raise row_error(row, "name is blank")
+        if name in seen:
+            raise row_error(row, f"{name} is already on line {seen[name]}")
+        seen[name] = row.line
+        for m, column in enumerate(header[1:], 1):
+            fte = as_float(row, column)
+            if fte is None:
+                continue
+            if not 0 <= fte <= 1:
+                raise row_error(row, f"{column}: fte must be 0 to 1, got {fte:g}")
+            cells[(name, m)] = fte
+    return cells

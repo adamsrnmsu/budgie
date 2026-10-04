@@ -5,7 +5,8 @@ Edits are *scratch*: they reprice the plan and write nothing until ``c``
 commits them as dated rows (appended, never edited -- see
 :mod:`budgie.core.plan`). ``s`` asks the solver (:mod:`budgie.core.solve`) to
 fill the selected cells so the plan cost lands on the target; ``S`` spreads
-the change evenly instead of in proportion.
+the change evenly instead of in proportion. ``i`` seeds scratch edits from a
+wide ``name,<month>,...`` sheet (:func:`budgie.core.solve.read_month_sheet`).
 
 :class:`GridModel` is the UI-free part -- scratch edits, solving, the rows a
 commit would append and the readout numbers -- so it can be tested without a
@@ -20,6 +21,7 @@ import calendar
 import re
 from dataclasses import dataclass, field
 from functools import cached_property
+from pathlib import Path
 from typing import ClassVar
 
 from textual.app import ComposeResult
@@ -32,7 +34,13 @@ from budgie.core.eac import at_completion
 from budgie.core.montecarlo import simulate
 from budgie.core.plan import AllocationPlan, PlanEntry
 from budgie.core.project import Snapshot
-from budgie.core.solve import Cell, PlanCosting, entries_for, solve
+from budgie.core.solve import (
+    Cell,
+    PlanCosting,
+    entries_for,
+    read_month_sheet,
+    solve,
+)
 
 #: Monte Carlo runs behind the readout's P50/P80. Fewer than the Forecast tab
 #: so every keystroke stays instant; the Forecast tab has the full figures.
@@ -89,9 +97,10 @@ class GridModel:
 
     @property
     def names(self) -> list[str]:
-        """Everyone with a rate, then anyone only the plan names."""
+        """Everyone with a rate, then anyone only the plan (or an edit) names."""
         names = dict.fromkeys(p.name for p in self.snap.people)
         names.update(dict.fromkeys(self.base.plan.names))
+        names.update(dict.fromkeys(n for n, _ in self.edits))
         return list(names)
 
     def rows(self) -> list[PlanEntry]:
@@ -116,6 +125,22 @@ class GridModel:
                 f"{', '.join(self.months[m - 1] for m in booked)} already booked"
             )
         self.edits.update(dict.fromkeys(cells, fte))
+
+    def seed(self, path: str | Path) -> str:
+        """Scratch edits from a month sheet; returns what happened, in words.
+
+        Cells in booked months are left as they are, and a name with no rate
+        in people.csv is seeded but not costed, as anywhere else in the plan.
+        """
+        cells = read_month_sheet(path, self.snap.span)
+        open_ = {c: v for c, v in cells.items() if self.base.editable(c[1])}
+        self.edits.update(open_)
+        said = f"Seeded {len(open_)} cell(s) from {Path(path).name}"
+        if booked := len(cells) - len(open_):
+            said += f"; {booked} in booked months left as they are"
+        if unknown := sorted({n for n, _ in open_} - set(self.base.rates)):
+            said += f"; not costed (not in people.csv): {', '.join(unknown)}"
+        return said + "."
 
     def solve(self, cells, mode: str = "proportional") -> str:
         """Fill ``cells`` to hit the target; returns what happened, in words."""
@@ -181,6 +206,7 @@ class PlanGrid(Vertical):
         Binding("s", "solve('proportional')", "Solve"),
         Binding("S", "solve('even')", "Solve even"),
         Binding("t", "ask('target')", "Target"),
+        Binding("i", "ask('sheet')", "Import"),
         Binding("c", "commit", "Commit"),
         Binding("x", "discard", "Discard"),
         Binding("escape", "close_input", show=False),
@@ -197,7 +223,7 @@ class PlanGrid(Vertical):
         super().__init__(**kwargs)
         self.model: GridModel | None = None
         self.selected: set[Cell] = set()
-        self._asking: str | None = None  # "cell" or "target" while the input is open
+        self._asking: str | None = None  # "cell", "target" or "sheet" while asking
         self._target: float | None = None  # a typed target outlives a reload
 
     def compose(self) -> ComposeResult:
@@ -328,11 +354,12 @@ class PlanGrid(Vertical):
         if what == "target" and self.model.target is not None:
             value = f"{self.model.target:,.0f}"
         box = self.query_one("#grid_input", Input)
-        box.placeholder = (
-            "FTE 0-1 for the selected cells, enter to apply"
-            if what == "cell"
-            else "Target cost, e.g. 425000 or 1.2M, enter to set"
-        )
+        first, *_, last = self.model.months
+        box.placeholder = {
+            "cell": "FTE 0-1 for the selected cells, enter to apply",
+            "target": "Target cost, e.g. 425000 or 1.2M, enter to set",
+            "sheet": f"Path to a name,{first},...,{last} FTE sheet, enter to load",
+        }[what]
         box.value = value
         box.display = True
         self._asking = what
@@ -358,7 +385,9 @@ class PlanGrid(Vertical):
                 cells = self._targets()
                 self.model.set(cells, float(event.value))
                 self.say(f"Set {len(cells)} cell(s) to {float(event.value):g}.")
-        except ValueError as exc:
+            elif what == "sheet":
+                self.say(self.model.seed(Path(event.value.strip()).expanduser()))
+        except (ValueError, OSError) as exc:
             self.say(str(exc), error=True)
             return
         self.action_close_input()
