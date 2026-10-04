@@ -3,6 +3,8 @@
 import contextlib
 import json
 import os
+import subprocess
+import time
 from datetime import date
 
 import pytest
@@ -445,6 +447,7 @@ SUITE = {
 
 
 async def test_p_and_g_exit_with_the_target(tmp_path, monkeypatch):
+    monkeypatch.delenv("TMUX", raising=False)
     init_workspace(tmp_path, year=2026)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("PI_SUITE", json.dumps(SUITE))
@@ -488,6 +491,189 @@ def test_run_execs_the_target_after_the_app_exits(monkeypatch):
     monkeypatch.setattr(os, "execvp", lambda f, a: calls.append(("exec", f, a)))
     tui_mod.run()
     assert calls == [("chdir", "/ws"), ("exec", "perch", ["perch", "tui"])]
+
+
+SUITE_TMUX = "/private/tmp/tmux-501/pi,123,0"
+TMUX = ["tmux", "-L", "pi"]
+G_KEY = json.dumps(SUITE["gitboard"], sort_keys=True)
+
+
+@pytest.fixture
+def hops(monkeypatch):
+    """In perch suite; records tmux argv; list-windows answers .listing."""
+    calls = []
+
+    class Fake:
+        listing = ""
+        stderr = ""
+
+    def run(argv, **kw):
+        calls.append(list(argv))
+        if "list-windows" in argv:
+            return subprocess.CompletedProcess(argv, 0, Fake.listing, "")
+        return subprocess.CompletedProcess(
+            argv, 1 if Fake.stderr else 0, "", Fake.stderr
+        )
+
+    Fake.calls = calls
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setenv("TMUX", SUITE_TMUX)
+    monkeypatch.setenv("PI_SUITE", json.dumps(SUITE))
+    return Fake
+
+
+def test_in_suite_only_on_the_pi_socket(monkeypatch):
+    monkeypatch.setenv("TMUX", SUITE_TMUX)
+    assert tui_mod.in_suite()
+    monkeypatch.setenv("TMUX", "/private/tmp/tmux-501/default,1,0")
+    assert not tui_mod.in_suite()
+    monkeypatch.delenv("TMUX")
+    assert not tui_mod.in_suite()
+
+
+def test_hop_to_the_same_entry_only_selects(hops):
+    hops.listing = f"perch\t{{}}\ngitboard\t{G_KEY}\n"
+    assert tui_mod.hop("gitboard", SUITE["gitboard"]) is None
+    assert hops.calls[-1] == [*TMUX, "select-window", "-t", "pi:=gitboard"]
+
+
+def test_hop_to_a_missing_window_opens_it(hops):
+    hops.listing = "perch\t{}\n"
+    tui_mod.hop("gitboard", SUITE["gitboard"])
+    assert hops.calls == [
+        [*TMUX, "list-windows", "-t", "pi", "-F", "#{window_name}\t#{@entry}"],
+        [
+            *TMUX,
+            "new-window",
+            "-t",
+            "pi:",
+            "-n",
+            "gitboard",
+            "-c",
+            "/gb",
+            "-e",
+            f"PI_SUITE={json.dumps(SUITE)}",
+            "gitboard",
+            "tui",
+            "grp/a",
+            ";",
+            "set-option",
+            "-w",
+            "-t",
+            "pi:=gitboard",
+            "@entry",
+            G_KEY,
+        ],
+    ]
+
+
+def test_hop_to_another_entry_respawns_only_that_window(hops):
+    hops.listing = 'gitboard\t{"argv": ["gitboard", "tui", "grp/b"], "cwd": "/gb"}\n'
+    tui_mod.hop("gitboard", SUITE["gitboard"])
+    assert hops.calls[-1] == [
+        *TMUX,
+        "respawn-window",
+        "-k",
+        "-t",
+        "pi:=gitboard",
+        "-c",
+        "/gb",
+        "-e",
+        f"PI_SUITE={json.dumps(SUITE)}",
+        "gitboard",
+        "tui",
+        "grp/a",
+        ";",
+        "set-option",
+        "-w",
+        "-t",
+        "pi:=gitboard",
+        "@entry",
+        G_KEY,
+        ";",
+        "select-window",
+        "-t",
+        "pi:=gitboard",
+    ]
+
+
+def test_hop_without_a_recorded_entry_respawns(hops):
+    hops.listing = "gitboard\t\n"
+    tui_mod.hop("gitboard", SUITE["gitboard"])
+    assert hops.calls[-1][3:5] == ["respawn-window", "-k"]
+
+
+def test_hop_that_tmux_refuses_says_why(hops):
+    hops.stderr = "no server running"
+    assert tui_mod.hop("perch", SUITE["perch"]) == "no server running"
+
+
+async def test_in_the_suite_p_hops_and_budgie_keeps_running(
+    tmp_path, monkeypatch, hops
+):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.press("P")
+        await pilot.pause()
+        assert app.is_running
+    assert hops.calls[-1][3] == "new-window"
+
+
+async def test_in_the_suite_a_failed_hop_says_why(tmp_path, monkeypatch, hops):
+    hops.stderr = "no server running"
+    monkeypatch.chdir(tmp_path)
+    app = BudgieTUI()
+    said = []
+    monkeypatch.setattr(app, "notify", lambda msg, **kw: said.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.press("G")
+        await pilot.pause()
+        assert app.is_running
+    assert said == ["switch failed: no server running"]
+
+
+async def test_in_the_suite_a_bad_map_still_says_where_to_start(
+    tmp_path, monkeypatch, hops
+):
+    monkeypatch.setenv("PI_SUITE", "not json")
+    monkeypatch.chdir(tmp_path)
+    app = BudgieTUI()
+    said = []
+    monkeypatch.setattr(app, "notify", lambda msg, **kw: said.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.press("P")
+        await pilot.pause()
+    assert said == ["start from perch tui to switch apps"]
+    assert hops.calls == []
+
+
+def test_switch_with_an_empty_program_says_why(tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        tui_mod.switch({"cwd": str(tmp_path), "argv": [""]})
+    assert "switch failed" in str(exc.value.code)
+
+
+async def test_focus_recalculates_only_after_an_input_changed(tmp_path, monkeypatch):
+    from textual import events
+
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    app = BudgieTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        ran = []
+        monkeypatch.setattr(app, "recalculate", lambda: ran.append(1))
+        app.post_message(events.AppFocus())
+        await pilot.pause()
+        assert ran == []  # nothing touched since the last calculation
+        touched = next(i.path for i in app.workspace.inputs() if i.exists)
+        later = time.time() + 10
+        os.utime(touched, (later, later))
+        app.post_message(events.AppFocus())
+        await pilot.pause()
+        assert ran == [1]
 
 
 # -- step A: safety and quick fixes (budgie-vrc, budgie-4oj) ------------------

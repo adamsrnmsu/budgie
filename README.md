@@ -419,6 +419,11 @@ Press `1`–`5` to jump to a tab, `r` to recalculate, `e` to edit the file the t
 (Plan → plan.csv, Forecast → people.csv, Inputs → the selected file, Projects → the open
 project's budgie.yaml), `d` on Projects to delete the selected project, `?` for help, `q` to quit.
 
+`P` and `G` jump to perch and gitboard on the same project. Inside `perch suite`
+the jump is instant and each app stays where you left it; started from
+`perch tui`, the app you leave closes and the other opens. Started on its own,
+Budgie says where to start instead.
+
 It opens on **Forecast** when it can compute one, and otherwise on the tab that can fix what's
 wrong: **Projects** when there are several budgets and nothing to auto-select, **Inputs** when
 a file won't load. Landing on a tab that can only report an error helps nobody.

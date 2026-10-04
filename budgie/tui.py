@@ -490,8 +490,56 @@ def switch(entry: dict) -> None:
     try:
         os.chdir(entry["cwd"])
         os.execvp(entry["argv"][0], entry["argv"])
-    except OSError as exc:
+    except (OSError, ValueError) as exc:  # ValueError: an empty program name
         sys.exit(f"switch failed: {exc}")
+
+
+PI = "pi"  # perch suite's tmux: the server (-L pi) and its session
+
+
+def in_suite() -> bool:
+    """Inside `perch suite`: hop to the app's tmux window instead of exec."""
+    return os.path.basename(os.environ.get("TMUX", "").split(",")[0]) == PI
+
+
+def hop(name: str, entry: dict) -> str | None:
+    """Bring ``name``'s window to the front; tmux's complaint, or None.
+
+    Same entry running there: just select it. Another (another project) or
+    none recorded: restart that window only. No window (the app was quit):
+    open it. A copy of perch/core/suite.py's rule: a change goes in all three.
+    """
+    tmux, window = ["tmux", "-L", PI], f"{PI}:={name}"
+    key = json.dumps(entry, sort_keys=True)
+    start = [
+        "-c",
+        entry["cwd"],
+        "-e",
+        f"{SUITE}={os.environ.get(SUITE, '')}",
+        *entry["argv"],
+    ]
+    mark = [";", "set-option", "-w", "-t", window, "@entry", key]
+    try:
+        listing = subprocess.run(
+            [*tmux, "list-windows", "-t", PI, "-F", "#{window_name}\t#{@entry}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout
+        entries = dict(
+            line.split("\t", 1) for line in listing.splitlines() if "\t" in line
+        )
+        if name not in entries:
+            argv = [*tmux, "new-window", "-t", f"{PI}:", "-n", name, *start, *mark]
+        elif entries[name] == key:
+            argv = [*tmux, "select-window", "-t", window]
+        else:
+            argv = [*tmux, "respawn-window", "-k", "-t", window, *start, *mark,
+                    ";", "select-window", "-t", window]  # fmt: skip
+        done = subprocess.run(argv, capture_output=True, text=True, check=False)
+    except OSError as exc:
+        return str(exc)
+    return (done.stderr.strip() or "tmux failed") if done.returncode else None
 
 
 class BudgieTUI(App):
@@ -618,6 +666,9 @@ class BudgieTUI(App):
         # A plan row naming someone nobody costs, already warned about once.
         # The same values again mean "yes, really".
         self._unknown_confirmed: tuple[str, str, str] | None = None
+        # The newest input file's mtime at the last recalculate: a focus
+        # (a hop back in perch suite) recalculates only past it.
+        self._calculated_at = 0.0
 
     # -- paths -------------------------------------------------------------
 
@@ -653,9 +704,16 @@ class BudgieTUI(App):
         return available_projects(self.workspace.root if self.workspace else Path.cwd())
 
     def action_switch(self, target: str) -> None:
-        """Hand the terminal to perch or gitboard; nothing written is lost."""
-        if suite_entry(target) is None:
+        """perch or gitboard: in perch suite a hop to its window (Budgie keeps
+        running), else hand over the terminal. Nothing written is lost."""
+        entry = suite_entry(target)
+        if entry is None:
             self.notify(NO_SUITE, severity="warning")
+            return
+        if in_suite():
+            why = hop(target, entry)
+            if why:
+                self.notify(f"switch failed: {why}", severity="error")
             return
         self.exit(target)
 
@@ -795,6 +853,18 @@ class BudgieTUI(App):
 
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
+
+    def on_app_focus(self) -> None:
+        """Back in front (a hop in perch suite): recalculate only if an input
+        changed meanwhile; a full forecast on every hop would make hops slow."""
+        if self._inputs_mtime() > self._calculated_at:
+            self.recalculate()
+
+    def _inputs_mtime(self) -> float:
+        if self.workspace is None:
+            return 0.0
+        inputs = self.workspace.inputs()
+        return max((i.path.stat().st_mtime for i in inputs if i.exists), default=0.0)
 
     def action_show_tab(self, tab_id: str) -> None:
         self.query_one("#tabs", TabbedContent).active = tab_id
@@ -1121,6 +1191,7 @@ class BudgieTUI(App):
             self._projects_status("Cancelled.")
 
     def recalculate(self) -> None:
+        self._calculated_at = self._inputs_mtime()
         # budgie.yaml is the one place these live, so the TUI and the CLI
         # quote the same numbers for the same project.
         year = int(self._setting("year", self._default_year()))
