@@ -422,8 +422,7 @@ and the keys. `escape` or `?` closes it.
 
 Press `1`–`5` to jump to a tab, `r` to recalculate, `e` to edit the file the tab shows
 (Plan → plan.csv, Forecast → people.csv, Inputs → the selected file, Projects → the open
-project's budgie.yaml), `d` on Projects to delete the selected project, `?` for help, `q` to quit. `P` and `G` switch to the perch and gitboard apps; they work only
-when started from `perch tui` (which sets `$PI_SUITE`), otherwise they say "start from perch tui to switch apps".
+project's budgie.yaml), `d` on Projects to delete the selected project, `?` for help, `q` to quit.
 
 `P` and `G` jump to perch and gitboard on the same project. Inside `perch suite`
 the jump is instant and each app stays where you left it; started from
