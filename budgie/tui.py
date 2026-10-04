@@ -262,14 +262,24 @@ def hop(name: str, entry: dict) -> str | None:
     """
     tmux, window = ["tmux", "-L", PI], f"{PI}:={name}"
     key = json.dumps(entry, sort_keys=True)
-    start = ["-c", entry["cwd"], "-e", f"{SUITE}={os.environ.get(SUITE, '')}", *entry["argv"]]
+    start = [
+        "-c",
+        entry["cwd"],
+        "-e",
+        f"{SUITE}={os.environ.get(SUITE, '')}",
+        *entry["argv"],
+    ]
     mark = [";", "set-option", "-w", "-t", window, "@entry", key]
     try:
         listing = subprocess.run(
             [*tmux, "list-windows", "-t", PI, "-F", "#{window_name}\t#{@entry}"],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
         ).stdout
-        entries = dict(line.split("\t", 1) for line in listing.splitlines() if "\t" in line)
+        entries = dict(
+            line.split("\t", 1) for line in listing.splitlines() if "\t" in line
+        )
         if name not in entries:
             argv = [*tmux, "new-window", "-t", f"{PI}:", "-n", name, *start, *mark]
         elif entries[name] == key:

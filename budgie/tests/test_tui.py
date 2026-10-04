@@ -511,7 +511,9 @@ def hops(monkeypatch):
         calls.append(list(argv))
         if "list-windows" in argv:
             return subprocess.CompletedProcess(argv, 0, Fake.listing, "")
-        return subprocess.CompletedProcess(argv, 1 if Fake.stderr else 0, "", Fake.stderr)
+        return subprocess.CompletedProcess(
+            argv, 1 if Fake.stderr else 0, "", Fake.stderr
+        )
 
     Fake.calls = calls
     monkeypatch.setattr(subprocess, "run", run)
@@ -541,9 +543,26 @@ def test_hop_to_a_missing_window_opens_it(hops):
     assert hops.calls == [
         [*TMUX, "list-windows", "-t", "pi", "-F", "#{window_name}\t#{@entry}"],
         [
-            *TMUX, "new-window", "-t", "pi:", "-n", "gitboard",
-            "-c", "/gb", "-e", f"PI_SUITE={json.dumps(SUITE)}", "gitboard", "tui", "grp/a",
-            ";", "set-option", "-w", "-t", "pi:=gitboard", "@entry", G_KEY,
+            *TMUX,
+            "new-window",
+            "-t",
+            "pi:",
+            "-n",
+            "gitboard",
+            "-c",
+            "/gb",
+            "-e",
+            f"PI_SUITE={json.dumps(SUITE)}",
+            "gitboard",
+            "tui",
+            "grp/a",
+            ";",
+            "set-option",
+            "-w",
+            "-t",
+            "pi:=gitboard",
+            "@entry",
+            G_KEY,
         ],
     ]
 
@@ -552,10 +571,29 @@ def test_hop_to_another_entry_respawns_only_that_window(hops):
     hops.listing = 'gitboard\t{"argv": ["gitboard", "tui", "grp/b"], "cwd": "/gb"}\n'
     tui_mod.hop("gitboard", SUITE["gitboard"])
     assert hops.calls[-1] == [
-        *TMUX, "respawn-window", "-k", "-t", "pi:=gitboard",
-        "-c", "/gb", "-e", f"PI_SUITE={json.dumps(SUITE)}", "gitboard", "tui", "grp/a",
-        ";", "set-option", "-w", "-t", "pi:=gitboard", "@entry", G_KEY,
-        ";", "select-window", "-t", "pi:=gitboard",
+        *TMUX,
+        "respawn-window",
+        "-k",
+        "-t",
+        "pi:=gitboard",
+        "-c",
+        "/gb",
+        "-e",
+        f"PI_SUITE={json.dumps(SUITE)}",
+        "gitboard",
+        "tui",
+        "grp/a",
+        ";",
+        "set-option",
+        "-w",
+        "-t",
+        "pi:=gitboard",
+        "@entry",
+        G_KEY,
+        ";",
+        "select-window",
+        "-t",
+        "pi:=gitboard",
     ]
 
 
@@ -570,7 +608,9 @@ def test_hop_that_tmux_refuses_says_why(hops):
     assert tui_mod.hop("perch", SUITE["perch"]) == "no server running"
 
 
-async def test_in_the_suite_p_hops_and_budgie_keeps_running(tmp_path, monkeypatch, hops):
+async def test_in_the_suite_p_hops_and_budgie_keeps_running(
+    tmp_path, monkeypatch, hops
+):
     init_workspace(tmp_path, year=2026)
     monkeypatch.chdir(tmp_path)
     app = BudgieTUI()
@@ -594,7 +634,9 @@ async def test_in_the_suite_a_failed_hop_says_why(tmp_path, monkeypatch, hops):
     assert said == ["switch failed: no server running"]
 
 
-async def test_in_the_suite_a_bad_map_still_says_where_to_start(tmp_path, monkeypatch, hops):
+async def test_in_the_suite_a_bad_map_still_says_where_to_start(
+    tmp_path, monkeypatch, hops
+):
     monkeypatch.setenv("PI_SUITE", "not json")
     monkeypatch.chdir(tmp_path)
     app = BudgieTUI()
