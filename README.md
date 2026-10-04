@@ -409,7 +409,7 @@ and the keys. `escape` or `?` closes it.
    (`name,Jan,...,Dec`, or `name,Oct,...,Sep` for an October fiscal year; `Jan`, `January`
    and `JAN` all work) with an FTE 0–1 in each cell — as scratch edits: a blank cell is left
    alone, booked months are skipped, and a name not in people.csv is shown but not costed.
-   Nothing is written until `c`. `g`
+   A relative path is read from the project's folder. Nothing is written until `c`. `g`
    flips to the per-person list of changes, and the form above still appends one row at a
    time. `escape` leaves a field.
 4. **Forecast** — leads with one line: budget · spent · forecast P50 · headroom · stoplight.

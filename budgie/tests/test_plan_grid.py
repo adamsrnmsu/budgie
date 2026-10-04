@@ -169,3 +169,26 @@ async def test_import_a_sheet_in_the_tui_then_commit(project, monkeypatch):
         await pilot.pause()
 
     assert load_plan(project / "plan.csv").fte_on("Bob", date(2026, 11, 15)) == 0.25
+
+
+async def test_a_sheet_path_is_relative_to_the_project_not_the_cwd(
+    tmp_path, monkeypatch
+):
+    project = tmp_path / "fy26"
+    project.mkdir()
+    init_workspace(project, year=2026)
+    (project / "sheet.csv").write_text(SHEET + "Bob,,,,,,,,,,0.25,0.25,0.25\n")
+    monkeypatch.chdir(tmp_path)  # launched from above the project
+    forget_workspaces()
+    app = BudgieTUI()
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        grid = app.query_one("#plan_grid")
+        app.query_one("#grid_table").focus()
+        await pilot.press("i")
+        app.query_one("#grid_input").value = "sheet.csv"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert "Seeded 3 cell(s)" in str(grid.query_one("#grid_status").render())
