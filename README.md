@@ -417,7 +417,8 @@ and the keys. `escape` or `?` closes it.
 
 Press `1`–`5` to jump to a tab, `r` to recalculate, `e` to edit the file the tab shows
 (Plan → plan.csv, Forecast → people.csv, Inputs → the selected file, Projects → the open
-project's budgie.yaml), `d` on Projects to delete the selected project, `?` for help, `q` to quit.
+project's budgie.yaml), `d` on Projects to delete the selected project, `?` for help, `q` to quit. `P` and `G` switch to the perch and gitboard apps; they work only
+when started from `perch tui` (which sets `$PI_SUITE`), otherwise they say "start from perch tui to switch apps".
 
 It opens on **Forecast** when it can compute one, and otherwise on the tab that can fix what's
 wrong: **Projects** when there are several budgets and nothing to auto-select, **Inputs** when

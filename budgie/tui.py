@@ -20,6 +20,10 @@ Like every other front-end this file contains no budgeting math -- it wires
 widgets to the engine. The one thing it *writes* is a plan row, and it appends
 rather than edits, because that is what :mod:`budgie.core.plan` models: history
 is a record, not mutable current state.
+
+Keys: ``1``-``5`` tabs, ``r`` recalculate, ``e`` edit, ``?`` help, ``q`` quit; ``P``
+and ``G`` hop to perch / gitboard via ``$PI_SUITE`` (set by ``perch tui``; started
+standalone they say "start from perch tui to switch apps").
 """
 
 from __future__ import annotations
@@ -1209,7 +1213,11 @@ class BudgieTUI(App):
         except (OSError, ValueError) as exc:
             # A missing or malformed CSV is a normal state to be in, not a
             # crash: say which file and what to read to fix it.
-            self._load_error = f"Can't read {Path(self.people_path).name}: {exc}"
+            name = Path(self.people_path).name
+            # Loader errors already lead with the file name; don't say it twice.
+            self._load_error = (
+                str(exc) if str(exc).startswith(name) else f"Can't read {name}: {exc}"
+            )
             banner.display = True
             banner.update(
                 f"{self._load_error}\n"
