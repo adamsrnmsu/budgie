@@ -25,7 +25,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from budgie.core.calendar import ProductiveHours, resolve_ceiling
-from budgie.core.csvio import as_float, as_required_float, as_str, read_rows
+from budgie.core.csvio import (
+    as_float,
+    as_required_float,
+    as_str,
+    read_rows,
+    row_error,
+)
 
 if TYPE_CHECKING:
     from budgie.core.plan import AllocationPlan
@@ -105,10 +111,19 @@ def load_allocations(
     def number(row, key: str) -> float:
         return as_required_float(row, key) if key in rows.columns else 0.0
 
+    def fte_of(row) -> float:
+        fte = number(row, "fte")
+        if not 0 <= fte <= 1:
+            raise row_error(
+                row,
+                f"fte must be 0 to 1, got {fte:g} (FTE is a share of full time: 0 to 1)",
+            )
+        return fte
+
     allocations = [
         Allocation(
             name=as_str(row, "name"),
-            fte=number(row, "fte"),
+            fte=fte_of(row),
             hours_spent=number(row, "hours_spent"),
             available_hours=resolve_ceiling(available_hours, as_float(row, "pto_days")),
             email=as_str(row, "email") or None,

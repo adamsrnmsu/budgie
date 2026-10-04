@@ -31,6 +31,7 @@ from budgie.core.csvio import (
     as_str,
     last_day_of_month,
     read_rows,
+    row_error,
 )
 
 logger = logging.getLogger(__name__)
@@ -68,16 +69,22 @@ def load_weekly_actuals(
     Expected columns ``name,week,hours_to_date``. Returns each person's
     observations sorted by date.
     """
+    wheres: dict[tuple[str, date, float], str] = {}
     out: dict[str, list[Observation]] = {}
     for row in read_rows(csv_path, required=_WEEKLY_COLS):
-        when = week_ending(span, as_int(row, "week"))
-        out.setdefault(as_str(row, "name"), []).append(
-            (when, as_required_float(row, "hours_to_date"))
-        )
+        try:
+            when = week_ending(span, as_int(row, "week"))
+        except ValueError as exc:
+            if str(exc).startswith(row.where):  # as_int already named the line
+                raise
+            raise row_error(row, str(exc)) from exc
+        name, hours = as_str(row, "name"), as_required_float(row, "hours_to_date")
+        wheres[name, when, hours] = row.where
+        out.setdefault(name, []).append((when, hours))
 
     for name, obs in out.items():
         obs.sort(key=lambda o: o[0])
-        _check_non_decreasing(name, obs)
+        _check_non_decreasing(name, obs, wheres)
     logger.info(
         "Loaded weekly actuals for %d people from %s (latest: %s)",
         len(out),
@@ -109,11 +116,14 @@ def monthly_to_observations(
     return out
 
 
-def _check_non_decreasing(name: str, obs: list[Observation]) -> None:
+def _check_non_decreasing(
+    name: str, obs: list[Observation], wheres: dict[tuple[str, date, float], str]
+) -> None:
     """Cumulative totals can't shrink -- catch per-period values pasted by mistake."""
     for (d1, h1), (d2, h2) in pairwise(obs):
         if h2 < h1:
+            where = wheres.get((name, d2, h2))
             raise ValueError(
-                f"{name}: hours_to_date fell from {h1:g} ({d1}) to {h2:g} ({d2}). "
+                f"{where + ': ' if where else ''}{name}: hours_to_date fell from {h1:g} ({d1}) to {h2:g} ({d2}). "
                 "These readings must be cumulative, not per-week."
             )

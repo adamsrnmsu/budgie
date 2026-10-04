@@ -35,7 +35,14 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from budgie.core.csvio import as_date, as_float, as_required_float, as_str, read_rows
+from budgie.core.csvio import (
+    as_date,
+    as_float,
+    as_required_float,
+    as_str,
+    read_rows,
+    row_error,
+)
 
 if TYPE_CHECKING:
     from budgie.core.calendar import YearSpan
@@ -156,18 +163,20 @@ def load_costs(csv_path: str | Path, span: YearSpan | None = None) -> list[CostI
     """
     items = []
     for row in read_rows(csv_path, required=_REQUIRED_COLS):
-        items.append(
-            CostItem(
-                name=as_str(row, "name"),
-                amount=as_required_float(row, "amount"),
-                when=as_date(row, "date"),
-                category=as_str(row, "category", "other"),
-                low=as_float(row, "low"),
-                high=as_float(row, "high"),
-                recurring=as_str(row, "recurring").lower() in _TRUTHY,
-                span=span,
-            )
-        )
+        fields = {
+            "name": as_str(row, "name"),
+            "amount": as_required_float(row, "amount"),
+            "when": as_date(row, "date"),
+            "category": as_str(row, "category", "other"),
+            "low": as_float(row, "low"),
+            "high": as_float(row, "high"),
+            "recurring": as_str(row, "recurring").lower() in _TRUTHY,
+            "span": span,
+        }
+        try:
+            items.append(CostItem(**fields))
+        except ValueError as exc:  # the item's own checks know nothing of the file
+            raise row_error(row, str(exc)) from exc
     logger.info(
         "Loaded %d non-labor cost lines from %s (total %s)",
         len(items),
