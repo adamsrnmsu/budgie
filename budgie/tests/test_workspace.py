@@ -7,6 +7,7 @@ from budgie.budgie import cli
 from budgie.core.scaffold import init_workspace
 from budgie.core.workspace import (
     CONFIG_NAME,
+    INPUTS,
     find_workspace,
     forget_workspaces,
     load_workspace,
@@ -229,3 +230,17 @@ def test_monthly_uses_the_project_costs_like_forecast(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert result.output != without.output
+
+
+def test_inputs_used_by_names_tui_for_every_input_it_reads():
+    tui_reads = {
+        "people",
+        "allocations",
+        "plan",
+        "costs",
+        "budget",
+        "actuals",
+        "weekly",
+    }
+    for key, (_f, _d, used_by) in INPUTS.items():
+        assert ("tui" in used_by) == (key in tui_reads), key
