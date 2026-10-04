@@ -1569,7 +1569,7 @@ def _status_blocks(workspace):
                     i.path.name,
                     "" if i.rows is None else f"{i.rows}",
                     i.description,
-                    " ".join(i.used_by),
+                    ", ".join(i.used_by),
                 ]
                 for i in items
             ],
@@ -1620,7 +1620,7 @@ def _print_status_table(workspace):
             name,
             rows,
             item.description,
-            " ".join(item.used_by),
+            ", ".join(item.used_by),
         )
     console.print(table)
 

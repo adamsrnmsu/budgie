@@ -4,7 +4,7 @@ import pytest
 
 from budgie.core.calendar import hours_per_workday, workdays_between, year_span
 from budgie.core.plan import AllocationPlan, PlanEntry
-from budgie.core.solve import PlanCosting, entries_for, solve
+from budgie.core.solve import PlanCosting, entries_for, read_month_sheet, solve
 
 YEAR = 2026
 PER_DAY = hours_per_workday(year_span(YEAR))  # 1992 h over 250 working days
@@ -150,3 +150,47 @@ def test_edit_overrides_an_older_mid_month_change():
     assert after.grid("Carol")[6] == pytest.approx(0.8)  # all of July
     assert after.grid("Carol")[7] == pytest.approx(0.5)  # August restored
     assert after.grid("Carol")[5] == pytest.approx(0.2)  # June untouched
+
+
+# --- importing a wide month sheet ----------------------------------------------
+
+CAL = "name,Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec"
+
+
+def _sheet(tmp_path, text):
+    path = tmp_path / "sheet.csv"
+    path.write_text(text)
+    return path
+
+
+def test_a_calendar_sheet_reads_into_cells_and_blank_leaves_a_cell_alone(tmp_path):
+    path = _sheet(tmp_path, f"{CAL}\nAlice,1,1,,,,,0.5,0.5,0.5,0.5,0.5,0.5\n")
+    cells = read_month_sheet(path, year_span(YEAR))
+    assert cells[("Alice", 1)] == 1.0 and cells[("Alice", 12)] == 0.5
+    assert ("Alice", 3) not in cells  # blank: unchanged
+    assert len(cells) == 8
+
+
+def test_a_fiscal_sheet_runs_in_the_spans_order(tmp_path):
+    header = "Name,October,november,DEC,Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,September"
+    path = _sheet(tmp_path, f"{header}\nBob,0.25,,,0.75,,,,,,,,1\n")
+    cells = read_month_sheet(path, year_span(2027, "10-01"))
+    assert cells == {("Bob", 1): 0.25, ("Bob", 4): 0.75, ("Bob", 12): 1.0}
+
+
+def test_months_out_of_the_spans_order_say_which_were_expected(tmp_path):
+    path = _sheet(tmp_path, f"{CAL}\nBob,1,1,1,1,1,1,1,1,1,1,1,1\n")
+    with pytest.raises(ValueError, match=r"^sheet\.csv: expected columns name,Oct,"):
+        read_month_sheet(path, year_span(2027, "10-01"))
+
+
+def test_a_bad_fte_names_the_file_and_line(tmp_path):
+    bob = "Bob," + "0.5," * 11 + "x"
+    path = _sheet(tmp_path, f"{CAL}\nAlice,1,,,,,,,,,,,\n{bob}\n")
+    with pytest.raises(ValueError, match=r"^sheet\.csv line 3: dec: expected a number"):
+        read_month_sheet(path, year_span(YEAR))
+    path = _sheet(tmp_path, f"{CAL}\nAlice,1,,,,,,,,,,,2\n")
+    with pytest.raises(
+        ValueError, match=r"^sheet\.csv line 2: dec: fte must be 0 to 1"
+    ):
+        read_month_sheet(path, year_span(YEAR))

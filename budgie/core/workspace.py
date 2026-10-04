@@ -69,32 +69,32 @@ INPUTS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "allocations": (
         "allocations.csv",
         "FTE allocations and hours spent to date, plus each person's email",
-        ("hours", "emails", "plan"),
+        ("hours", "emails", "plan", "tui"),
     ),
     "plan": (
         "plan.csv",
         "Dated allocation changes -- joins, departures and re-plans, one row each",
-        ("plan", "hours", "emails"),
+        ("plan", "hours", "emails", "tui"),
     ),
     "costs": (
         "costs.csv",
         "Non-labor lines: materials, licences, travel",
-        ("forecast", "monthly"),
+        ("forecast", "monthly", "tui"),
     ),
     "budget": (
         "budget.csv",
         "Budget revisions over time (or a single number in budgie.yaml)",
-        ("forecast", "monthly", "scenario"),
+        ("forecast", "monthly", "scenario", "tui"),
     ),
     "actuals": (
         "actuals.csv",
         "Observed spend: monthly hours per person",
-        ("forecast", "emails"),
+        ("forecast", "emails", "tui"),
     ),
     "weekly": (
         "weekly.csv",
         "Observed spend: cumulative hours through an ISO week",
-        ("forecast", "emails"),
+        ("forecast", "emails", "tui"),
     ),
     "scenarios": (
         "scenarios.yaml",

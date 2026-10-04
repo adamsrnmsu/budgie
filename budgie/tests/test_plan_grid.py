@@ -1,5 +1,7 @@
 """The Plan tab's month grid: scratch edits, the solver, and committing rows."""
 
+from datetime import date
+
 import pytest
 
 from budgie.core.plan import load_plan
@@ -117,3 +119,53 @@ async def test_select_target_solve_commit_in_the_tui(project, monkeypatch):
     entries = load_plan(project / "plan.csv").changes_for("Bob")
     assert len(entries) > 1  # the solved months were appended
     assert costing_for(load_snapshot(project)).cost() == pytest.approx(target, abs=1)
+
+
+SHEET = "name,Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec\n"
+
+
+def test_a_month_sheet_seeds_scratch_edits(project):
+    before = (project / "plan.csv").read_text()
+    sheet = project / "sheet.csv"
+    sheet.write_text(SHEET + "Alice,1,1,1,1,1,1,,,,,,0.5\nDan,,,,,,,0.5,,,,,\n")
+    model = GridModel(load_snapshot(project))
+
+    said = model.seed(sheet)
+
+    # Jan..Apr are booked by the scaffold's readings, so they stay as they are.
+    assert said.startswith("Seeded 4 cell(s) from sheet.csv; 4 in booked months")
+    assert "not costed (not in people.csv): Dan" in said
+    assert model.edits == {
+        ("Alice", 5): 1,
+        ("Alice", 6): 1,
+        ("Alice", 12): 0.5,
+        ("Dan", 7): 0.5,
+    }
+    assert "Dan" in model.names and model.readout()["cost"] > 0
+    assert (project / "plan.csv").read_text() == before
+
+
+async def test_import_a_sheet_in_the_tui_then_commit(project, monkeypatch):
+    monkeypatch.chdir(project)
+    forget_workspaces()
+    (project / "sheet.csv").write_text(SHEET + "Bob,,,,,,,,,,0.25,0.25,0.25\n")
+    before = (project / "plan.csv").read_text()
+    app = BudgieTUI()
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        grid = app.query_one("#plan_grid")
+        app.query_one("#grid_table").focus()
+        await pilot.press("i")
+        app.query_one("#grid_input").value = "sheet.csv"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert grid.model.scratch.grid("Bob")[9:] == [0.25] * 3
+        assert "Seeded 3 cell(s)" in str(grid.query_one("#grid_status").render())
+        assert (project / "plan.csv").read_text() == before
+
+        await pilot.press("c")
+        await pilot.pause()
+
+    assert load_plan(project / "plan.csv").fte_on("Bob", date(2026, 11, 15)) == 0.25

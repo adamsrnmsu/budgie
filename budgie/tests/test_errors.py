@@ -4,6 +4,8 @@ import pytest
 from click.testing import CliRunner
 
 from budgie.budgie import cli
+from budgie.core.actuals import load_weekly_actuals
+from budgie.core.allocation import load_allocations
 from budgie.core.budget import load_budget
 from budgie.core.calendar import productive_hours, year_span
 from budgie.core.costs import load_costs
@@ -182,6 +184,64 @@ def test_plan_values_are_checked(tmp_path, row, message):
     assert str(caught.value) == message
 
 
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        (
+            "name,week,hours_to_date\nAlice,5,100\nAlice,99,200\n",
+            "weekly.csv line 3: 2026 has no ISO week 99",
+        ),
+        (
+            "name,week,hours_to_date\nAlice,5,100\nAlice,8,200\nAlice,9,150\n",
+            (
+                "weekly.csv line 4: Alice: hours_to_date fell from 200 (2026-02-22) "
+                "to 150 (2026-03-01). These readings must be cumulative, not per-week."
+            ),
+        ),
+    ],
+)
+def test_weekly_errors_name_the_file_and_line(tmp_path, text, message):
+    weekly = _write(tmp_path, "weekly.csv", text)
+    with pytest.raises(ValueError) as caught:
+        load_weekly_actuals(weekly, year_span(2026))
+    assert str(caught.value) == message
+
+
+@pytest.mark.parametrize(
+    ("row", "message"),
+    [
+        (
+            "Bad,2026-02-01,50,60,80",
+            "costs.csv line 3: Bad: need low <= amount <= high, got (60.0, 50.0, 80.0)",
+        ),
+        (
+            "Neg,2026-02-01,-5,,",
+            "costs.csv line 3: Neg: amount cannot be negative",
+        ),
+    ],
+)
+def test_cost_values_name_the_file_and_line(tmp_path, row, message):
+    costs = _write(
+        tmp_path,
+        "costs.csv",
+        f"name,date,amount,low,high\nOk,2026-01-01,10,,\n{row}\n",
+    )
+    with pytest.raises(ValueError) as caught:
+        load_costs(costs)
+    assert str(caught.value) == message
+
+
+@pytest.mark.parametrize("fte", ["5", "-0.5"])
+def test_allocation_fte_is_checked(tmp_path, fte):
+    alloc = _write(tmp_path, "allocations.csv", f"name,fte\nAlice,0.5\nBob,{fte}\n")
+    with pytest.raises(ValueError) as caught:
+        load_allocations(alloc, 1600.0)
+    assert str(caught.value) == (
+        f"allocations.csv line 3: fte must be 0 to 1, got {float(fte):g} "
+        "(FTE is a share of full time: 0 to 1)"
+    )
+
+
 def test_sensible_edges_still_load(tmp_path):
     people = _write(
         tmp_path,
@@ -226,6 +286,13 @@ def test_a_bad_date_is_one_line_with_a_pointer(project):
         "use YYYY-MM-DD (e.g. 2026-03-15)"
     ) in lines
     assert lines[-1] == "see: budgie guide plan"
+
+
+def test_a_bad_week_is_one_line_with_a_pointer(project):
+    (project / "weekly.csv").write_text("name,week,hours_to_date\nAlice,99,100\n")
+    result = _run("forecast", "--weekly", "weekly.csv")
+    assert result.exit_code == 1
+    assert "error: weekly.csv line 2: 2026 has no ISO week 99" in result.output
 
 
 def test_a_missing_column_points_at_the_people_guide(project):

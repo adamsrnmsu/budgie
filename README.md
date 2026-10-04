@@ -404,7 +404,12 @@ and the keys. `escape` or `?` closes it.
    work), and `s` fills the selected cells so the plan cost lands on it — scaling them all
    by one factor, or `S` to add the same FTE to each. FTE stays 0–1, and whatever gap that
    leaves is reported. Months before the latest spend reading are booked and dimmed. `c`
-   commits the scratch edits as dated rows appended to plan.csv; `x` discards them. `g`
+   commits the scratch edits as dated rows appended to plan.csv; `x` discards them. `i`
+   imports a wide sheet — `name` then one column per month in the year's order
+   (`name,Jan,...,Dec`, or `name,Oct,...,Sep` for an October fiscal year; `Jan`, `January`
+   and `JAN` all work) with an FTE 0–1 in each cell — as scratch edits: a blank cell is left
+   alone, booked months are skipped, and a name not in people.csv is shown but not costed.
+   Nothing is written until `c`. `g`
    flips to the per-person list of changes, and the form above still appends one row at a
    time. `escape` leaves a field.
 4. **Forecast** — leads with one line: budget · spent · forecast P50 · headroom · stoplight.
@@ -417,7 +422,8 @@ and the keys. `escape` or `?` closes it.
 
 Press `1`–`5` to jump to a tab, `r` to recalculate, `e` to edit the file the tab shows
 (Plan → plan.csv, Forecast → people.csv, Inputs → the selected file, Projects → the open
-project's budgie.yaml), `d` on Projects to delete the selected project, `?` for help, `q` to quit.
+project's budgie.yaml), `d` on Projects to delete the selected project, `?` for help, `q` to quit. `P` and `G` switch to the perch and gitboard apps; they work only
+when started from `perch tui` (which sets `$PI_SUITE`), otherwise they say "start from perch tui to switch apps".
 
 `P` and `G` jump to perch and gitboard on the same project. Inside `perch suite`
 the jump is instant and each app stays where you left it; started from
