@@ -1209,7 +1209,11 @@ class BudgieTUI(App):
         except (OSError, ValueError) as exc:
             # A missing or malformed CSV is a normal state to be in, not a
             # crash: say which file and what to read to fix it.
-            self._load_error = f"Can't read {Path(self.people_path).name}: {exc}"
+            name = Path(self.people_path).name
+            # Loader errors already lead with the file name; don't say it twice.
+            self._load_error = (
+                str(exc) if str(exc).startswith(name) else f"Can't read {name}: {exc}"
+            )
             banner.display = True
             banner.update(
                 f"{self._load_error}\n"

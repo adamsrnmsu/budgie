@@ -183,7 +183,7 @@ async def test_tui_opens_on_inputs_when_people_will_not_load(tmp_path, monkeypat
         assert "people.csv" in _text(app, "#inputs_status")
         # The forecast table is emptied rather than left showing stale numbers.
         assert app.query_one("#forecast").row_count == 0
-        assert "people.csv" in _text(app, "#forecast_banner")
+        assert _text(app, "#forecast_banner").count("people.csv") == 1
 
 
 async def test_number_keys_switch_tabs(tmp_path, monkeypatch):
