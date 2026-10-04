@@ -372,6 +372,14 @@ class PlanGrid(Vertical):
             self._asking = None
             self.query_one("#grid_table", DataTable).focus()
 
+    def _sheet_path(self, typed: str) -> Path:
+        """A typed sheet path; a relative one is the project's, not the launch dir's."""
+        path = Path(typed.strip()).expanduser()
+        workspace = getattr(self.app, "workspace", None)
+        if path.is_absolute() or workspace is None:
+            return path
+        return workspace.root / path
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "grid_input":
             return
@@ -386,7 +394,7 @@ class PlanGrid(Vertical):
                 self.model.set(cells, float(event.value))
                 self.say(f"Set {len(cells)} cell(s) to {float(event.value):g}.")
             elif what == "sheet":
-                self.say(self.model.seed(Path(event.value.strip()).expanduser()))
+                self.say(self.model.seed(self._sheet_path(event.value)))
         except (ValueError, OSError) as exc:
             self.say(str(exc), error=True)
             return

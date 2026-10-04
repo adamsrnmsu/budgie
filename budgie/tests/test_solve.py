@@ -194,3 +194,11 @@ def test_a_bad_fte_names_the_file_and_line(tmp_path):
         ValueError, match=r"^sheet\.csv line 2: dec: fte must be 0 to 1"
     ):
         read_month_sheet(path, year_span(YEAR))
+
+
+def test_a_name_twice_names_both_lines(tmp_path):
+    path = _sheet(tmp_path, f"{CAL}\nAlice,1,,,,,,,,,,,\nAlice,,1,,,,,,,,,,\n")
+    with pytest.raises(
+        ValueError, match=r"^sheet\.csv line 3: Alice is already on line 2"
+    ):
+        read_month_sheet(path, year_span(YEAR))
