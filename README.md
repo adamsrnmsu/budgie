@@ -408,7 +408,16 @@ and the keys. `escape` or `?` closes it.
    `t` sets a target (the budget by default; `425000`, `850k` and `1.2M` all work), and
    `v` fills the selected cells so the plan cost lands on it, scaling them by one factor,
    or `V` to add the same FTE to each; whatever gap is left is reported. Months before
-   the latest spend reading are booked and dimmed. `s` (or `c`) saves the edits as dated
+   the latest spend reading are booked and dimmed. A month that is **complete** for a
+   person (its last day is on or before their latest reading) shows what they actually
+   booked, as a share of a full-time month, in **cyan**; those cells are read-only, and
+   the month in progress and later months keep the plan. Three read-only columns,
+   `2w 4w 8w`, give the average hours booked per week over the trailing 2, 4 and 8 weeks
+   ending at their latest reading, as a share of a full-time week (`—` with no readings
+   or when the window starts before the year). `h` flips the whole grid between FTE % and
+   hours: plan cells show FTE × the month's full-time hours, actuals and averages show
+   hours, and typing hours sets the FTE as hours ÷ that month's full-time hours (clamped
+   to 0–100%, with a message); `+`/`-` still nudge 5 FTE points. `s` (or `c`) saves the edits as dated
    rows appended to plan.csv, so its history is never edited, and undo starts fresh;
    `x` discards them (undoable). `i` imports a wide sheet — `name` then one column per
    month in the year's order (`name,Jan,...,Dec`, or `name,Oct,...,Sep` for an October

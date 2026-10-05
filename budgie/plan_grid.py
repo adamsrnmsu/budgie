@@ -30,6 +30,12 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import DataTable, Input, Static, TabbedContent, Tabs
 
+from budgie.core.booked import (
+    completed_months,
+    full_time_month_hours,
+    full_time_week_hours,
+    trailing_hours,
+)
 from budgie.core.eac import at_completion
 from budgie.core.montecarlo import simulate
 from budgie.core.plan import AllocationPlan, PlanEntry
@@ -144,6 +150,38 @@ class GridModel:
     def base(self) -> PlanCosting:
         return costing_for(self.snap)
 
+    @cached_property
+    def booked(self) -> dict[str, list[float | None]]:
+        """Hours booked per completed month, per person with readings."""
+        return completed_months(self.snap)
+
+    @cached_property
+    def full_month(self) -> list[float]:
+        return full_time_month_hours(self.snap)
+
+    @cached_property
+    def full_week(self) -> float:
+        return full_time_week_hours(self.snap)
+
+    @cached_property
+    def trends(self) -> list[dict[str, float | None]]:
+        """Average hours a week over the trailing 2, 4 and 8 weeks, per person."""
+        return [trailing_hours(self.snap, w) for w in TREND_WEEKS]
+
+    def actual(self, cell: Cell) -> float | None:
+        """Hours the person booked in this month, None unless it is complete."""
+        row = self.booked.get(cell[0])
+        return row[cell[1] - 1] if row else None
+
+    def set_hours(self, cells, hours: float) -> bool:
+        """Set each cell to ``hours`` of its month's full-time hours (clamped to
+        0-100%) as one undo step; True if any cell was clamped."""
+        self._check_open(cells)
+        raw = {c: hours / self.full_month[c[1] - 1] for c in cells}
+        self.checkpoint()
+        self.edits.update({c: round(min(1.0, max(0.0, v)), 4) for c, v in raw.items()})
+        return any(not 0 <= v <= 1 for v in raw.values())
+
     @property
     def months(self) -> list[str]:
         """Column labels in the span's order (a fiscal year may start in Oct)."""
@@ -238,14 +276,31 @@ def _signed(x: float) -> str:
     return f"{'+' if x >= 0 else '−'}{_money(abs(x))}"
 
 
+TREND_WEEKS = (2, 4, 8)
+
+
+def parse_hours(text: str) -> float:
+    """``"80"`` or ``"80h"`` as hours."""
+    raw = text.strip().lower().rstrip("h").strip()
+    try:
+        return float(raw)
+    except ValueError:
+        raise ValueError(f"not an hours figure: {text!r} (try 80)") from None
+
+
 LEGEND = (
     "[b]type[/b] 0-100 or [b]Enter[/b] edit   [b]+ -[/b] nudge 5%   "
     "[b]space[/b] select   [b]u[/b]/[b]U[/b] undo/redo   [b]s[/b] save   "
     "[b]x[/b] discard   [b]esc[/b] leave grid (then 1-5 switch tabs)\n"
     "[b yellow]yellow[/b yellow] edited, not saved   [reverse]reversed[/reverse] selected"
+    "\n[cyan]cyan[/cyan] booked actual (completed months) · 2w 4w 8w average booked"
     "   [dim]v solve to target   t set target   i import sheet   "
     "a add by name/date   g list[/dim]"
 )
+
+
+def mode_line(hours: bool) -> str:
+    return "showing hours · h FTE %" if hours else "showing FTE % · h hours"
 
 
 class PlanGrid(Vertical):
@@ -285,6 +340,7 @@ class PlanGrid(Vertical):
         Binding("V", "solve('even')", "Solve even"),
         Binding("t", "ask('target')", "Target"),
         Binding("i", "ask('sheet')", "Import"),
+        Binding("h", "toggle_units", "Hours/FTE %"),
         # Typing a number starts an edit (these win over the app's 1-5 tab keys
         # while the grid has focus).
         *[Binding(k, f"type('{k}')", show=False) for k in "0123456789."],
@@ -304,6 +360,7 @@ class PlanGrid(Vertical):
         self.selected: set[Cell] = set()
         self._asking: str | None = None  # "cell", "target" or "sheet" while asking
         self._target: float | None = None  # a typed target outlives a reload
+        self.hours = False  # FTE % or hours; lives as long as the tab is open
 
     def compose(self) -> ComposeResult:
         yield Static(id="grid_readout")
@@ -311,11 +368,14 @@ class PlanGrid(Vertical):
         yield Input(id="grid_input")
         yield Static(id="grid_cost")
         yield Static(id="grid_changes")
-        yield Static(LEGEND, id="grid_legend")
+        yield Static(self._legend(), id="grid_legend")
         yield Static(id="grid_status")
 
     def on_mount(self) -> None:
         self.query_one("#grid_input", Input).display = False
+
+    def _legend(self) -> str:
+        return f"{LEGEND}\n[b]{mode_line(self.hours)}[/b]"
 
     # -- loading -----------------------------------------------------------
 
@@ -345,24 +405,42 @@ class PlanGrid(Vertical):
         table.add_column("Name", key="name")
         for m, label in enumerate(model.months, 1):
             table.add_column(label if model.base.editable(m) else f"[dim]{label}[/dim]")
+        for w in TREND_WEEKS:
+            table.add_column(f"{w}w")
         scratch = model.scratch
         for name in model.names:
             cells = [name]
             for m, fte in enumerate(scratch.grid(name), 1):
-                text = f"{fte:.0%}"
-                if (name, m) in model.edits:
-                    text = f"[b yellow]{text}[/b yellow]"
-                elif not model.base.editable(m):
-                    text = f"[dim]{text}[/dim]"
+                if (booked := model.actual((name, m))) is not None:
+                    text = f"[cyan]{self._show(booked, model.full_month[m - 1])}[/cyan]"
+                else:
+                    text = self._show(
+                        fte * model.full_month[m - 1], model.full_month[m - 1]
+                    )
+                    if (name, m) in model.edits:
+                        text = f"[b yellow]{text}[/b yellow]"
+                    elif not model.base.editable(m):
+                        text = f"[dim]{text}[/dim]"
                 if (name, m) in self.selected:
                     text = f"[reverse]{text}[/reverse]"
                 cells.append(text)
+            for trend in model.trends:
+                avg = trend.get(name)
+                cells.append(
+                    "[dim]—[/dim]"
+                    if avg is None
+                    else f"[cyan]{self._show(avg, model.full_week)}[/cyan]"
+                )
             table.add_row(*cells)
         if table.row_count:
             table.move_cursor(
                 row=min(cursor.row, table.row_count - 1), column=max(cursor.column, 1)
             )
         self._readout()
+
+    def _show(self, hours: float, full: float) -> str:
+        """``hours`` as hours, or as a share of ``full`` (full-time hours)."""
+        return f"{hours:,.0f}" if self.hours else f"{hours / full if full else 0:.0%}"
 
     def _readout(self) -> None:
         r = self.model.readout()
@@ -410,10 +488,31 @@ class PlanGrid(Vertical):
         if (
             self.model is None
             or coord.column == 0
+            or coord.column > len(self.model.months)
             or coord.row >= len(self.model.names)
         ):
             return None
         return (self.model.names[coord.row], coord.column)
+
+    def _blocked(self) -> bool:
+        """Say why and return True when the cursor is on a cell no edit may touch.
+
+        A selection is checked by the model instead (booked months refuse there).
+        """
+        if self.model is None or self.selected:
+            return False
+        coord = self.query_one("#grid_table", DataTable).cursor_coordinate
+        if coord.column > len(self.model.months) and coord.row < len(self.model.names):
+            self.say("averages are read-only", error=True)
+            return True
+        cell = self._cursor_cell()
+        if cell and (booked := self.model.actual(cell)) is not None:
+            full = self.model.full_month[cell[1] - 1]
+            self.say(
+                f"booked: {self._show(booked, full)} is what was booked", error=True
+            )
+            return True
+        return False
 
     def _targets(self) -> set[Cell]:
         """The selection, else the cell under the cursor."""
@@ -444,12 +543,30 @@ class PlanGrid(Vertical):
     def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
         # Enter on a cell: edit its FTE (applied to the whole selection).
         event.stop()
+        if self._blocked():
+            return
         if cell := self._cursor_cell():
-            self.action_ask("cell", f"{self.model.current(cell) * 100:g}")
+            self.action_ask("cell", self._prefill(cell))
+
+    def _prefill(self, cell: Cell) -> str:
+        fte = self.model.current(cell)
+        if self.hours:
+            return f"{round(fte * self.model.full_month[cell[1] - 1], 1):g}"
+        return f"{fte * 100:g}"
+
+    def action_toggle_units(self) -> None:
+        if self._asking:
+            return
+        self.hours = not self.hours
+        self.query_one("#grid_legend", Static).update(self._legend())
+        if self.model:
+            self._redraw()
+        said = mode_line(self.hours)
+        self.say(f"{said[0].upper()}{said[1:]}.")
 
     def action_type(self, key: str) -> None:
         """A digit on a cell starts an edit with that digit typed."""
-        if self.model is None or self._asking:
+        if self.model is None or self._asking or self._blocked():
             return
         if self._cursor_cell():
             self.action_ask("cell", key)
@@ -458,7 +575,7 @@ class PlanGrid(Vertical):
 
     def action_nudge(self, delta: float) -> None:
         cells = self._targets()
-        if self.model is None or not cells:
+        if self.model is None or not cells or self._blocked():
             return
         try:
             moved = self.model.nudge(cells, delta)
@@ -469,7 +586,11 @@ class PlanGrid(Vertical):
             self.say(f"Already at {'100' if delta > 0 else '0'}%.")
             return
         self._redraw()
-        self.say(f"{moved} cell(s) {'+' if delta > 0 else '-'}{abs(delta):.0%}.")
+        self.say(
+            f"{moved} cell(s) {'+' if delta > 0 else '-'}{abs(delta):.0%}"
+            + (" FTE" if self.hours else "")
+            + "."
+        )
 
     def action_undo(self) -> None:
         if self.model and self.model.undo():
@@ -493,7 +614,11 @@ class PlanGrid(Vertical):
         box = self.query_one("#grid_input", Input)
         first, *_, last = self.model.months
         box.placeholder = {
-            "cell": "% FTE for the cursor/selected cells (50 or 0.5), enter applies, esc cancels",
+            "cell": (
+                "hours for the cursor/selected cells (80), enter applies, esc cancels"
+                if self.hours
+                else "% FTE for the cursor/selected cells (50 or 0.5), enter applies, esc cancels"
+            ),
             "target": "Target cost, e.g. 425000 or 1.2M, enter to set",
             "sheet": f"Path to a name,{first},...,{last} FTE sheet, enter to load",
         }[what]
@@ -531,9 +656,17 @@ class PlanGrid(Vertical):
                 self.say(f"Target set to {_money(self.model.target)}.")
             elif what == "cell":
                 cells = self._targets()
-                fte = parse_fte(event.value)
-                self.model.set(cells, fte)
-                self.say(f"Set {len(cells)} cell(s) to {fte:.0%}.")
+                if self.hours:
+                    hours = parse_hours(event.value)
+                    clamped = self.model.set_hours(cells, hours)
+                    said = f"Set {len(cells)} cell(s) to {hours:g} h"
+                    if clamped:
+                        said += " (clamped to 0-100% of a full-time month)"
+                    self.say(said + ".", error=clamped)
+                else:
+                    fte = parse_fte(event.value)
+                    self.model.set(cells, fte)
+                    self.say(f"Set {len(cells)} cell(s) to {fte:.0%}.")
             elif what == "sheet":
                 self.say(self.model.seed(self._sheet_path(event.value)))
         except (ValueError, OSError) as exc:

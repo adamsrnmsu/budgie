@@ -1287,6 +1287,8 @@ async def test_the_plan_tab_has_one_hint_and_it_describes_the_grid(
     assert "plan.csv" in hint
     for key in ("s ", "u ", "g "):
         assert key in hint
+    assert "booked" in hint and "2w 4w 8w" in hint and "h flips FTE %" in hint
+    assert any(k == "h" for k, _ in tui_mod.PLAN_KEYS)
 
 
 def test_hop_with_a_failed_list_windows_says_why_and_spawns_nothing(hops):

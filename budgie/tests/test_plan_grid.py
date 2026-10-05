@@ -299,3 +299,142 @@ def test_a_nudge_past_the_limit_changes_nothing_and_leaves_no_undo_step(project)
     at_zero.set({cell}, 0.0)
     assert at_zero.nudge({cell}, -0.05) == 0
     assert at_zero.nudge({cell}, 0.05) == 1
+
+
+# -- booked actuals, trends and the FTE % / hours toggle -----------------------
+# The scaffold's weekly.csv reads Alice 430 h on Mar 22 and 660 h on May 17 (week
+# 20), so Jan-Apr are complete for her and May on are not.
+
+
+def _row(app, name):
+    grid, table = app.query_one("#plan_grid"), app.query_one("#grid_table")
+    return [str(c) for c in table.get_row_at(grid.model.names.index(name))]
+
+
+def _status(app):
+    return str(app.query_one("#grid_status").content)
+
+
+async def test_completed_months_show_booked_cyan_and_the_rest_the_plan(
+    project, monkeypatch
+):
+    from budgie.core.booked import completed_months, full_time_month_hours
+
+    app, size = await _plan(project, monkeypatch)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        model = app.query_one("#plan_grid").model
+        booked = completed_months(model.snap)["Alice"]
+        ftm = full_time_month_hours(model.snap)
+        row = _row(app, "Alice")
+        assert row[1] == f"[cyan]{booked[0] / ftm[0]:.0%}[/cyan]"
+        assert row[4] == f"[cyan]{booked[3] / ftm[3]:.0%}[/cyan]"
+        assert "cyan" not in row[5] and "cyan" not in row[12]  # May on: the plan
+        assert row[5] == "[dim]90%[/dim]" or row[5] == "90%"
+        assert row[12] == "90%"
+        # Header: 12 months, then the three trend columns.
+        labels = [str(c.label) for c in app.query_one("#grid_table").columns.values()]
+        assert labels[-3:] == ["2w", "4w", "8w"]
+
+
+async def test_trend_columns_are_average_hours_a_week_as_a_share_of_full_time(
+    project, monkeypatch
+):
+    from budgie.core.booked import full_time_week_hours, trailing_hours
+
+    app, size = await _plan(project, monkeypatch)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        snap = app.query_one("#plan_grid").model.snap
+        row = _row(app, "Alice")
+        for text, w in zip(row[-3:], (2, 4, 8)):
+            pct = trailing_hours(snap, w)["Alice"] / full_time_week_hours(snap)
+            assert text == f"[cyan]{pct:.0%}[/cyan]"
+        # 8 weeks back from May 17 is Mar 22, her other reading: (660-430)/8.
+        assert trailing_hours(snap, 8)["Alice"] == pytest.approx(
+            (660 - 430) / 8, abs=0.1
+        )
+
+
+async def test_h_flips_the_grid_between_fte_and_hours_and_back(project, monkeypatch):
+    from budgie.core.booked import (
+        completed_months,
+        full_time_month_hours,
+        trailing_hours,
+    )
+
+    app, size = await _plan(project, monkeypatch)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        grid = app.query_one("#plan_grid")
+        snap = grid.model.snap
+        fte_row = _row(app, "Alice")
+        assert "showing FTE % · h hours" in str(app.query_one("#grid_legend").content)
+        await pilot.press("h")
+        await pilot.pause()
+        ftm = full_time_month_hours(snap)
+        row = _row(app, "Alice")
+        assert row[1] == f"[cyan]{completed_months(snap)['Alice'][0]:,.0f}[/cyan]"
+        assert row[12] == f"{0.9 * ftm[11]:,.0f}"  # plan: FTE x the month's hours
+        assert row[-3] == f"[cyan]{trailing_hours(snap, 2)['Alice']:,.0f}[/cyan]"
+        assert "showing hours · h FTE %" in str(app.query_one("#grid_legend").content)
+        await pilot.press("h")
+        await pilot.pause()
+        assert _row(app, "Alice") == fte_row
+
+
+async def test_typing_hours_sets_the_fte_as_hours_over_the_months_full_time(
+    project, monkeypatch
+):
+    from budgie.core.booked import full_time_month_hours
+
+    app, size = await _plan(project, monkeypatch)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        grid, table = app.query_one("#plan_grid"), app.query_one("#grid_table")
+        ftm = full_time_month_hours(grid.model.snap)
+        await pilot.press("h")
+        table.move_cursor(row=grid.model.names.index("Bob"), column=12)
+        await pilot.press("8", "0", "enter")
+        await pilot.pause()
+        assert grid.model.current(("Bob", 12)) == pytest.approx(80 / ftm[11], abs=1e-4)
+        # More hours than a full-time month clamps to 100% and says so.
+        await pilot.press("9", "9", "9", "enter")
+        await pilot.pause()
+        assert grid.model.current(("Bob", 12)) == 1.0
+        assert "100%" in _status(app) and "clamp" in _status(app)
+        # + - still move 5 FTE points in hours mode.
+        await pilot.press("minus")
+        assert grid.model.current(("Bob", 12)) == pytest.approx(0.95)
+
+
+async def test_actual_and_trend_cells_are_read_only_and_say_so(project, monkeypatch):
+    app, size = await _plan(project, monkeypatch)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        grid, table = app.query_one("#plan_grid"), app.query_one("#grid_table")
+        alice = grid.model.names.index("Alice")
+        from budgie.core.booked import completed_months, full_time_month_hours
+
+        snap = grid.model.snap
+        shown = (
+            f"{completed_months(snap)['Alice'][1] / full_time_month_hours(snap)[1]:.0%}"
+        )
+        table.move_cursor(row=alice, column=2)  # Feb: booked
+        for keys in (("5",), ("enter",), ("plus",)):
+            await pilot.press(*keys)
+            await pilot.pause()
+            assert f"booked: {shown} is what was booked" in _status(app)
+            assert not app.query_one("#grid_input").display
+        table.move_cursor(row=alice, column=14)  # 4w
+        for keys in (("5",), ("enter",), ("minus",), ("space",)):
+            await pilot.press(*keys)
+            await pilot.pause()
+        assert "averages are read-only" in _status(app)
+        assert not app.query_one("#grid_input").display
+        assert not grid.model.edits and not grid.selected
