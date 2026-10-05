@@ -263,3 +263,31 @@ def test_what_if_leaves_the_original_untouched():
     assert snap.budget.latest == 1000.0 and snap.plan is None
     assert snap.allocated == {"Alice": 1992.0}
     assert snap.allocations[0].fte == 1.0
+
+
+def test_planned_through_reads_an_allocated_persons_pace_line():
+    # No plan.csv: Alice's 1,992 h burn evenly across 2026's 365 days.
+    snap = _alice()
+    assert snap.planned_through("Alice", date(2026, 1, 31)) == pytest.approx(
+        1992 * 31 / 365
+    )
+    assert snap.planned_through("Alice", date(2025, 12, 31)) == 0.0
+
+
+def test_planned_through_reads_the_plan_for_someone_only_it_plans():
+    # Jan 1 is a holiday: Jan 2 and Jan 5-9 are 6 working days of 1,992 / 250
+    # = 7.968 h, at 0.5.
+    plan = AllocationPlan((PlanEntry("Carol", date(2026, 1, 1), 0.5),))
+    snap = replace(
+        _alice(plan), allocations=[], planned=plan.team_hours(year_span(2026))
+    )
+    assert snap.planned_through("Carol", date(2026, 1, 9)) == pytest.approx(
+        6 * 0.5 * 7.968
+    )
+
+
+def test_planned_through_is_none_for_anyone_not_planned():
+    plan = AllocationPlan((PlanEntry("Carol", date(2026, 1, 1), 0.5),))
+    # allocations.csv wins, so the plan alone plans nobody here.
+    assert _alice(plan).planned_through("Carol", date(2026, 1, 9)) is None
+    assert _alice().planned_through("Zed", date(2026, 1, 9)) is None
