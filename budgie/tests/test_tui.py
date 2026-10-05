@@ -209,7 +209,8 @@ async def test_number_keys_switch_tabs(tmp_path, monkeypatch):
             ("4", "tab_forecast"),
             ("5", "tab_assumptions"),
         ):
-            await pilot.press(key)
+            # Plan focuses its grid, where digits type; escape hands the keys back.
+            await pilot.press("escape", key)
             await pilot.pause()
             assert app.query_one("#tabs").active == expected
 
@@ -715,7 +716,7 @@ async def test_d_on_the_plan_tab_deletes_nothing(tmp_path, monkeypatch):
         assert project.is_dir()
         assert app.query_one("#tabs").active == "tab_plan"
 
-        await pilot.press("1")
+        await pilot.press("escape", "1")
         await pilot.pause()
         assert "d" in app.active_bindings
         await pilot.press("d")
@@ -750,7 +751,7 @@ async def test_e_opens_the_file_the_tab_shows(tmp_path, monkeypatch):
         await pilot.pause()
         await pilot.press("3", "e")
         await pilot.pause()
-        await pilot.press("4", "e")
+        await pilot.press("escape", "4", "e")
         await pilot.pause()
         await pilot.press("2")
         app.query_one("#inputs_table").move_cursor(row=3)
@@ -827,14 +828,15 @@ async def test_escape_leaves_the_plan_form(tmp_path, monkeypatch):
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("3")
+        await pilot.press("a")  # the form is behind a
         app.query_one("#plan_name").focus()
         await pilot.pause()
         await pilot.press("escape")
         await pilot.pause()
         # The month grid is the Plan tab's default view, so Escape lands there.
         assert app.focused is app.query_one("#grid_table")
-        # The digit keys switch tabs again instead of typing into the form.
-        await pilot.press("4")
+        # A second Escape leaves the grid; then the digit keys switch tabs.
+        await pilot.press("escape", "4")
         await pilot.pause()
         assert app.query_one("#tabs").active == "tab_forecast"
         assert app.query_one("#plan_name").value == ""
@@ -1283,7 +1285,7 @@ async def test_the_plan_tab_has_one_hint_and_it_describes_the_grid(
         assert len(app.query("#tab_plan .hint, #tab_plan .tab-hint")) == 1
         hint = _text(app, "#tab_plan .tab-hint")
     assert "plan.csv" in hint
-    for key in ("c ", "x ", "g "):
+    for key in ("s ", "u ", "g "):
         assert key in hint
 
 
@@ -1340,3 +1342,18 @@ async def test_assumptions_are_model_cards_then_three_panels(tmp_path, monkeypat
         assert figure in hours
     assert "━" in hours and "96%" in hours  # available as a share of gross
     assert all(word in spread for word in ("low", "likely", "high"))
+
+
+async def test_the_plan_footer_shows_the_primary_keys(tmp_path, monkeypatch):
+    _project(tmp_path, monkeypatch)
+    app = BudgieTUI()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        shown = {
+            b.binding.action: b.binding.key
+            for b in app.active_bindings.values()
+            if b.binding.show
+        }
+    assert shown["undo"] == "u" and shown["redo"] == "U"
+    assert shown["commit"] == "s" and shown["discard"] == "x"

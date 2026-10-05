@@ -118,8 +118,9 @@ _HINTS = {
     "tab_inputs": "The files behind every number — e opens the highlighted one "
     "in $EDITOR, then r recalculates.",
     "tab_plan": "Who works on this, and when? Each month's FTE from plan.csv — "
-    "edits preview the cost, c appends them as dated rows (history is never "
-    "edited), x discards, g lists the changes. 0 FTE takes someone off.",
+    "type a % on a cell (or Enter), + - nudge 5%, u undoes, s saves as dated "
+    "rows (history is never edited), esc leaves the grid so 1-5 switch tabs, "
+    "a adds by name and date, g lists the changes.",
     "tab_forecast": "Will we run out? Built from plan.csv (hours), people.csv "
     "(rates), weekly.csv (spent), costs.csv, budget.",
     "tab_assumptions": "How is each number built? The model, this year's hours "
@@ -277,6 +278,28 @@ KEYS: tuple[tuple[str, str], ...] = (
     ("q", "quit"),
 )
 
+PLAN_KEYS: tuple[tuple[str, str], ...] = (
+    (
+        "0-9 / enter",
+        "edit the cell under the cursor: 50, 50% or 0.5 all mean half time",
+    ),
+    ("+  -", "nudge the selected cells (or the cursor's) by 5 points, kept in 0-100%"),
+    ("space, shift+arrows", "select cells; an edit or nudge applies to all of them"),
+    ("u / U", "undo / redo (edits, nudges, solves, imports, discard)"),
+    ("s", "save the edits as dated rows appended to plan.csv"),
+    ("x", "discard every unsaved edit (u brings them back)"),
+    ("v / V", "solve the selected cells to the target (scaled / the same FTE added)"),
+    ("t, i", "set a target cost; import a month sheet as edits"),
+    ("a, g", "add a change by name and date; flip between grid and list"),
+    ("escape", "leave the grid, so the 1-5 keys switch tabs again"),
+)
+
+PLAN_TEXT = (
+    "Edits are scratch: the plan cost line shows what they would change, and "
+    "nothing is written until s. Saving appends dated rows to plan.csv, so the "
+    "file keeps its history and undo starts fresh. Months already booked are dimmed."
+)
+
 _WRAP = 88
 
 
@@ -298,6 +321,8 @@ def help_text() -> str:
     terms = "\n".join(f"  [b]{t}[/b]\n{_wrap(m, 6)}" for t, m in GLOSSARY)
     width = max(len(k) for k, _ in KEYS)
     keys = "\n".join(f"  [b]{k:<{width}}[/b]  {what}" for k, what in KEYS)
+    pw = max(len(k) for k, _ in PLAN_KEYS)
+    plan_keys = "\n".join(f"  [b]{k:<{pw}}[/b]  {what}" for k, what in PLAN_KEYS)
     return (
         "[b]How Budgie works[/b]\n\n"
         f"{model_text()}\n\n"
@@ -305,6 +330,9 @@ def help_text() -> str:
         f"{terms}\n\n"
         "[b]Keys[/b]\n\n"
         f"{keys}\n\n"
+        "[b]Plan tab[/b]\n\n"
+        f"{_wrap(PLAN_TEXT)}\n\n"
+        f"{plan_keys}\n\n"
         "[dim]escape or ? closes this.[/dim]"
     )
 
@@ -685,6 +713,7 @@ class BudgieTUI(App):
         ("4", "show_tab('tab_forecast')", "Forecast"),
         ("5", "show_tab('tab_assumptions')", "Assumptions"),
         ("g", "toggle_grid", "Grid/list"),
+        ("a", "toggle_form", "Add by name"),
         ("P", "switch('perch')", "perch"),
         ("G", "switch('gitboard')", "gitboard"),
         ("q", "quit", "Quit"),
@@ -815,6 +844,7 @@ class BudgieTUI(App):
 
     def _compose_plan(self) -> ComposeResult:
         form = Horizontal(id="plan_form")
+        form.display = False  # the grid is the way to edit; a shows this form
         form.border_title = "Append a change"
         with form:
             yield Label("Name")
@@ -941,6 +971,14 @@ class BudgieTUI(App):
         self.query_one("#plan_table", DataTable).display = not grid.display
         self._plan_view().focus()
 
+    def action_toggle_form(self) -> None:
+        form = self.query_one("#plan_form")
+        form.display = not form.display
+        if form.display:
+            self.query_one("#plan_name").focus()
+        else:
+            self._plan_view().focus()
+
     def on_plan_grid_commit(self, event: PlanGrid.Commit) -> None:
         """Append the grid's scratch edits to plan.csv, then reload everything."""
         path = self.plan_path
@@ -951,7 +989,8 @@ class BudgieTUI(App):
             append_plan_row(path, row.name, row.effective_date, row.fte)
         self.recalculate()
         self.query_one("#plan_grid", PlanGrid).say(
-            f"Committed {len(event.rows)} row(s) to {path.name}."
+            f"Saved {len(event.rows)} row(s) to {path.name}. They are in its history "
+            "now; undo starts fresh."
         )
 
     def _active_tab(self) -> str | None:
@@ -968,7 +1007,7 @@ class BudgieTUI(App):
             return self._active_tab() == "tab_projects"
         if action == "edit_selected":
             return self._active_tab() != "tab_assumptions"
-        if action == "toggle_grid":
+        if action in ("toggle_grid", "toggle_form"):
             return self._active_tab() == "tab_plan"
         return True
 
@@ -976,6 +1015,12 @@ class BudgieTUI(App):
         # A mouse click changes tab without a key, so on_key can't disarm.
         self._delete_armed = None
         self.refresh_bindings()
+        if (
+            event.pane.id == "tab_plan"
+            and self.query_one("#plan_grid", PlanGrid).display
+        ):
+            # Straight into the grid, so typing edits (esc goes back to the tabs).
+            self.call_after_refresh(self.query_one("#grid_table", DataTable).focus)
 
     def action_edit_selected(self) -> None:
         """Open the file the current tab shows in $EDITOR."""
