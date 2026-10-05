@@ -64,7 +64,7 @@ def test_months_up_to_the_latest_reading_are_booked(project):
     assert not model.base.editable(4) and model.base.editable(6)
     with pytest.raises(ValueError, match="Apr already booked"):
         model.set({("Alice", 4)}, 0.5)
-    with pytest.raises(ValueError, match="FTE runs 0 to 1"):
+    with pytest.raises(ValueError, match="FTE runs 0-100%"):
         model.set({("Alice", 7)}, 3)
 
 
@@ -109,11 +109,11 @@ async def test_select_target_solve_commit_in_the_tui(project, monkeypatch):
         await pilot.press("t")
         app.query_one("#grid_input").value = str(target)
         await pilot.press("enter")
-        await pilot.press("s")
+        await pilot.press("v")
         await pilot.pause()
         assert grid.model.readout()["gap"] == pytest.approx(0, abs=0.01)
 
-        await pilot.press("c")
+        await pilot.press("s")
         await pilot.pause()
 
     entries = load_plan(project / "plan.csv").changes_for("Bob")
@@ -192,3 +192,97 @@ async def test_a_sheet_path_is_relative_to_the_project_not_the_cwd(
         await pilot.pause()
 
         assert "Seeded 3 cell(s)" in str(grid.query_one("#grid_status").render())
+
+
+def test_parse_fte_takes_percent_or_fraction_and_explains_junk():
+    from budgie.plan_grid import parse_fte
+
+    assert parse_fte("50") == parse_fte("50%") == parse_fte("0.5") == 0.5
+    with pytest.raises(ValueError, match="not a percentage"):
+        parse_fte("lots")
+
+
+def test_undo_redo_cover_set_nudge_and_discard(project):
+    model = GridModel(load_snapshot(project))
+    cell = ("Bob", 12)
+    before = model.current(cell)
+    model.set({cell}, 0.5)
+    model.nudge({cell}, 0.05)
+    assert model.current(cell) == pytest.approx(0.55)
+    assert model.undo() and model.current(cell) == pytest.approx(0.5)
+    assert model.redo() and model.current(cell) == pytest.approx(0.55)
+    model.nudge({cell}, 5)  # clamped to 100%
+    assert model.current(cell) == 1.0
+    model.undo()
+    model.edits.clear()
+    assert model.undo() and model.edits  # back
+    while model.undo():
+        pass
+    assert model.current(cell) == before and not model.edits
+
+
+async def _plan(project, monkeypatch, size=(140, 45)):
+    monkeypatch.chdir(project)
+    forget_workspaces()
+    return BudgieTUI(), size
+
+
+async def test_plan_tab_focuses_the_grid_and_typing_edits_in_place(
+    project, monkeypatch
+):
+    app, size = await _plan(project, monkeypatch)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        grid = app.query_one("#plan_grid")
+        table = app.query_one("#grid_table")
+        assert app.focused is table
+        assert not app.query_one("#plan_form").display
+        table.move_cursor(row=grid.model.names.index("Bob"), column=12)
+        await pilot.press("5", "0", "enter")
+        await pilot.pause()
+        assert grid.model.current(("Bob", 12)) == 0.5
+        assert "1 change" in str(app.query_one("#grid_changes").content)
+        assert "→" in str(app.query_one("#grid_cost").content)
+        await pilot.press("plus")
+        assert grid.model.current(("Bob", 12)) == pytest.approx(0.55)
+        await pilot.press("u", "u")
+        assert not grid.model.edits
+        await pilot.press("U")
+        assert grid.model.edits
+        # Bad input says what to do, not what float() thought.
+        await pilot.press("enter")
+        app.query_one("#grid_input").value = "lots"
+        await pilot.press("enter")
+        status = str(app.query_one("#grid_status").content)
+        assert "try 50 or 0.5" in status and "float" not in status
+        # Escape leaves the grid, so the tab keys work again.
+        await pilot.press("escape", "escape")
+        await pilot.press("4")
+        await pilot.pause()
+        assert app.query_one("#tabs").active == "tab_forecast"
+
+
+async def test_saving_says_it_is_in_history_and_resets_undo(project, monkeypatch):
+    app, size = await _plan(project, monkeypatch)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        grid = app.query_one("#plan_grid")
+        app.query_one("#grid_table").move_cursor(
+            row=grid.model.names.index("Bob"), column=12
+        )
+        await pilot.press("2", "5", "enter", "s")
+        await pilot.pause()
+        status = str(app.query_one("#grid_status").content)
+        assert "history" in status and "undo starts fresh" in status
+        assert not grid.model.undone and not grid.model.edits
+
+
+async def test_help_has_a_plan_section(project, monkeypatch):
+    app, size = await _plan(project, monkeypatch)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("question_mark")
+        await pilot.pause()
+        text = app.screen.query_one("#help_text").content
+        assert "Plan tab" in str(text) and "undo" in str(text)

@@ -28,7 +28,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
 from textual.message import Message
-from textual.widgets import DataTable, Input, Static
+from textual.widgets import DataTable, Input, Static, TabbedContent, Tabs
 
 from budgie.core.eac import at_completion
 from budgie.core.montecarlo import simulate
@@ -69,6 +69,16 @@ def costing_for(snap: Snapshot) -> PlanCosting:
     )
 
 
+def parse_fte(text: str) -> float:
+    """``"0.5"``, ``"50"`` or ``"50%"`` as an FTE; above 1 reads as a percent."""
+    raw = text.strip()
+    try:
+        x = float(raw.rstrip("%"))
+    except ValueError:
+        raise ValueError(f"not a percentage: {text!r} (try 50 or 0.5)") from None
+    return x / 100 if raw.endswith("%") or x > 1 else x
+
+
 def parse_money(text: str) -> float:
     """``"$1.2M"``, ``"850k"`` or ``"425,000"`` as a number of dollars."""
     match = re.fullmatch(r"\$?\s*([\d,]*\.?\d+)\s*([kKmM]?)", text.strip())
@@ -85,6 +95,44 @@ class GridModel:
     snap: Snapshot
     target: float | None = None
     edits: dict[Cell, float] = field(default_factory=dict)
+    undone: list[dict[Cell, float]] = field(default_factory=list)
+    redone: list[dict[Cell, float]] = field(default_factory=list)
+
+    def checkpoint(self) -> None:
+        """Remember the edits before a change, so ``undo`` can bring them back."""
+        self.undone.append(dict(self.edits))
+        self.redone.clear()
+
+    def undo(self) -> bool:
+        if not self.undone:
+            return False
+        self.redone.append(dict(self.edits))
+        self.edits = self.undone.pop()
+        return True
+
+    def redo(self) -> bool:
+        if not self.redone:
+            return False
+        self.undone.append(dict(self.edits))
+        self.edits = self.redone.pop()
+        return True
+
+    def current(self, cell: Cell) -> float:
+        return self.scratch.grid(cell[0])[cell[1] - 1]
+
+    def nudge(self, cells, delta: float) -> None:
+        """Move each cell by ``delta`` FTE (clamped to 0-1), keeping its own value."""
+        self._check_open(cells)
+        new = {c: round(min(1.0, max(0.0, self.current(c) + delta)), 4) for c in cells}
+        self.checkpoint()
+        self.edits.update(new)
+
+    def _check_open(self, cells) -> None:
+        booked = sorted({m for _, m in cells if not self.base.editable(m)})
+        if booked:
+            raise ValueError(
+                f"{', '.join(self.months[m - 1] for m in booked)} already booked"
+            )
 
     @cached_property
     def base(self) -> PlanCosting:
@@ -118,12 +166,9 @@ class GridModel:
 
     def set(self, cells, fte: float) -> None:
         if not 0 <= fte <= 1:
-            raise ValueError(f"FTE runs 0 to 1, got {fte:g}")
-        booked = sorted({m for _, m in cells if not self.base.editable(m)})
-        if booked:
-            raise ValueError(
-                f"{', '.join(self.months[m - 1] for m in booked)} already booked"
-            )
+            raise ValueError(f"FTE runs 0-100%, got {fte:.0%}")
+        self._check_open(cells)
+        self.checkpoint()
         self.edits.update(dict.fromkeys(cells, fte))
 
     def seed(self, path: str | Path) -> str:
@@ -134,6 +179,7 @@ class GridModel:
         """
         cells = read_month_sheet(path, self.snap.span)
         open_ = {c: v for c, v in cells.items() if self.base.editable(c[1])}
+        self.checkpoint()
         self.edits.update(open_)
         said = f"Seeded {len(open_)} cell(s) from {Path(path).name}"
         if booked := len(cells) - len(open_):
@@ -147,6 +193,7 @@ class GridModel:
         if self.target is None:
             raise ValueError("No target: press t to set one (there is no budget)")
         sol = solve(self.scratch, cells, self.target, mode=mode)
+        self.checkpoint()
         self.edits.update(sol.fte)
         said = f"Solved {len(sol.fte)} cells ({mode})"
         if abs(sol.gap) >= 0.5:
@@ -185,14 +232,26 @@ def _signed(x: float) -> str:
     return f"{'+' if x >= 0 else '−'}{_money(abs(x))}"
 
 
+LEGEND = (
+    "[b]type[/b] 0-100 or [b]Enter[/b] edit   [b]+ -[/b] nudge 5%   "
+    "[b]space[/b] select   [b]u[/b]/[b]U[/b] undo/redo   [b]s[/b] save   "
+    "[b]x[/b] discard   [b]esc[/b] leave grid (then 1-5 switch tabs)\n"
+    "[b yellow]yellow[/b yellow] edited, not saved   [reverse]reversed[/reverse] selected"
+    "   [dim]v solve to target   t set target   i import sheet   "
+    "a add by name/date   g list[/dim]"
+)
+
+
 class PlanGrid(Vertical):
     """People × months of FTE, with scratch edits and a cost solver."""
 
     DEFAULT_CSS = """
     PlanGrid { height: 1fr; }
     PlanGrid #grid_readout { height: auto; padding: 0 2; }
-    PlanGrid #grid_table { height: 1fr; }
+    PlanGrid #grid_table { height: auto; max-height: 1fr; }
     PlanGrid #grid_input { height: 1; border: none; margin: 0 2; }
+    PlanGrid #grid_changes { height: 1; padding: 0 2; }
+    PlanGrid #grid_legend { height: auto; padding: 0 2; color: $text-muted; }
     PlanGrid #grid_status { height: auto; padding: 0 2; color: $success; }
     PlanGrid #grid_status.error { color: $error; }
     """
@@ -203,12 +262,19 @@ class PlanGrid(Vertical):
         Binding("shift+left", "extend(0, -1)", show=False),
         Binding("shift+down", "extend(1, 0)", show=False),
         Binding("shift+up", "extend(-1, 0)", show=False),
-        Binding("s", "solve('proportional')", "Solve"),
-        Binding("S", "solve('even')", "Solve even"),
+        Binding("plus,equals_sign", "nudge(0.05)", "+5%"),
+        Binding("minus,underscore", "nudge(-0.05)", "-5%"),
+        Binding("u,ctrl+z", "undo", "Undo"),
+        Binding("U,ctrl+y", "redo", "Redo"),
+        Binding("s,c", "commit", "Save"),
+        Binding("x", "discard", "Discard"),
+        Binding("v", "solve('proportional')", "Solve"),
+        Binding("V", "solve('even')", "Solve even"),
         Binding("t", "ask('target')", "Target"),
         Binding("i", "ask('sheet')", "Import"),
-        Binding("c", "commit", "Commit"),
-        Binding("x", "discard", "Discard"),
+        # Typing a number starts an edit (these win over the app's 1-5 tab keys
+        # while the grid has focus).
+        *[Binding(k, f"type('{k}')", show=False) for k in "0123456789."],
         Binding("escape", "close_input", show=False),
     ]
 
@@ -230,6 +296,9 @@ class PlanGrid(Vertical):
         yield Static(id="grid_readout")
         yield DataTable(id="grid_table", cursor_type="cell", zebra_stripes=True)
         yield Input(id="grid_input")
+        yield Static(id="grid_cost")
+        yield Static(id="grid_changes")
+        yield Static(LEGEND, id="grid_legend")
         yield Static(id="grid_status")
 
     def on_mount(self) -> None:
@@ -243,6 +312,8 @@ class PlanGrid(Vertical):
         if snap is None:
             self.model = None
             self.query_one("#grid_table", DataTable).clear(columns=True)
+            self.query_one("#grid_changes", Static).update("")
+            self.query_one("#grid_cost", Static).update("")
             self.query_one("#grid_readout", Static).update(
                 "[dim]Open a project (with a people.csv) to plan in the grid.[/dim]"
             )
@@ -265,7 +336,7 @@ class PlanGrid(Vertical):
         for name in model.names:
             cells = [name]
             for m, fte in enumerate(scratch.grid(name), 1):
-                text = f"{fte:.2f}"
+                text = f"{fte:.0%}"
                 if (name, m) in model.edits:
                     text = f"[b yellow]{text}[/b yellow]"
                 elif not model.base.editable(m):
@@ -289,12 +360,29 @@ class PlanGrid(Vertical):
             parts += [f"target {_money(r['target'])}", f"gap {_signed(r['gap'])}"]
         parts += [f"P50 {_money(r['p50'])}", f"P80 {_money(r['p80'])}"]
         line = "   ·   ".join(parts)
-        if self.model.edits:
-            line += (
-                f"\n[yellow]{len(self.model.edits)} unsaved cell(s)[/yellow]"
-                "  [dim]c commits as plan rows, x discards[/dim]"
-            )
         self.query_one("#grid_readout", Static).update(line)
+        saved = self.model.base.cost()
+        delta = r["cost"] - saved
+        self.query_one("#grid_cost", Static).update(
+            f"unsaved: plan cost {_money(saved)} → {_money(r['cost'])} "
+            f"({_signed(delta)})"
+            if self.model.edits
+            else ""
+        )
+        m, n = self.model, len(self.model.edits)
+        head = (
+            f"[b yellow]{n} change{'s' * (n != 1)}[/b yellow]"
+            if n
+            else "[dim]no changes[/dim]"
+        )
+        self.query_one("#grid_changes", Static).update(
+            f"{head} [dim]·[/dim] "
+            + ("u undo" if m.undone else "[dim]u undo[/dim]")
+            + " [dim]·[/dim] "
+            + ("U redo" if m.redone else "[dim]U redo[/dim]")
+            + " [dim]·[/dim] "
+            + ("[b]s save[/b]" if n else "[dim]s save[/dim]")
+        )
 
     def say(self, message: str, error: bool = False) -> str:
         status = self.query_one("#grid_status", Static)
@@ -341,12 +429,45 @@ class PlanGrid(Vertical):
         self._redraw()
 
     def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
-        # Enter on a cell: type its new FTE (applied to the whole selection).
+        # Enter on a cell: edit its FTE (applied to the whole selection).
         event.stop()
-        if self._targets():
-            cell = self._cursor_cell()
-            current = self.model.scratch.grid(cell[0])[cell[1] - 1] if cell else 0
-            self.action_ask("cell", f"{current:.2f}")
+        if cell := self._cursor_cell():
+            self.action_ask("cell", f"{self.model.current(cell) * 100:g}")
+
+    def action_type(self, key: str) -> None:
+        """A digit on a cell starts an edit with that digit typed."""
+        if self.model is None or self._asking:
+            return
+        if self._cursor_cell():
+            self.action_ask("cell", key)
+            # Focus selects the prefill; collapse it so the next digit appends.
+            self.call_after_refresh(self.query_one("#grid_input", Input).action_end)
+
+    def action_nudge(self, delta: float) -> None:
+        cells = self._targets()
+        if self.model is None or not cells:
+            return
+        try:
+            self.model.nudge(cells, delta)
+        except ValueError as exc:
+            self.say(str(exc), error=True)
+            return
+        self._redraw()
+        self.say(f"{len(cells)} cell(s) {'+' if delta > 0 else '-'}{abs(delta):.0%}.")
+
+    def action_undo(self) -> None:
+        if self.model and self.model.undo():
+            self._redraw()
+            self.say("Undone. U redoes.")
+        else:
+            self.say("Nothing to undo.")
+
+    def action_redo(self) -> None:
+        if self.model and self.model.redo():
+            self._redraw()
+            self.say("Redone.")
+        else:
+            self.say("Nothing to redo.")
 
     def action_ask(self, what: str, value: str = "") -> None:
         if self.model is None:
@@ -356,7 +477,7 @@ class PlanGrid(Vertical):
         box = self.query_one("#grid_input", Input)
         first, *_, last = self.model.months
         box.placeholder = {
-            "cell": "FTE 0-1 for the selected cells, enter to apply",
+            "cell": "% FTE for the cursor/selected cells (50 or 0.5), enter applies, esc cancels",
             "target": "Target cost, e.g. 425000 or 1.2M, enter to set",
             "sheet": f"Path to a name,{first},...,{last} FTE sheet, enter to load",
         }[what]
@@ -371,6 +492,9 @@ class PlanGrid(Vertical):
             box.display = False
             self._asking = None
             self.query_one("#grid_table", DataTable).focus()
+        else:
+            # Out of the grid onto the tab bar, where the 1-5 keys switch tabs.
+            self.app.query_one("#tabs", TabbedContent).query_one(Tabs).focus()
 
     def _sheet_path(self, typed: str) -> Path:
         """A typed sheet path; a relative one is the project's, not the launch dir's."""
@@ -391,8 +515,9 @@ class PlanGrid(Vertical):
                 self.say(f"Target set to {_money(self.model.target)}.")
             elif what == "cell":
                 cells = self._targets()
-                self.model.set(cells, float(event.value))
-                self.say(f"Set {len(cells)} cell(s) to {float(event.value):g}.")
+                fte = parse_fte(event.value)
+                self.model.set(cells, fte)
+                self.say(f"Set {len(cells)} cell(s) to {fte:.0%}.")
             elif what == "sheet":
                 self.say(self.model.seed(self._sheet_path(event.value)))
         except (ValueError, OSError) as exc:
@@ -416,13 +541,14 @@ class PlanGrid(Vertical):
 
     def action_commit(self) -> None:
         if self.model is None or not self.model.edits:
-            self.say("Nothing to commit.")
+            self.say("Nothing to save: no edits yet.")
             return
         self.post_message(self.Commit(self.model.rows()))
 
     def action_discard(self) -> None:
         if self.model and self.model.edits:
+            self.model.checkpoint()
             self.model.edits.clear()
             self.selected.clear()
             self._redraw()
-            self.say("Scratch edits discarded.")
+            self.say("Edits discarded. u brings them back.")

@@ -396,22 +396,28 @@ and the keys. `escape` or `?` closes it.
 2. **Inputs** — every project file plus `budgie.yaml` itself (year, PTO, budget, simulation
    runs), whether it exists, and which tab reads it. Select one and press `e` to open it in
    `$VISUAL`/`$EDITOR` (`vim` if neither is set), then `r` to recalculate.
-3. **Plan** — a **month grid**: everyone down the side, Jan–Dec across, FTE in each cell.
-   Edits are scratch — they reprice the plan live and write nothing — and the line above the
-   grid shows plan cost · target · gap · P50 · P80. Arrows move; `enter` types an FTE for the
-   cell (or every selected cell); `space` selects a cell and `shift`+arrows extend the
-   selection. `t` sets a target (the budget by default; `425000`, `850k` and `1.2M` all
-   work), and `s` fills the selected cells so the plan cost lands on it — scaling them all
-   by one factor, or `S` to add the same FTE to each. FTE stays 0–1, and whatever gap that
-   leaves is reported. Months before the latest spend reading are booked and dimmed. `c`
-   commits the scratch edits as dated rows appended to plan.csv; `x` discards them. `i`
-   imports a wide sheet — `name` then one column per month in the year's order
-   (`name,Jan,...,Dec`, or `name,Oct,...,Sep` for an October fiscal year; `Jan`, `January`
-   and `JAN` all work) with an FTE 0–1 in each cell — as scratch edits: a blank cell is left
-   alone, booked months are skipped, and a name not in people.csv is shown but not costed.
-   A relative path is read from the project's folder. Nothing is written until `c`. `g`
-   flips to the per-person list of changes, and the form above still appends one row at a
-   time. `escape` leaves a field.
+3. **Plan** — a **month grid**: everyone down the side, Jan–Dec across, the FTE as a
+   percentage in each cell. Opening the tab puts the cursor in the grid. Type a number
+   (`50`, `50%` and `0.5` all mean half time) or press `enter` and the edit line opens
+   right under the grid; `+`/`-` nudge the selected cells (or the cursor's) by 5 points,
+   kept within 0–100%. `space` selects a cell and `shift`+arrows extend the selection.
+   Edits are scratch: edited cells turn yellow, and the lines under the grid show
+   `N changes · u undo · U redo · s save` and the cost effect (`plan cost $384,797 →
+   $381,200 (−$3,597)`); the line above shows plan cost · target · gap · P50 · P80.
+   `u`/`ctrl+z` undo and `U`/`ctrl+y` redo any edit, nudge, solve, import or discard.
+   `t` sets a target (the budget by default; `425000`, `850k` and `1.2M` all work), and
+   `v` fills the selected cells so the plan cost lands on it, scaling them by one factor,
+   or `V` to add the same FTE to each; whatever gap is left is reported. Months before
+   the latest spend reading are booked and dimmed. `s` (or `c`) saves the edits as dated
+   rows appended to plan.csv, so its history is never edited, and undo starts fresh;
+   `x` discards them (undoable). `i` imports a wide sheet — `name` then one column per
+   month in the year's order (`name,Jan,...,Dec`, or `name,Oct,...,Sep` for an October
+   fiscal year; `Jan`, `January` and `JAN` all work) with an FTE 0–1 in each cell — as
+   scratch edits: a blank cell is left alone, booked months are skipped, and a name not in
+   people.csv is shown but not costed. A relative path is read from the project's folder.
+   `g` flips to the per-person list of changes, and `a` shows a form that appends one row
+   by name and date. Because digits type in the grid, `escape` leaves it (and a form
+   field) so `1`–`5` switch tabs again.
 4. **Forecast** — leads with one line: budget · spent · forecast P50 · headroom · stoplight.
    It reads the project exactly as `budgie forecast` does (plan, readings, costs, budget), so
    the two quote the same P50. Year, PTO, iterations and seed come from `budgie.yaml` (`e` on
