@@ -120,7 +120,8 @@ _HINTS = {
     "tab_plan": "Who works on this, and when? Each month's FTE from plan.csv — "
     "type a % on a cell (or Enter), + - nudge 5%, u undoes, s saves as dated "
     "rows (history is never edited), esc leaves the grid so 1-5 switch tabs, "
-    "a adds by name and date, g lists the changes.",
+    "a adds by name and date, g lists the changes. Cyan is what people booked "
+    "in completed months; 2w 4w 8w are average booked per week; h flips FTE % and hours.",
     "tab_forecast": "Will we run out? Built from plan.csv (hours), people.csv "
     "(rates), weekly.csv (spent), costs.csv, budget.",
     "tab_assumptions": "How is each number built? The model, this year's hours "
@@ -291,13 +292,18 @@ PLAN_KEYS: tuple[tuple[str, str], ...] = (
     ("v / V", "solve the selected cells to the target (scaled / the same FTE added)"),
     ("t, i", "set a target cost; import a month sheet as edits"),
     ("a, g", "add a change by name and date; flip between grid and list"),
+    ("h", "flip the whole grid between FTE % and hours (typing hours converts to FTE)"),
     ("escape", "leave the grid, so the 1-5 keys switch tabs again"),
 )
 
 PLAN_TEXT = (
     "Edits are scratch: the plan cost line shows what they would change, and "
     "nothing is written until s. Saving appends dated rows to plan.csv, so the "
-    "file keeps its history and undo starts fresh. Months already booked are dimmed."
+    "file keeps its history and undo starts fresh. Cyan cells are what a person actually "
+    "booked in a completed month (read-only); the rest of a booked month stays dim plan. "
+    "2w, 4w and 8w are the average hours booked per week over the trailing 2, 4 and 8 "
+    "weeks, as a share of a full-time week (read-only). In hours mode + and - still "
+    "nudge 5 FTE points."
 )
 
 _WRAP = 88
