@@ -42,7 +42,7 @@ from typing import ClassVar
 import numpy as np
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import (
@@ -636,7 +636,29 @@ class BudgieTUI(App):
     #hist { color: $success; height: auto; padding: 1 0; }
     #mc_figures { height: auto; }
     #source { color: $text-muted; height: auto; padding: 1 0 0 0; }
-    #assumptions_text { padding: 1 2; }
+    #assumptions { padding: 1 2; }
+    #model_grid { grid-size: 3; grid-gutter: 0 1; height: auto; }
+    .model-card {
+        height: auto;
+        padding: 0 1;
+        border: round $accent 40%;
+        border-title-color: $accent;
+        border-title-style: bold;
+        color: $text-muted;
+    }
+    #assumption_panels { height: auto; margin: 1 0; }
+    .assumption-panel {
+        width: 1fr;
+        height: auto;
+        padding: 0 1;
+        margin: 0 1 0 0;
+        background: $panel;
+        border: round $panel-lighten-2;
+        border-title-color: $accent;
+        border-title-style: bold;
+    }
+    #spread { margin: 0; }
+    #assumptions_foot { color: $text-muted; }
 
     /* --- Plan tab ------------------------------------------------------ */
     #plan_form {
@@ -755,8 +777,23 @@ class BudgieTUI(App):
                 yield from self._compose_forecast()
             with TabPane(_TABS[4][1], id=_TABS[4][0]):
                 yield Static(_HINTS[_TABS[4][0]], classes="tab-hint")
-                yield VerticalScroll(Static(id="assumptions_text"))
+                yield from self._compose_assumptions()
         yield Footer()
+
+    def _compose_assumptions(self) -> ComposeResult:
+        """The model's six steps as cards, read left to right, then this year's
+        hours, the PTO rule and the spread as panels (filled on refresh)."""
+        with VerticalScroll(id="assumptions"):
+            yield Static("How Budgie builds a forecast", classes="pane-title")
+            with Grid(id="model_grid"):
+                for n, (title, text) in enumerate(MODEL, 1):
+                    card = Static(text, classes="model-card")
+                    card.border_title = f"{n} {title}"
+                    yield card
+            with Horizontal(id="assumption_panels"):
+                for panel in ("hours_year", "pto_rule", "spread"):
+                    yield Static(id=panel, classes="assumption-panel")
+            yield Static("Every term is explained under ?.", id="assumptions_foot")
 
     def _compose_projects(self) -> ComposeResult:
         yield DataTable(id="projects_table")
@@ -1501,42 +1538,52 @@ class BudgieTUI(App):
         table.move_cursor(row=cursor)
 
     def _refresh_assumptions(self, ph, label: str, iterations: int) -> None:
-        spread = (
+        width = 24
+        rows = (
+            ("Gross hours", ph.gross_hours, "40 h × 52"),
+            ("Federal holidays", -ph.holiday_hours or 0, ""),
+            ("PTO", -ph.pto_hours or 0, f"{ph.pto_days:g} days"),
+        )
+        share = ph.available_hours / ph.gross_hours if ph.gross_hours else 0.0
+        filled = round(share * width)
+        hours = self.query_one("#hours_year", Static)
+        hours.border_title = f"One full-time year, {label}"
+        hours.update(
+            "\n".join(
+                [
+                    *(
+                        f"{name:<17}{value:>7,.0f}  [dim]{note}[/dim]"
+                        for name, value, note in rows
+                    ),
+                    f"[dim]{'─' * width}[/dim]",
+                    f"[b]{'Available':<17}{ph.available_hours:>7,.0f}[/b]  [dim]× FTE[/dim]",
+                    (
+                        f"[$accent]{'━' * filled}[/][dim]{'─' * (width - filled)}[/dim] "
+                        f"{share:.0%}"
+                    ),
+                    "",
+                    "[dim]pto: in budgie.yaml (e on Projects)[/dim]",
+                ]
+            )
+        )
+        pto = self.query_one("#pto_rule", Static)
+        pto.border_title = "PTO and part-time"
+        # calendar.py writes markdown emphasis; this is plain text.
+        pto.update(f"{PTO_RULE.replace('*', '')}\n\n[dim]{pto_example(ph)}[/dim]")
+        spread = self.query_one("#spread", Static)
+        spread.border_title = "How the spread works"
+        spread.update(
+            "[dim]low[/dim] ├────[$accent]●[/]──────┤ [dim]high[/dim]\n"
+            "[dim]   −under  likely  +over[/dim]\n\n"
             "Each person's hours have a low, a likely and a high value. Likely "
             "is their plan.csv hours; low and high take off their under "
             "percentage and add their over percentage (people.csv). The "
             "Forecast table shows the likely hours. The simulation draws every "
             "person's hours from that range, most often near likely, and does "
             "the same for non-labor lines with a low and high, then adds up the "
-            f"cost: {iterations:,} simulated years (iterations in budgie.yaml). "
-            "P10, P50 and P90 are read off those years."
+            f"cost: [b]{iterations:,}[/b] simulated years (iterations in "
+            "budgie.yaml). P10, P50 and P90 are read off those years."
         )
-        lines = [
-            "[b]How Budgie builds a forecast[/b]",
-            model_text(),
-            "",
-            f"[b]One full-time year, {label}[/b]",
-            f"  Gross hours       {ph.gross_hours:>6,.0f}   40 h × 52 weeks",
-            f"  Federal holidays  {-ph.holiday_hours or 0:>6,.0f}",
-            (
-                f"  PTO               {-ph.pto_hours or 0:>6,.0f}   {ph.pto_days:g} days "
-                "(pto: in budgie.yaml, e on Projects)"
-            ),
-            (
-                f"  Available         {ph.available_hours:>6,.0f}   × each "
-                "person's FTE, day by day"
-            ),
-            "",
-            "[b]PTO and part-time[/b]",
-            _wrap(PTO_RULE.replace("*", "")),  # markdown emphasis in calendar.py
-            _wrap(pto_example(ph)),
-            "",
-            "[b]How the spread works[/b]",
-            _wrap(spread),
-            "",
-            "[dim]Every term is explained under ?.[/dim]",
-        ]
-        self.query_one("#assumptions_text", Static).update("\n".join(lines))
 
 
 def run(csv_path: str | Path | None = None) -> None:
