@@ -23,6 +23,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from budgie.core.actuals import (
     Observation,
@@ -39,6 +40,9 @@ from budgie.core.monthly import load_monthly_actuals
 from budgie.core.person import HoursEstimate, Person
 from budgie.core.plan import AllocationPlan, PlanEntry, load_plan
 from budgie.core.workspace import CONFIG_NAME, Workspace, load_workspace
+
+if TYPE_CHECKING:
+    from budgie.core.burn import BurnSeries
 
 
 def readings_files(
@@ -241,6 +245,12 @@ class Snapshot:
                 )
                 return pace.expected_on(day)
         return self.plan.allocated_hours(name, self.span, self.pto, through=day)
+
+    def burn_series(self) -> BurnSeries:
+        """Monthly spend, plan, budget and the P10/P50/P90 fan (see core.burn)."""
+        from budgie.core.burn import burn_series
+
+        return burn_series(self)
 
     @property
     def spent(self) -> dict[str, float]:
