@@ -31,6 +31,7 @@ from budgie.core.actuals import (
 )
 from budgie.core.allocation import Allocation, load_allocations
 from budgie.core.budget import Budget, coerce_budget
+from budgie.core.burndown import burndown
 from budgie.core.calendar import ProductiveHours, YearSpan, productive_hours, year_span
 from budgie.core.costs import CostItem, load_costs, total_cost
 from budgie.core.loader import load_people
@@ -220,6 +221,26 @@ class Snapshot:
         if self.allocations:
             return {a.name: a.allocated_hours for a in self.allocations}
         return dict(self.planned)
+
+    def planned_through(self, name: str, day: date) -> float | None:
+        """Hours the plan gives ``name`` from the year's first day through ``day``.
+
+        For whoever :attr:`allocated` names: an allocated person's burn-down pace
+        line (plan-shaped when plan.csv plans them, else an even burn), or the
+        plan's own working-day hours for someone only plan.csv plans. 0 before
+        the year starts; None for anyone not planned.
+        """
+        if name not in self.allocated:
+            return None
+        if day < self.span.first:
+            return 0.0
+        for a in self.allocations:
+            if a.name == name:
+                pace = burndown(
+                    a, self.span, observations=self.readings.get(name), plan=self.plan
+                )
+                return pace.expected_on(day)
+        return self.plan.allocated_hours(name, self.span, self.pto, through=day)
 
     @property
     def spent(self) -> dict[str, float]:
