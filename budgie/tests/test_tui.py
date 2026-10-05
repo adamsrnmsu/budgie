@@ -1342,3 +1342,18 @@ async def test_assumptions_are_model_cards_then_three_panels(tmp_path, monkeypat
         assert figure in hours
     assert "━" in hours and "96%" in hours  # available as a share of gross
     assert all(word in spread for word in ("low", "likely", "high"))
+
+
+async def test_the_plan_footer_shows_the_primary_keys(tmp_path, monkeypatch):
+    _project(tmp_path, monkeypatch)
+    app = BudgieTUI()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        shown = {
+            b.binding.action: b.binding.key
+            for b in app.active_bindings.values()
+            if b.binding.show
+        }
+    assert shown["undo"] == "u" and shown["redo"] == "U"
+    assert shown["commit"] == "s" and shown["discard"] == "x"

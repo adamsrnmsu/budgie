@@ -286,3 +286,16 @@ async def test_help_has_a_plan_section(project, monkeypatch):
         await pilot.pause()
         text = app.screen.query_one("#help_text").content
         assert "Plan tab" in str(text) and "undo" in str(text)
+
+
+def test_a_nudge_past_the_limit_changes_nothing_and_leaves_no_undo_step(project):
+    model = GridModel(load_snapshot(project))
+    cell = ("Bob", 12)
+    model.set({cell}, 1.0)
+    assert model.nudge({cell}, 0.05) == 0
+    # One undo goes straight back past the set: the dead nudge left no step.
+    assert model.undo() and cell not in model.edits
+    at_zero = GridModel(load_snapshot(project))
+    at_zero.set({cell}, 0.0)
+    assert at_zero.nudge({cell}, -0.05) == 0
+    assert at_zero.nudge({cell}, 0.05) == 1

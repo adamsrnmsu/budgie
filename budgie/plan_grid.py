@@ -120,12 +120,18 @@ class GridModel:
     def current(self, cell: Cell) -> float:
         return self.scratch.grid(cell[0])[cell[1] - 1]
 
-    def nudge(self, cells, delta: float) -> None:
-        """Move each cell by ``delta`` FTE (clamped to 0-1), keeping its own value."""
+    def nudge(self, cells, delta: float) -> int:
+        """Move each cell by ``delta`` FTE (clamped to 0-1); the number that moved.
+
+        A cell already at the limit is left alone, so it adds no edit and no undo step.
+        """
         self._check_open(cells)
         new = {c: round(min(1.0, max(0.0, self.current(c) + delta)), 4) for c in cells}
-        self.checkpoint()
-        self.edits.update(new)
+        new = {c: v for c, v in new.items() if v != self.current(c)}
+        if new:
+            self.checkpoint()
+            self.edits.update(new)
+        return len(new)
 
     def _check_open(self, cells) -> None:
         booked = sorted({m for _, m in cells if not self.base.editable(m)})
@@ -257,17 +263,24 @@ class PlanGrid(Vertical):
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
+        # Footer order: the edit keys a newcomer needs first; aliases stay hidden
+        # so the footer shows the primary key, not the last of a comma list.
+        Binding("s", "commit", "Save"),
+        Binding("u", "undo", "Undo"),
+        Binding("U", "redo", "Redo"),
+        Binding("x", "discard", "Discard"),
+        Binding("plus", "nudge(0.05)", "+5%"),
+        Binding("minus", "nudge(-0.05)", "-5%"),
         Binding("space", "toggle_cell", "Select"),
+        Binding("c", "commit", show=False),
+        Binding("ctrl+z", "undo", show=False),
+        Binding("ctrl+y", "redo", show=False),
+        Binding("equals_sign", "nudge(0.05)", show=False),
+        Binding("underscore", "nudge(-0.05)", show=False),
         Binding("shift+right", "extend(0, 1)", show=False),
         Binding("shift+left", "extend(0, -1)", show=False),
         Binding("shift+down", "extend(1, 0)", show=False),
         Binding("shift+up", "extend(-1, 0)", show=False),
-        Binding("plus,equals_sign", "nudge(0.05)", "+5%"),
-        Binding("minus,underscore", "nudge(-0.05)", "-5%"),
-        Binding("u,ctrl+z", "undo", "Undo"),
-        Binding("U,ctrl+y", "redo", "Redo"),
-        Binding("s,c", "commit", "Save"),
-        Binding("x", "discard", "Discard"),
         Binding("v", "solve('proportional')", "Solve"),
         Binding("V", "solve('even')", "Solve even"),
         Binding("t", "ask('target')", "Target"),
@@ -448,12 +461,15 @@ class PlanGrid(Vertical):
         if self.model is None or not cells:
             return
         try:
-            self.model.nudge(cells, delta)
+            moved = self.model.nudge(cells, delta)
         except ValueError as exc:
             self.say(str(exc), error=True)
             return
+        if not moved:
+            self.say(f"Already at {'100' if delta > 0 else '0'}%.")
+            return
         self._redraw()
-        self.say(f"{len(cells)} cell(s) {'+' if delta > 0 else '-'}{abs(delta):.0%}.")
+        self.say(f"{moved} cell(s) {'+' if delta > 0 else '-'}{abs(delta):.0%}.")
 
     def action_undo(self) -> None:
         if self.model and self.model.undo():
