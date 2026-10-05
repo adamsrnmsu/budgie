@@ -13,7 +13,13 @@ from budgie import tui as tui_mod
 from budgie.core.plan import load_plan
 from budgie.core.scaffold import init_workspace
 from budgie.core.workspace import PROJECTS_DIR, forget_workspaces
-from budgie.tui import BudgieTUI, append_plan_row, open_in_editor, shorten_path
+from budgie.tui import (
+    MODEL,
+    BudgieTUI,
+    append_plan_row,
+    open_in_editor,
+    shorten_path,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -1048,6 +1054,17 @@ def _project(tmp_path, monkeypatch):
     forget_workspaces()
 
 
+def _assumptions(app) -> str:
+    """Everything the Assumptions tab shows: each card's and panel's title and
+    its text, markup stripped."""
+    out = []
+    for widget in app.query("#assumptions Static"):
+        if widget.border_title:
+            out.append(str(widget.border_title))
+        out.append(widget.visual.plain)
+    return "\n".join(out)
+
+
 def _help_text(app) -> str:
     from rich.text import Text
 
@@ -1187,7 +1204,7 @@ async def test_assumptions_tab_teaches_the_model_for_this_project(
     app = BudgieTUI()
     async with app.run_test(size=(140, 45)) as pilot:
         await pilot.pause()
-        text = _text(app, "#assumptions_text")
+        text = _assumptions(app)
 
     assert "Will we run out" in text and "Reality" in text
     for line in ("Gross", "holidays", "PTO", "Available"):
@@ -1248,7 +1265,7 @@ async def test_no_code_names_on_screen(tmp_path, monkeypatch):
         shown = [
             _text(app, "#mc_stats"),
             _text(app, "#mc_figures"),
-            _text(app, "#assumptions_text"),
+            _assumptions(app),
             *(str(c) for i in range(table.row_count) for c in table.get_row_at(i)),
         ]
     code = re.compile(r"util_|hours_low|effective_date|\bmode\b|\bstd\b|\bsims\b")
@@ -1300,3 +1317,26 @@ def test_suite_entry_keeps_the_project(monkeypatch):
     m = {"gitboard": {**SUITE["gitboard"], "project": "a"}}
     monkeypatch.setenv("PI_SUITE", json.dumps(m))
     assert tui_mod.suite_entry("gitboard") == m["gitboard"]
+
+
+async def test_assumptions_are_model_cards_then_three_panels(tmp_path, monkeypatch):
+    _project(tmp_path, monkeypatch)  # 2026, pto: 0
+    app = BudgieTUI()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        cards = [str(c.border_title) for c in app.query(".model-card")]
+        panels = [str(p.border_title) for p in app.query(".assumption-panel")]
+        hours = app.query_one("#hours_year").visual.plain
+        spread = app.query_one("#spread").visual.plain
+
+    assert cards == [f"{n} {title}" for n, (title, _) in enumerate(MODEL, 1)]
+    assert panels == [
+        "One full-time year, 2026",
+        "PTO and part-time",
+        "How the spread works",
+    ]
+    # 2,080 gross less 88 h of federal holidays and no PTO.
+    for figure in ("2,080", "-88", "1,992"):
+        assert figure in hours
+    assert "━" in hours and "96%" in hours  # available as a share of gross
+    assert all(word in spread for word in ("low", "likely", "high"))
