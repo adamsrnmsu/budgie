@@ -75,10 +75,19 @@ def test_unknown_project_name_fails(project, monkeypatch):
     assert r.exit_code == 1 and "no project called nope" in r.output
 
 
-def test_scaffold_pinned_budget_beats_csv(project):
+def test_fresh_init_has_no_budget_or_reading_source_warning(project):
+    assert not (project / "actuals.csv").exists()
+    cs = checks(project)
+    assert not by(cs, "pinned")
+    assert not by(cs, "weekly wins")
+
+
+def test_pinned_budget_beats_csv(project):
+    with (project / "budgie.yaml").open("a") as f:
+        f.write("budget: 500000\n")
     c = by(checks(project), "pinned")[0]
     assert c.status == dr.WARN
-    assert "425,000" in c.what and "budget.csv (450,000)" in c.what
+    assert "500,000" in c.what and "budget.csv (425,000)" in c.what
 
 
 def test_bad_input_fails_with_one_line(project, monkeypatch):
@@ -97,6 +106,7 @@ def test_plan_name_missing_from_people_fails(project):
 
 
 def test_weekly_and_actuals_and_staleness(project):
+    (project / "actuals.csv").write_text("name,month,hours\nAlice,1,10\n")
     (project / "weekly.csv").write_text("name,week,hours_to_date\nAlice,10,100\n")
     cs = checks(project)
     assert by(cs, "weekly wins")[0].status == dr.WARN

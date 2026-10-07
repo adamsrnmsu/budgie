@@ -50,9 +50,9 @@ pto: 0            # PTO/sick days per person; pro-rated by FTE (see `budgie assu
 iterations: 10000 # Monte Carlo runs
 seed: 42          # fixed seed => reproducible numbers; remove for fresh draws
 
-# The budget to signal against: a number here, or point `inputs.budget` at a
-# CSV of dated revisions to keep the history of increases and cuts.
-budget: 425000
+# The budget to signal against comes from budget.csv, a list of dated revisions
+# that keeps the history of increases and cuts. To pin one flat number instead,
+# add `budget: 425000` here -- a pinned number overrides budget.csv.
 
 # Where the inputs live. Paths are relative to this file. Delete a line to use
 # the default filename; every input is optional until a command needs it.
@@ -61,7 +61,10 @@ inputs:
   allocations: allocations.csv
   plan: plan.csv
   costs: costs.csv
-  actuals: actuals.csv
+  weekly: weekly.csv
+# Hours booked to date: weekly.csv (cumulative, per week) is written for you.
+# Monthly actuals.csv (name,month,hours) is the alternative; when both files
+# exist, weekly wins.
 """
 
 PEOPLE_CSV = """\
@@ -90,16 +93,8 @@ Cloud hosting,services,{start},2000,,,yes
 
 BUDGET_CSV = """\
 effective_date,amount,note
-{start},425000,Original
-{fifth_month},450000,Q2 increase
-"""
-
-ACTUALS_CSV = """\
-name,month,hours
-Alice,{m1},150
-Alice,{m2},140
-Bob,{m1},145
-Bob,{m2},135
+{start},400000,Original
+{fifth_month},425000,Q2 increase
 """
 
 WEEKLY_CSV = """\
@@ -153,6 +148,8 @@ engine cares about:
 - **`weekly.csv` values are cumulative**, not per-week. "Hours booked *to date*
   as of week N." Budgie rejects a series that goes down, because that means
   per-period numbers were pasted in by mistake.
+- **Monthly `actuals.csv` is the alternative to `weekly.csv`** (columns
+  `name,month,hours`); when both exist, weekly wins.
 - **`budget.csv` is append-only too.** Add a revision rather than overwriting the
   amount, and Budgie can show you the drift from the original.
 - **PTO is pro-rated by FTE.** A person at 0.25 FTE gives this project a quarter
@@ -194,8 +191,6 @@ def scaffold_files(year: int, year_start: str = "01-01") -> dict[str, str]:
         "start": span.first.isoformat(),
         "third_month_15": date(*months[2], 15).isoformat(),
         "fifth_month": date(*months[4], 1).isoformat(),
-        "m1": months[0][1],
-        "m2": months[1][1],
         # Calendar year: weeks 12 and 20, as ever. A fiscal year counts the same
         # 11 and 19 weeks from its first day.
         "w1": _week(span, 11),
@@ -209,7 +204,6 @@ def scaffold_files(year: int, year_start: str = "01-01") -> dict[str, str]:
         "plan.csv": PLAN_CSV.format(**dates),
         "costs.csv": COSTS_CSV.format(**dates),
         "budget.csv": BUDGET_CSV.format(**dates),
-        "actuals.csv": ACTUALS_CSV.format(**dates),
         "weekly.csv": WEEKLY_CSV.format(**dates),
         "scenarios.yaml": SCENARIOS_YAML.format(year=year, year_start=year_start),
     }
