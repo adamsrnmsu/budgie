@@ -710,18 +710,19 @@ class BudgieTUI(App):
     BINDINGS: ClassVar[list[BindingType]] = [
         # First, so a narrow footer cuts something else off rather than help.
         Binding("question_mark", "help", "Help", key_display="?"),
-        ("r", "recalculate", "Recalculate"),
-        ("e", "edit_selected", "Edit file"),
-        ("d", "delete_project", "Delete project"),
-        ("1", "show_tab('tab_projects')", "Projects"),
-        ("2", "show_tab('tab_inputs')", "Inputs"),
-        ("3", "show_tab('tab_plan')", "Plan"),
-        ("4", "show_tab('tab_forecast')", "Forecast"),
-        ("5", "show_tab('tab_assumptions')", "Assumptions"),
-        ("g", "toggle_grid", "Grid/list"),
-        ("a", "toggle_form", "Add by name"),
-        ("P", "switch('perch')", "perch"),
-        ("G", "switch('gitboard')", "gitboard"),
+        ("r", "recalculate", "Recalc"),
+        ("e", "edit_selected", "Edit"),
+        ("d", "delete_project", "Delete"),
+        # One footer entry for the five: the keys read 1-5 and fit at 80 columns.
+        Binding("1", "show_tab('tab_projects')", "Tab", key_display="1-5"),
+        Binding("2", "show_tab('tab_inputs')", "Inputs", show=False),
+        Binding("3", "show_tab('tab_plan')", "Plan", show=False),
+        Binding("4", "show_tab('tab_forecast')", "Forecast", show=False),
+        Binding("5", "show_tab('tab_assumptions')", "Assumptions", show=False),
+        ("g", "toggle_grid", "Grid"),
+        ("a", "toggle_form", "Add"),
+        Binding("P", "switch('perch')", "Apps", key_display="P/G"),
+        Binding("G", "switch('gitboard')", "gitboard", show=False),
         ("q", "quit", "Quit"),
         Binding("escape", "leave_input", "Leave field", show=False),
     ]
@@ -874,6 +875,7 @@ class BudgieTUI(App):
 
     def on_mount(self) -> None:
         self.title = "Budgie"
+        self.set_interval(60, self._tick)
         self.sub_title = str(self.workspace.root) if self.workspace else "no project"
 
         forecast_table = self.query_one("#forecast", DataTable)
@@ -1314,7 +1316,7 @@ class BudgieTUI(App):
         table = self.query_one("#projects_table", DataTable)
         cursor = table.cursor_row
         table.clear(columns=True)
-        table.add_columns("", "Project", "Inputs", "Location")
+        table.add_columns("Open", "Project", "Inputs", "Location")
 
         current = self.workspace.root if self.workspace else None
         projects = self.projects()
@@ -1346,6 +1348,7 @@ class BudgieTUI(App):
 
     def _refresh_chrome(self, label: str, pto: float) -> None:
         """The two header rows: who/what/when on top, where below."""
+        self._chrome = (label, pto)
         figures = f"{label}   ·   PTO {pto:g}d   ·   {self._clock()}"
         name = self.project_name + ("  ·  SAMPLE DATA" if self.on_sample else "")
         self.query_one("#titlebar", Static).update(
@@ -1357,6 +1360,11 @@ class BudgieTUI(App):
             else f"no project open — {self._no_project_hint()}"
         )
         self.query_one("#contextbar", Static).update(location)
+
+    def _tick(self) -> None:
+        """Once a minute: redraw the title bar's clock, nothing else."""
+        if getattr(self, "_chrome", None):
+            self._refresh_chrome(*self._chrome)
 
     @staticmethod
     def _clock() -> str:
@@ -1484,7 +1492,7 @@ class BudgieTUI(App):
                 + f"{style}  {_money(pct[p]):>12}"
                 for p, style, gloss in zip(
                     (10, 50, 90),
-                    ("[green]P10[/green]", "[b]P50[/b]", "[green]P90[/green]"),
+                    ("P10", "[b]P50[/b]", "P90"),
                     glosses,
                 )
             )
@@ -1531,7 +1539,8 @@ class BudgieTUI(App):
             )
             total += hours
             changes = ", ".join(
-                f"{e.effective_date:%b %-d}→{e.fte:g}" for e in plan.changes_for(name)
+                f"{e.effective_date:%b %-d %Y}→{e.fte:g}"
+                for e in plan.changes_for(name)
             )
             table.add_row(name, changes, f"{hours:,.0f}")
         table.add_row("[b]Total[/b]", "", f"[b]{total:,.0f}[/b]")
