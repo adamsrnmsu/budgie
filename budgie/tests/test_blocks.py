@@ -129,7 +129,7 @@ def test_forecast_blocks(tmp_path):
     signal = out[-1]
     assert signal["block"] == "text" and signal["tone"] in TONES
     assert "banner" not in proc.stdout.lower() and "Budgie started" not in proc.stdout
-    assert "Budgie started" in proc.stderr  # logs moved, not lost
+    assert "Budgie started" not in proc.stderr  # INFO is -v only
 
 
 def test_status_blocks(project):

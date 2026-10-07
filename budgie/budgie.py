@@ -38,7 +38,15 @@ def _style(signal) -> tuple[str, str, str]:
 
 
 def _sample(name: str) -> str:
-    """Path to a bundled sample file, used when there's no workspace."""
+    """Path to a bundled sample file, used when there's no workspace.
+
+    Says so once per invocation, on stderr: numbers from the bundled samples
+    must never pass for the user's own. Not silenced by ``-q`` (warning-class).
+    """
+    global _SAMPLE_NOTED
+    if not _SAMPLE_NOTED:
+        _SAMPLE_NOTED = True
+        click.echo("sample data — budgie init NAME to start your own", err=True)
     return str(THIS_DIR / "tests" / name)
 
 
@@ -47,6 +55,7 @@ def _sample(name: str) -> str:
 # around, and the flag has to reach all of them. Set once at parse time by
 # `_project_option`, so nothing else can quietly change which budget is in play.
 _SELECTED_PROJECT: str | None = None
+_SAMPLE_NOTED = False  # the sample-data line is printed once per invocation
 
 
 def _remember_project(ctx, param, value):
@@ -65,8 +74,9 @@ def _forget_project() -> None:
     would otherwise carry one command's `--project` into the next and quietly
     read the wrong budget.
     """
-    global _SELECTED_PROJECT
+    global _SELECTED_PROJECT, _SAMPLE_NOTED
     _SELECTED_PROJECT = None
+    _SAMPLE_NOTED = False
 
 
 _project_option = click.option(
@@ -291,17 +301,23 @@ def _fail(exc: Exception) -> None:
     "-v", "--verbose", is_flag=True, help="Show DEBUG logging from budgie's internals."
 )
 @click.option(
+    "-q",
+    "--quiet",
+    is_flag=True,
+    help="Warnings and errors only, even with -v. Routine INFO lines need -v.",
+)
+@click.option(
     "-h", "--help", "show_help", is_flag=True, help="Show this message and exit."
 )
 @click.pass_context
-def cli(ctx, verbose, show_help):
+def cli(ctx, verbose, quiet, show_help):
     """Budgie -- the ultimate budget companion."""
     from budgie.singletons import set_verbose
 
     # Runs before the subcommand's own options are parsed, so this clears the
     # previous invocation's selection without discarding this one's.
     _forget_project()
-    set_verbose(verbose)
+    set_verbose(verbose and not quiet)
 
     # Click's own group help is a flat alphabetical list, which tells a new user
     # nothing about what to run second. `budgie` and `budgie --help` both render
