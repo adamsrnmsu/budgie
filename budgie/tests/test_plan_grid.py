@@ -515,3 +515,15 @@ async def test_greater_than_fills_right_from_the_cursor(project, monkeypatch):
         await pilot.press("u")
         assert grid.model.current(("Bob", 12)) != 0.5
         assert grid.model.current(("Bob", 8)) == 0.5
+
+
+@pytest.mark.parametrize("extra", ["", "iterations: 3000\nseed: 7\n"])
+async def test_saved_side_equals_the_forecast_headline(project, monkeypatch, extra):
+    with (project / "budgie.yaml").open("a") as f:
+        f.write("\n" + extra)
+    app, size = await _plan(project, monkeypatch)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        head = str(app.query_one("#forecast_headline").render())
+        over0 = app.query_one("#plan_grid").model.readout()["over0"]
+        assert f"({over0:.0%} chance over)" in head
