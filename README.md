@@ -396,7 +396,7 @@ and the keys. `escape` or `?` closes it.
 2. **Inputs** — every project file plus `budgie.yaml` itself (year, PTO, budget, simulation
    runs), whether it exists, and which tab reads it. Select one and press `e` to open it in
    `$VISUAL`/`$EDITOR` (`vim` if neither is set), then `r` to recalculate.
-3. **Plan** — a **month grid**: everyone down the side, Jan–Dec across, the FTE as a
+3. **Plan** — a **month grid**: everyone down the side, the months of the year span across (fiscal when `year_start` is set), the FTE as a
    percentage in each cell. Opening the tab puts the cursor in the grid. Type a number
    (`50`, `50%` and `0.5` all mean half time) or press `enter` and the edit line opens
    right under the grid; `+`/`-` nudge the selected cells (or the cursor's) by 5 points,

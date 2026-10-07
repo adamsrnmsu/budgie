@@ -324,9 +324,14 @@ def load_workspace(config_path: str | Path) -> Workspace:
     import yaml
 
     path = Path(config_path).resolve()
-    data = yaml.safe_load(path.read_text()) or {}
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{path.name}: not valid YAML ({exc})") from exc
     if not isinstance(data, dict):
-        raise TypeError(f"{path.name} must be a mapping, got {type(data).__name__}")
+        raise ValueError(  # noqa: TRY004
+            f"{path.name} must be key: value pairs, got a {type(data).__name__}"
+        )
 
     settings = {k: data[k] for k in SETTINGS if k in data}
     if "year_start" in settings:
