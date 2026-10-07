@@ -11,7 +11,7 @@ MONTHS = tuple(last_day_of_month(2026, m) for m in range(1, 13))
 
 
 def series(**kw) -> BurnSeries:
-    base = dict(
+    base = dict(  # noqa: C408
         months=MONTHS,
         spent=tuple(float(i * 10_000) if i < 6 else None for i in range(12)),
         spent_as_of=(date(2026, 6, 30), 50_000.0),
