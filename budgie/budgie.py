@@ -838,12 +838,26 @@ def hours(alloc_csv, year, pto, plan_csv):
     readings = load_observations(span, *readings_files(_workspace()))
     allocs = with_readings(allocs, spent_to_date(readings))
     logger.info(f"Available hours {span.label}: {ph.available_hours:,.0f} (1.0 FTE)")
+    if blocks.wanted():
+        out = [
+            blocks.figures(
+                [
+                    blocks.figure(
+                        f"Available hours {span.label}",
+                        f"{ph.available_hours:,.0f}",
+                        note="1.0 FTE",
+                    )
+                ]
+            ),
+            _hours_table_block(allocs),
+        ]
+        if plan_csv:
+            out.append(blocks.text(_PLAN_NOTE.format(Path(plan_csv).name), tone="dim"))
+        blocks.emit(out)
+        return
     _print_hours_table(allocs)
     if plan_csv:
-        console.print(
-            f"[dim]Allocated hours come from {Path(plan_csv).name}; "
-            "FTE is the year average.[/dim]"
-        )
+        console.print(f"[dim]{_PLAN_NOTE.format(Path(plan_csv).name)}[/dim]")
 
 
 @click.command()
@@ -1038,6 +1052,30 @@ def _write_html_emails(statuses, span, out_dir):
     return write_eml_drafts(statuses, span.label, out, charts=charts), charts_dir
 
 
+_PLAN_NOTE = "Allocated hours come from {}; FTE is the year average."
+
+
+def _hours_table_block(allocs):
+    """Blocks twin of :func:`_print_hours_table`."""
+    rows = [
+        [
+            a.name,
+            f"{a.fte:.2f}",
+            f"{a.allocated_hours:,.0f}",
+            f"{a.hours_spent:,.0f}",
+            f"{a.hours_remaining:,.0f}",
+            f"{a.fraction_used:.0%}",
+        ]
+        for a in allocs
+    ]
+    return blocks.table(
+        ["Name", "FTE", "Allocated", "Spent", "Remaining", "Used"],
+        rows,
+        title="FTE hours remaining",
+        align=["l"] + ["r"] * 5,
+    )
+
+
 def _print_hours_table(allocs):
     from rich.table import Table
 
@@ -1089,6 +1127,9 @@ def scenario(config_path):
 
     results, budget = run_scenarios(config_path)
     logger.info(f"Budget target: ${budget:,.0f}   (baseline: {results[0].name})")
+    if blocks.wanted():
+        blocks.emit(_scenario_blocks(results, budget))
+        return
     _print_scenario_table(results, budget)
     console.print("\n[bold]Signals[/bold]")
     for r in results:
@@ -1096,6 +1137,43 @@ def scenario(config_path):
         console.print(
             f"  [{color}]●[/{color}] [bold]{r.name}[/bold] — {word}: {r.signal.rationale}"
         )
+
+
+def _scenario_blocks(results, budget):
+    """Blocks twin of the scenario output: budget note, table, one line per signal."""
+    rows = []
+    for r in results:
+        delta = "—" if r.cost_delta == 0 else f"{r.cost_delta:+,.0f}"
+        rows.append(
+            [
+                r.name,
+                f"${r.forecast.total_cost:,.0f}",
+                delta,
+                f"${r.sim.percentile(90):,.0f}",
+                f"{r.signal.prob_over_budget:.0%}",
+            ]
+        )
+    out = [
+        blocks.text(
+            f"Budget target: ${budget:,.0f} (baseline: {results[0].name})", tone="dim"
+        ),
+        blocks.table(
+            ["Scenario", "Total (P50 det.)", "vs base", "P90", "P(over budget)"],
+            rows,
+            title="Scenario comparison",
+            align=["l"] + ["r"] * 4,
+        ),
+        blocks.heading("Signals", level=3),
+    ]
+    for r in results:
+        _, color, word = _style(r.signal.signal)
+        out.append(
+            blocks.text(
+                f"● {r.name} — {word}: {r.signal.rationale}",
+                tone=_SIGNAL_TONE.get(color),
+            )
+        )
+    return out
 
 
 def _print_scenario_table(results, budget):
@@ -1226,7 +1304,8 @@ def monthly(
         # Project file or nothing, as for `hours`: a sample plan would invent a team.
         _, plan = _plan_for_allocations(None)
         actuals = Actuals(readings, observations, plan)
-        _print_eac_note(readings, len(people))
+        if not blocks.wanted():
+            _print_eac_note(readings, len(people))
 
     mf = monthly_forecast(
         people,
@@ -1247,7 +1326,12 @@ def monthly(
     logger.info(
         f"{len(people)} people, {span.label} split into months by working-day share"
     )
-    _print_monthly_table(mf, sim, budget.latest if budget else None)
+    wanted = blocks.wanted()
+    if wanted:
+        shown = _eac_note_blocks(readings, len(people)) if readings else []
+        shown.append(_monthly_table_block(mf, sim))
+    else:
+        _print_monthly_table(mf, sim, budget.latest if budget else None)
 
     if plots:
         from budgie.plots import fan_chart, monthly_cost_bars
@@ -1256,7 +1340,47 @@ def monthly(
         out.mkdir(parents=True, exist_ok=True)
         f1 = fan_chart(sim, out / "fan.png", budget=budget)
         f2 = monthly_cost_bars(mf, out / "monthly.png")
-        console.print(f"[bold]Wrote[/bold] {f1} and {f2}")
+        if wanted:
+            shown.append(blocks.text(f"Wrote {f1} and {f2}"))
+        else:
+            console.print(f"[bold]Wrote[/bold] {f1} and {f2}")
+    if wanted:
+        blocks.emit(shown)
+
+
+def _monthly_table_block(mf, sim):
+    """Blocks twin of :func:`_print_monthly_table` (no red over-budget cell)."""
+    from budgie.core.monthly import month_names
+
+    p10, p90 = sim.band(10), sim.band(90)
+    cum = mf.cumulative_costs
+    rows = [
+        [
+            name,
+            f"{mf.hours[i]:,.0f}",
+            f"${mf.costs[i]:,.0f}",
+            f"${cum[i]:,.0f}",
+            f"${p10[i]:,.0f}",
+            f"${p90[i]:,.0f}",
+        ]
+        for i, name in enumerate(month_names(mf.span))
+    ]
+    rows.append(
+        [
+            "Year",
+            f"{sum(mf.hours):,.0f}",
+            f"${mf.total_cost:,.0f}",
+            "",
+            f"${p10[-1]:,.0f}",
+            f"${p90[-1]:,.0f}",
+        ]
+    )
+    return blocks.table(
+        ["Month", "Hours", "Cost", "Cumulative", "P10", "P90"],
+        rows,
+        title=f"Monthly breakdown {mf.span.label}",
+        align=["l"] + ["r"] * 5,
+    )
 
 
 def _print_monthly_table(mf, sim, budget):
@@ -1771,12 +1895,32 @@ def assumptions(year, pto):
             "core/budget.py",
         ),
     ]
+    if blocks.wanted():
+        blocks.emit(
+            [
+                blocks.table(
+                    ["Assumption", "Value", "Set in"],
+                    [list(r) for r in rows],
+                    title=f"Assumptions in force for {span.label}",
+                    align=["l"] * 3,
+                ),
+                blocks.text(_ASSUMPTIONS_NOTE, tone="dim"),
+            ]
+        )
+        return
     _print_assumptions_table(span.label, rows)
 
 
 def _row(name: str, value: str, source: str) -> tuple[str, str, str]:
     """One row of the assumptions table."""
     return (name, value, source)
+
+
+_ASSUMPTIONS_NOTE = (
+    "Change a value with the matching option, or in the input file or "
+    "budgie.yaml setting named in the last column. Rows that name a core/ "
+    "module are fixed rules."
+)
 
 
 def _print_assumptions_table(label, rows):
@@ -1796,11 +1940,7 @@ def _print_assumptions_table(label, rows):
     for name, value, source in rows:
         table.add_row(name, value, source)
     console.print(table)
-    console.print(
-        "[dim]Change a value with the matching option, or in the input file or "
-        "budgie.yaml setting named in the last column. Rows that name a core/ "
-        "module are fixed rules.[/dim]"
-    )
+    console.print(f"[dim]{_ASSUMPTIONS_NOTE}[/dim]")
 
 
 @click.command()
@@ -1844,7 +1984,31 @@ def plan(plan_csv, year, pto):
     pto_by_name = pto_overrides(alloc_csv) if alloc_csv else {}
 
     allocation_plan = load_plan(plan_csv)
+    if blocks.wanted():
+        blocks.emit([_plan_table_block(allocation_plan, span, pto, pto_by_name)])
+        return
     _print_plan_table(allocation_plan, span, pto, pto_by_name)
+
+
+def _plan_table_block(allocation_plan, span, pto, pto_by_name=None):
+    """Blocks twin of :func:`_print_plan_table`."""
+    rows, total = [], 0.0
+    for name in allocation_plan.names:
+        days = (pto_by_name or {}).get(name, pto)
+        hours = allocation_plan.allocated_hours(name, span, pto_days=days)
+        total += hours
+        changes = ", ".join(
+            f"{e.effective_date:%b %-d}→{e.fte:g}"
+            for e in allocation_plan.changes_for(name)
+        )
+        rows.append([name, changes, f"{hours:,.0f}"])
+    rows.append(["Total", "", f"{total:,.0f}"])
+    return blocks.table(
+        ["Name", "Changes", "Hours"],
+        rows,
+        title=f"Allocation plan {span.label}",
+        align=["l", "l", "r"],
+    )
 
 
 def _print_plan_table(allocation_plan, span, pto, pto_by_name=None):

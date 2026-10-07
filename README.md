@@ -196,6 +196,8 @@ there isn't — so you can try them all immediately. Every command that reads yo
 files also takes `--project NAME` to choose between several budgets. (`budgie init` and
 `budgie delete` manage the projects themselves — see [Start a project](#start-a-project).)
 
+With `PI_BLOCKS=1` (what `perch tui` sets) `forecast`, `monthly`, `hours`, `plan`, `scenario`, `assumptions`, `emails` and `status` print JSON-line blocks (tables, figures, notes) instead of text.
+
 ### `budgie forecast` — what will this team cost?
 
 ```bash
