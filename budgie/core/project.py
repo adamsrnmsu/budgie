@@ -354,14 +354,19 @@ class Snapshot:
         return out
 
 
-def load_snapshot(project: str | Path) -> Snapshot:
-    """Read the project in ``project`` (the directory holding budgie.yaml)."""
+def load_snapshot(
+    project: str | Path, year: int | None = None, pto: float | None = None
+) -> Snapshot:
+    """Read the project in ``project`` (the directory holding budgie.yaml).
+
+    ``year`` and ``pto`` replace the project's own settings (a scenario's).
+    """
     workspace = load_workspace(Path(project) / CONFIG_NAME)
-    year = workspace.setting("year")
+    year = year if year is not None else workspace.setting("year")
     if year is None:
         raise ValueError(f"{workspace.config_path}: `year` is not set")
     span = year_span(year, workspace.setting("year_start", "01-01"))
-    pto = workspace.setting("pto", 0.0)
+    pto = workspace.setting("pto", 0.0) if pto is None else pto
     ceiling = productive_hours(span, pto_days=pto)
 
     people_csv = workspace.resolve("people")
