@@ -313,7 +313,10 @@ Signals
   ● Lean team (3 people) — GOOD: Only 0% chance of exceeding budget -- comfortably covered.
 ```
 
-The first scenario is the baseline; the rest are measured against it.
+The first scenario is the baseline; the rest are measured against it. When `scenarios.yaml`
+sits in a project, each scenario starts from that project's plan and readings, so the baseline
+matches `budgie forecast`; there a scenario can change only `year` and `pto` (a different
+`people` file is an error, not ignored).
 
 ### `budgie plan` — allocations that change during the year
 
