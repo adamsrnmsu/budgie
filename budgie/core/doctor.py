@@ -139,7 +139,9 @@ def project_checks(workspace, today: date) -> list[Check]:
         try:
             loaded[key] = load(str(path))
         except Exception as exc:  # noqa: BLE001 -- any loader error is the finding
-            out.append(Check(FAIL, f"{path.name}: {exc}", f"edit {path}"))
+            msg = str(exc)  # loaders often lead with the file name already
+            what = msg if msg.startswith(path.name) else f"{path.name}: {msg}"
+            out.append(Check(FAIL, what, f"edit {path}"))
         else:
             out.append(Check(OK, f"{path.name} loads"))
 
