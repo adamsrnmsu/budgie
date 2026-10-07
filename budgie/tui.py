@@ -57,6 +57,7 @@ from textual.widgets import (
     TabPane,
 )
 
+from budgie.burn_chart import render as render_burn
 from budgie.core.allocation import pto_overrides
 from budgie.core.calendar import PTO_RULE, current_year, productive_hours, year_span
 from budgie.core.csvio import parse_date
@@ -664,6 +665,7 @@ class BudgieTUI(App):
     #forecast_headline { height: auto; padding: 1 2 0 2; }
     #forecast_settings { height: auto; padding: 0 2; }
     #forecast_body { height: 1fr; }
+    #burn_chart { height: 8; padding: 0 2; }
     #table_pane { width: 3fr; padding: 1 1 0 1; }
     #mc_pane { width: 2fr; padding: 1 2 0 2; background: $panel; }
     #hist { color: $success; height: auto; padding: 1 0; }
@@ -742,6 +744,8 @@ class BudgieTUI(App):
         # None is live; a date is "the readings as they stood that day".
         self._as_of: date | None = None
         self._reading_dates: list[date] = []  # of the live snapshot, for stepping
+
+        self._burn = None  # BurnSeries cached until the next recalculate
         # Which project the next `d` would actually delete. Set by the first
         # press and cleared by anything else, so deletion always takes two
         # deliberate keystrokes aimed at the same row.
@@ -855,6 +859,7 @@ class BudgieTUI(App):
                 yield Static(id="hist")
                 yield Static(id="mc_stats")
                 yield Static(id="source")
+        yield Static(id="burn_chart", markup=False)
 
     def _compose_plan(self) -> ComposeResult:
         form = Horizontal(id="plan_form")
@@ -1426,7 +1431,26 @@ class BudgieTUI(App):
         """
         return max(int(self.size.width * 2 / 5) - _MC_PANE_PADDING, 12)
 
+    def _draw_burn(self) -> None:
+        """Redraw the burn chart from the loaded project; blank on the sample."""
+        chart = self.query_one("#burn_chart", Static)
+        snap = self._snap
+        if snap is None:
+            chart.update("")
+            return
+        try:
+            self._burn = self._burn or snap.burn_series()
+        except (OSError, ValueError):
+            chart.update("burn chart unavailable")
+            return
+        chart.update("\n".join(render_burn(self._burn, self.size.width - 4, 8)))
+
+    def on_resize(self) -> None:
+        if self._burn is not None:
+            self._draw_burn()
+
     def _refresh_forecast(self, ph, iterations: int, seed: int) -> None:
+        self._burn = None
         banner = self.query_one("#forecast_banner", Static)
         table = self.query_one("#forecast", DataTable)
         try:
@@ -1540,6 +1564,8 @@ class BudgieTUI(App):
         self.query_one("#hist", Static).update(
             ascii_histogram(sim.total_costs, bins=width)
         )
+
+        self._draw_burn()
 
         # Percentiles as aligned rows rather than one wrapping line -- three
         # numbers meant to be compared should sit in a column. The gloss is the
