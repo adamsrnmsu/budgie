@@ -675,8 +675,8 @@ Every target runs against the virtualenv at `~/Documents/tools/budgie` (see
 [Install](#install)), not one inside the repo — pass `VENV=/path/to/env` to point them
 elsewhere. The working tree holds no build artifacts.
 
-Once Pages is enabled and the `PAGES_ENABLED` repo variable is set to `true`, every push
-to `main` publishes the docs to https://adamsrnmsu.github.io/budgie/.
+The docs are not hosted anywhere: Budgie is a private repo. Build them with `make docs`,
+or download the `docs` artifact from any CI run on `main`.
 
 Run a single test:
 
