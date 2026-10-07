@@ -13,13 +13,7 @@ from budgie import tui as tui_mod
 from budgie.core.plan import load_plan
 from budgie.core.scaffold import init_workspace
 from budgie.core.workspace import PROJECTS_DIR, forget_workspaces
-from budgie.tui import (
-    MODEL,
-    BudgieTUI,
-    append_plan_row,
-    open_in_editor,
-    shorten_path,
-)
+from budgie.tui import MODEL, BudgieTUI, append_plan_row, open_in_editor, shorten_path
 
 
 @pytest.fixture(autouse=True)
@@ -1359,3 +1353,84 @@ async def test_the_plan_footer_shows_the_primary_keys(tmp_path, monkeypatch):
         }
     assert shown["undo"] == "u" and shown["redo"] == "U"
     assert shown["commit"] == "s" and shown["discard"] == "x"
+
+
+# --- as-of browsing ([ ] L) -------------------------------------------------
+
+
+def _three_readings(tmp_path, monkeypatch):
+    # Alice at $95/h: weeks 10, 20, 30 end 2026-03-08, 05-17, 07-26.
+    init_workspace(tmp_path, year=2026)
+    (tmp_path / "weekly.csv").write_text(
+        "name,week,hours_to_date\nAlice,10,100\nAlice,20,300\nAlice,30,600\n"
+        "Bob,10,0\nBob,20,0\nBob,30,0\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+
+def _spent(app) -> int:
+    import re
+
+    text = _text(app, "#forecast_headline")
+    return int(re.search(r"spent \$([\d,]+)", text).group(1).replace(",", ""))
+
+
+async def test_as_of_steps_over_each_reading_then_returns_live(tmp_path, monkeypatch):
+    _three_readings(tmp_path, monkeypatch)
+    app = BudgieTUI()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        assert app._as_of is None and "as of" not in _text(app, "#titlebar")
+        assert _spent(app) == 57_000
+        live_p50 = _p50(_text(app, "#forecast_headline"))
+
+        seen = []
+        for _ in range(3):
+            await pilot.press("left_square_bracket")
+            await pilot.pause()
+            seen.append(app._as_of)
+        assert seen == [date(2026, 7, 26), date(2026, 5, 17), date(2026, 3, 8)]
+        assert _spent(app) == 9_500
+        assert "as of 2026-03-08" in _text(app, "#titlebar")
+        assert "as of 2026-03-08" in _text(app, "#contextbar")
+        assert _p50(_text(app, "#forecast_headline")) != live_p50
+
+        await pilot.press("left_square_bracket")  # clamped at the first reading
+        await pilot.pause()
+        assert app._as_of == date(2026, 3, 8)
+        await pilot.press("right_square_bracket")
+        await pilot.pause()
+        assert app._as_of == date(2026, 5, 17) and _spent(app) == 28_500
+
+        await pilot.press("r")  # recalculates at the same as-of
+        await pilot.pause()
+        assert app._as_of == date(2026, 5, 17) and _spent(app) == 28_500
+
+        await pilot.press("right_square_bracket", "right_square_bracket")
+        await pilot.pause()
+        assert app._as_of is None and _spent(app) == 57_000
+        assert "as of" not in _text(app, "#titlebar")
+
+        await pilot.press("left_square_bracket", "L")
+        await pilot.pause()
+        assert app._as_of is None
+
+
+async def test_nothing_is_written_while_as_of(tmp_path, monkeypatch):
+    _three_readings(tmp_path, monkeypatch)
+    before = (tmp_path / "plan.csv").read_text()
+    app = BudgieTUI()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        await pilot.press("left_square_bracket")
+        await pilot.pause()
+        message = app.add_plan_row()
+        assert "as of" in message and "\n" not in message
+        app.on_plan_grid_commit(type("E", (), {"rows": [object()]})())
+        assert (tmp_path / "plan.csv").read_text() == before
+        assert app._as_of == date(2026, 7, 26)
+        assert app.check_action("live", ()) is True
+        await pilot.press("L")
+        await pilot.pause()
+        assert app.check_action("live", ()) is False
