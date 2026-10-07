@@ -35,6 +35,7 @@ import subprocess
 import sys
 import textwrap
 import time
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import ClassVar
@@ -56,13 +57,9 @@ from textual.widgets import (
     TabPane,
 )
 
+from budgie.burn_chart import render as render_burn
 from budgie.core.allocation import pto_overrides
-from budgie.core.calendar import (
-    PTO_RULE,
-    current_year,
-    productive_hours,
-    year_span,
-)
+from budgie.core.calendar import PTO_RULE, current_year, productive_hours, year_span
 from budgie.core.csvio import parse_date
 from budgie.core.eac import at_completion
 from budgie.core.forecast import forecast as run_forecast
@@ -270,6 +267,8 @@ GLOSSARY: tuple[tuple[str, str], ...] = (
 KEYS: tuple[tuple[str, str], ...] = (
     ("1-5", "switch tab"),
     ("r", "Recalculate, after editing a file outside the app"),
+    ("[ / ]", "step the forecast back / forward to a recorded reading date"),
+    ("L", "return to live (as-of browsing writes nothing)"),
     ("e", "edit the file this tab shows, in $EDITOR"),
     ("enter", "open the highlighted project (Projects)"),
     ("d d", "delete the highlighted project (Projects; press twice)"),
@@ -285,6 +284,7 @@ PLAN_KEYS: tuple[tuple[str, str], ...] = (
         "edit the cell under the cursor: 50, 50% or 0.5 all mean half time",
     ),
     ("+  -", "nudge the selected cells (or the cursor's) by 5 points, kept in 0-100%"),
+    (">", "copy the first selected month (or the cursor's) into the later open months"),
     ("space, shift+arrows", "select cells; an edit or nudge applies to all of them"),
     ("u / U", "undo / redo (edits, nudges, solves, imports, discard)"),
     ("s", "save the edits as dated rows appended to plan.csv"),
@@ -665,6 +665,7 @@ class BudgieTUI(App):
     #forecast_headline { height: auto; padding: 1 2 0 2; }
     #forecast_settings { height: auto; padding: 0 2; }
     #forecast_body { height: 1fr; }
+    #burn_chart { height: 8; padding: 0 2; }
     #table_pane { width: 3fr; padding: 1 1 0 1; }
     #mc_pane { width: 2fr; padding: 1 2 0 2; background: $panel; }
     #hist { color: $success; height: auto; padding: 1 0; }
@@ -710,18 +711,24 @@ class BudgieTUI(App):
     BINDINGS: ClassVar[list[BindingType]] = [
         # First, so a narrow footer cuts something else off rather than help.
         Binding("question_mark", "help", "Help", key_display="?"),
-        ("r", "recalculate", "Recalculate"),
-        ("e", "edit_selected", "Edit file"),
-        ("d", "delete_project", "Delete project"),
-        ("1", "show_tab('tab_projects')", "Projects"),
-        ("2", "show_tab('tab_inputs')", "Inputs"),
-        ("3", "show_tab('tab_plan')", "Plan"),
-        ("4", "show_tab('tab_forecast')", "Forecast"),
-        ("5", "show_tab('tab_assumptions')", "Assumptions"),
-        ("g", "toggle_grid", "Grid/list"),
-        ("a", "toggle_form", "Add by name"),
-        ("P", "switch('perch')", "perch"),
-        ("G", "switch('gitboard')", "gitboard"),
+        ("r", "recalculate", "Recalc"),
+        # One footer entry for both steps, like 1-5: it fits at 80 columns.
+        Binding("left_square_bracket", "as_of(-1)", "Step", key_display="[/]"),
+        Binding("right_square_bracket", "as_of(1)", "Later", show=False),
+        Binding("L", "live", "Live"),
+        ("e", "edit_selected", "Edit"),
+        ("d", "delete_project", "Delete"),
+        # The tab headers already read "1 Projects" … "5 Assumptions", so the
+        # digits stay out of the footer: 80 columns also hold [/] and L.
+        Binding("1", "show_tab('tab_projects')", "Projects", show=False),
+        Binding("2", "show_tab('tab_inputs')", "Inputs", show=False),
+        Binding("3", "show_tab('tab_plan')", "Plan", show=False),
+        Binding("4", "show_tab('tab_forecast')", "Forecast", show=False),
+        Binding("5", "show_tab('tab_assumptions')", "Assumptions", show=False),
+        ("g", "toggle_grid", "Grid"),
+        ("a", "toggle_form", "Add"),
+        Binding("P", "switch('perch')", "Apps", key_display="P/G"),
+        Binding("G", "switch('gitboard')", "gitboard", show=False),
         ("q", "quit", "Quit"),
         Binding("escape", "leave_input", "Leave field", show=False),
     ]
@@ -734,6 +741,14 @@ class BudgieTUI(App):
         self._load_error: str | None = None
         # The project as the Forecast tab last read it; the Plan grid works on it.
         self._snap = None
+        # None is live; a date is "the readings as they stood that day".
+        self._as_of: date | None = None
+        self._reading_dates: list[date] = []  # of the live snapshot, for stepping
+
+        self._burn = None  # BurnSeries cached until the next recalculate
+        # The project as it stands today, kept beside the as-of `_snap`: the
+        # plan grid edits the future, so its booked months stay the live ones.
+        self._live_snap = None
         # Which project the next `d` would actually delete. Set by the first
         # press and cleared by anything else, so deletion always takes two
         # deliberate keystrokes aimed at the same row.
@@ -847,6 +862,7 @@ class BudgieTUI(App):
                 yield Static(id="hist")
                 yield Static(id="mc_stats")
                 yield Static(id="source")
+        yield Static(id="burn_chart", markup=False)
 
     def _compose_plan(self) -> ComposeResult:
         form = Horizontal(id="plan_form")
@@ -874,6 +890,7 @@ class BudgieTUI(App):
 
     def on_mount(self) -> None:
         self.title = "Budgie"
+        self.set_interval(60, self._tick)
         self.sub_title = str(self.workspace.root) if self.workspace else "no project"
 
         forecast_table = self.query_one("#forecast", DataTable)
@@ -937,6 +954,27 @@ class BudgieTUI(App):
     def action_recalculate(self) -> None:
         self.recalculate()
 
+    def reading_dates(self) -> list[date]:
+        """Every day a reading exists on, oldest first; never an invented date."""
+        return self._reading_dates
+
+    def action_as_of(self, delta: int) -> None:
+        """Step along the reading dates; past the latest is live."""
+        spots: list[date | None] = [*self.reading_dates(), None]
+        here = spots.index(self._as_of) if self._as_of in spots else len(spots) - 1
+        self._as_of = spots[max(0, min(len(spots) - 1, here + delta))]
+        self.recalculate()
+
+    def action_live(self) -> None:
+        self._as_of = None
+        self.recalculate()
+
+    def _refused_as_of(self) -> str | None:
+        """The one-line notice for a write attempted while browsing the past."""
+        if self._as_of is None:
+            return None
+        return f"Browsing as of {self._as_of}: nothing is saved. Press L for live."
+
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
 
@@ -987,6 +1025,9 @@ class BudgieTUI(App):
 
     def on_plan_grid_commit(self, event: PlanGrid.Commit) -> None:
         """Append the grid's scratch edits to plan.csv, then reload everything."""
+        if notice := self._refused_as_of():
+            self.query_one("#plan_grid", PlanGrid).say(notice, error=True)
+            return
         path = self.plan_path
         if path is None:
             self._plan_status("No project here -- run `budgie init` first.", error=True)
@@ -1013,6 +1054,12 @@ class BudgieTUI(App):
             return self._active_tab() == "tab_projects"
         if action == "edit_selected":
             return self._active_tab() != "tab_assumptions"
+        if action == "as_of":
+            # Where the past is shown. Not Plan: its footer is full at 80
+            # columns, and while browsing it only refuses saves (L still shows).
+            return self._active_tab() in ("tab_forecast", "tab_assumptions")
+        if action == "live":
+            return self._as_of is not None
         if action in ("toggle_grid", "toggle_form"):
             return self._active_tab() == "tab_plan"
         return True
@@ -1095,6 +1142,8 @@ class BudgieTUI(App):
         Returns the status message it displayed, so the outcome is observable
         without reaching into the widget.
         """
+        if notice := self._refused_as_of():
+            return self._plan_status(notice, error=True)
         path = self.plan_path
         if path is None:
             return self._plan_status(
@@ -1181,6 +1230,7 @@ class BudgieTUI(App):
                     error=True,
                 )
             self.workspace = workspace
+            self._as_of = None  # another project's readings, other dates
             # A --people path given at launch was an instruction about the old
             # project; picking a new one in the browser is the newer of the two,
             # and leaving it set would make the switch look like it did nothing.
@@ -1276,6 +1326,7 @@ class BudgieTUI(App):
         # directory that no longer exists.
         if self.workspace is not None and self.workspace.root == target.root:
             self.workspace = None
+            self._as_of = None
             self._people_override = None
             remaining = self.projects()
             if len(remaining) == 1:
@@ -1314,7 +1365,7 @@ class BudgieTUI(App):
         table = self.query_one("#projects_table", DataTable)
         cursor = table.cursor_row
         table.clear(columns=True)
-        table.add_columns("", "Project", "Inputs", "Location")
+        table.add_columns("Open", "Project", "Inputs", "Location")
 
         current = self.workspace.root if self.workspace else None
         projects = self.projects()
@@ -1346,7 +1397,10 @@ class BudgieTUI(App):
 
     def _refresh_chrome(self, label: str, pto: float) -> None:
         """The two header rows: who/what/when on top, where below."""
+        self._chrome = (label, pto)
         figures = f"{label}   ·   PTO {pto:g}d   ·   {self._clock()}"
+        if self._as_of:
+            figures = f"[b $warning]as of {self._as_of}[/b $warning]   ·   {figures}"
         name = self.project_name + ("  ·  SAMPLE DATA" if self.on_sample else "")
         self.query_one("#titlebar", Static).update(
             f"BUDGIE   {name}{' ' * 4}[not bold]{figures}[/not bold]"
@@ -1356,7 +1410,17 @@ class BudgieTUI(App):
             if self.workspace
             else f"no project open — {self._no_project_hint()}"
         )
+        if self._as_of:
+            location += (
+                f"   [b]as of {self._as_of}[/b] (readings only; plan and budget"
+                " are today's)   L: live"
+            )
         self.query_one("#contextbar", Static).update(location)
+
+    def _tick(self) -> None:
+        """Once a minute: redraw the title bar's clock, nothing else."""
+        if getattr(self, "_chrome", None):
+            self._refresh_chrome(*self._chrome)
 
     @staticmethod
     def _clock() -> str:
@@ -1373,7 +1437,26 @@ class BudgieTUI(App):
         """
         return max(int(self.size.width * 2 / 5) - _MC_PANE_PADDING, 12)
 
+    def _draw_burn(self) -> None:
+        """Redraw the burn chart from the loaded project; blank on the sample."""
+        chart = self.query_one("#burn_chart", Static)
+        snap = self._snap
+        if snap is None:
+            chart.update("")
+            return
+        try:
+            self._burn = self._burn or snap.burn_series()
+        except (OSError, ValueError):
+            chart.update("burn chart unavailable")
+            return
+        chart.update("\n".join(render_burn(self._burn, self.size.width - 4, 8)))
+
+    def on_resize(self) -> None:
+        if self._burn is not None:
+            self._draw_burn()
+
     def _refresh_forecast(self, ph, iterations: int, seed: int) -> None:
+        self._burn = None
         banner = self.query_one("#forecast_banner", Static)
         table = self.query_one("#forecast", DataTable)
         try:
@@ -1393,24 +1476,40 @@ class BudgieTUI(App):
                 f"the columns."
             )
             table.clear()
+            self._snap = self._live_snap = self._as_of = None
+            self._draw_burn()
             return
 
         # An open project is read the way the CLI and perch read it: hours
         # from plan.csv, readings, cost lines and the budget. The bundled
         # sample or a --people file is just that team, as before.
-        snap = self._snap = None
+        snap = self._snap = self._live_snap = None
+        self._reading_dates = []  # another project's dates would step nowhere
         if (
             self.workspace is not None
             and not self._people_override
             and not self.on_sample
         ):
             try:
-                snap = self._snap = load_snapshot(self.workspace.root)
+                snap = self._live_snap = load_snapshot(self.workspace.root)
+                self._reading_dates = sorted(
+                    {d for series in snap.readings.values() for d, _ in series}
+                )
+                if self._as_of:
+                    seen = {
+                        n: kept
+                        for n, series in snap.readings.items()
+                        if (kept := [o for o in series if o[0] <= self._as_of])
+                    }
+                    snap = replace(snap, readings=seen)
+                self._snap = snap
             except (OSError, ValueError) as exc:
                 self._load_error = f"Can't read the project's inputs: {exc}"
                 banner.display = True
                 banner.update(f"{self._load_error}\nFix the file, then press r.")
                 table.clear()
+                self._snap = self._live_snap = self._as_of = None
+                self._draw_burn()
                 return
             people = snap.people
             if snap.readings:
@@ -1418,6 +1517,8 @@ class BudgieTUI(App):
                     people, snap.readings, snap.span, plan=snap.plan
                 ).people
         costs = snap.costs if snap else []
+        if snap is None:
+            self._as_of = None  # the sample or a --people file has no readings
 
         self._load_error = None
         # Numbers from the bundled sample look exactly like real ones.
@@ -1434,9 +1535,14 @@ class BudgieTUI(App):
         det = run_forecast(people, costs=costs)
         sim = simulate(people, iterations=iterations, seed=seed, costs=costs)
         pct = sim.percentiles()
-        self.query_one("#forecast_headline", Static).update(
-            _headline(snap, people, pct[50], sim) if snap else ""
-        )
+        head = _headline(snap, people, pct[50], sim) if snap else ""
+        if snap:
+            from budgie.core.drift import drift_line, since_last_reading
+
+            moved = since_last_reading(snap, iterations, seed)
+            if moved:
+                head += f"\n[dim]{drift_line(moved)}[/dim]"
+        self.query_one("#forecast_headline", Static).update(head)
         self.query_one("#forecast_settings", Static).update(
             f"[dim]{ph.span.label} · PTO {ph.pto_days:g}d · {iterations:,} runs   "
             f"(e on Projects edits)[/dim]"
@@ -1472,6 +1578,8 @@ class BudgieTUI(App):
             ascii_histogram(sim.total_costs, bins=width)
         )
 
+        self._draw_burn()
+
         # Percentiles as aligned rows rather than one wrapping line -- three
         # numbers meant to be compared should sit in a column. The gloss is the
         # first thing dropped on a narrow pane: a wrapped label costs a whole
@@ -1484,7 +1592,7 @@ class BudgieTUI(App):
                 + f"{style}  {_money(pct[p]):>12}"
                 for p, style, gloss in zip(
                     (10, 50, 90),
-                    ("[green]P10[/green]", "[b]P50[/b]", "[green]P90[/green]"),
+                    ("P10", "[b]P50[/b]", "P90"),
                     glosses,
                 )
             )
@@ -1504,7 +1612,7 @@ class BudgieTUI(App):
         )
 
     def _refresh_plan(self, span, pto: float) -> None:
-        self.query_one("#plan_grid", PlanGrid).load(self._snap)
+        self.query_one("#plan_grid", PlanGrid).load(self._live_snap)
         table = self.query_one("#plan_table", DataTable)
         table.clear()
         path = self.plan_path
@@ -1531,7 +1639,8 @@ class BudgieTUI(App):
             )
             total += hours
             changes = ", ".join(
-                f"{e.effective_date:%b %-d}→{e.fte:g}" for e in plan.changes_for(name)
+                f"{e.effective_date:%b %-d %Y}→{e.fte:g}"
+                for e in plan.changes_for(name)
             )
             table.add_row(name, changes, f"{hours:,.0f}")
         table.add_row("[b]Total[/b]", "", f"[b]{total:,.0f}[/b]")
@@ -1614,6 +1723,11 @@ class BudgieTUI(App):
                     ),
                     "",
                     "[dim]pto: in budgie.yaml (e on Projects)[/dim]",
+                    *(
+                        [f"[b]Readings as of {self._as_of}[/b] [dim](L: live)[/dim]"]
+                        if self._as_of
+                        else []
+                    ),
                 ]
             )
         )

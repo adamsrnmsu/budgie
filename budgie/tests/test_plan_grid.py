@@ -288,6 +288,23 @@ async def test_help_has_a_plan_section(project, monkeypatch):
         assert "Plan tab" in str(text) and "undo" in str(text)
 
 
+def test_fill_right_copies_into_open_months_only_and_undoes_in_one_step(project):
+    model = GridModel(load_snapshot(project))
+    model.set({("Bob", 6)}, 0.3)
+    model.set({("Alice", 8)}, 0.2)
+    before = dict(model.edits)
+    # Bob: first selected month is Jun. Alice: Apr is booked, a legal source
+    # whose value is copied, but nothing booked is ever written.
+    n = model.fill_right({("Bob", 6), ("Bob", 9), ("Alice", 4)})
+    assert n > 0
+    assert [model.current(("Bob", m)) for m in range(7, 13)] == pytest.approx([0.3] * 6)
+    assert model.current(("Alice", 12)) == pytest.approx(model.current(("Alice", 4)))
+    assert all(model.base.editable(m) for _, m in model.edits)
+    assert ("Alice", 4) not in model.edits and ("Bob", 5) not in model.edits
+    assert model.fill_right({("Bob", 6)}) == 0  # already filled: no undo step
+    assert model.undo() and model.edits == before  # one step back
+
+
 def test_a_nudge_past_the_limit_changes_nothing_and_leaves_no_undo_step(project):
     model = GridModel(load_snapshot(project))
     cell = ("Bob", 12)
@@ -438,3 +455,63 @@ async def test_actual_and_trend_cells_are_read_only_and_say_so(project, monkeypa
         assert "averages are read-only" in _status(app)
         assert not app.query_one("#grid_input").display
         assert not grid.model.edits and not grid.selected
+
+
+def _budgeted(project):
+    """The saved plan's P50 as the budget, so it is over budget about half the time."""
+    snap = load_snapshot(project)
+    p50 = GridModel(snap).readout()["p50"]
+    return snap.what_if(budget=p50)
+
+
+def test_readout_gives_over_budget_and_stoplight_before_and_after(project):
+    model = GridModel(_budgeted(project))
+    r = model.readout()
+    assert (r["over"], r["signal"]) == (r["over0"], r["signal0"])  # no edits
+    assert r["over0"] == pytest.approx(0.5, abs=0.05)
+    assert r["signal0"].name == "RED"
+
+    model.set({("Bob", m) for m in H2}, 0.0)
+    r = model.readout()
+    assert r["over0"] == pytest.approx(0.5, abs=0.05)  # the saved side is unchanged
+    assert r["over"] < r["over0"]
+    assert model.saved is model.saved  # computed once
+
+
+def test_readout_omits_the_decision_without_a_budget(project):
+    from dataclasses import replace
+
+    model = GridModel(replace(load_snapshot(project), budget=None))
+    r = model.readout()
+    assert r["over"] is r["over0"] is r["signal"] is r["signal0"] is None
+
+
+async def test_unsaved_line_shows_over_budget_and_stoplight(project, monkeypatch):
+    app, size = await _plan(project, monkeypatch)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        grid = app.query_one("#plan_grid")
+        grid.model.snap = _budgeted(project)
+        grid.model.__dict__.pop("saved", None)
+        grid.model.set({("Bob", m) for m in H2}, 0.0)
+        grid._redraw()
+        text = str(app.query_one("#grid_cost").content)
+        assert "over budget 5" in text and "RED → " in text
+
+
+async def test_greater_than_fills_right_from_the_cursor(project, monkeypatch):
+    app, size = await _plan(project, monkeypatch)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        grid = app.query_one("#plan_grid")
+        table = app.query_one("#grid_table")
+        table.move_cursor(row=grid.model.names.index("Bob"), column=8)
+        await pilot.press("5", "0", "enter", "greater_than_sign")
+        await pilot.pause()
+        assert grid.model.current(("Bob", 12)) == 0.5
+        assert grid.model.current(("Bob", 7)) != 0.5
+        await pilot.press("u")
+        assert grid.model.current(("Bob", 12)) != 0.5
+        assert grid.model.current(("Bob", 8)) == 0.5

@@ -13,13 +13,7 @@ from budgie import tui as tui_mod
 from budgie.core.plan import load_plan
 from budgie.core.scaffold import init_workspace
 from budgie.core.workspace import PROJECTS_DIR, forget_workspaces
-from budgie.tui import (
-    MODEL,
-    BudgieTUI,
-    append_plan_row,
-    open_in_editor,
-    shorten_path,
-)
+from budgie.tui import MODEL, BudgieTUI, append_plan_row, open_in_editor, shorten_path
 
 
 @pytest.fixture(autouse=True)
@@ -1359,3 +1353,152 @@ async def test_the_plan_footer_shows_the_primary_keys(tmp_path, monkeypatch):
         }
     assert shown["undo"] == "u" and shown["redo"] == "U"
     assert shown["commit"] == "s" and shown["discard"] == "x"
+
+
+# --- as-of browsing ([ ] L) -------------------------------------------------
+
+
+def _three_readings(tmp_path, monkeypatch):
+    # Alice at $95/h: weeks 10, 20, 30 end 2026-03-08, 05-17, 07-26.
+    init_workspace(tmp_path, year=2026)
+    (tmp_path / "weekly.csv").write_text(
+        "name,week,hours_to_date\nAlice,10,100\nAlice,20,300\nAlice,30,600\n"
+        "Bob,10,0\nBob,20,0\nBob,30,0\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+
+
+def _spent(app) -> int:
+    import re
+
+    text = _text(app, "#forecast_headline")
+    return int(re.search(r"spent \$([\d,]+)", text).group(1).replace(",", ""))
+
+
+async def test_as_of_steps_over_each_reading_then_returns_live(tmp_path, monkeypatch):
+    _three_readings(tmp_path, monkeypatch)
+    app = BudgieTUI()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        assert app._as_of is None and "as of" not in _text(app, "#titlebar")
+        assert _spent(app) == 57_000
+        live_p50 = _p50(_text(app, "#forecast_headline"))
+
+        seen = []
+        for _ in range(3):
+            await pilot.press("left_square_bracket")
+            await pilot.pause()
+            seen.append(app._as_of)
+        assert seen == [date(2026, 7, 26), date(2026, 5, 17), date(2026, 3, 8)]
+        assert _spent(app) == 9_500
+        assert "as of 2026-03-08" in _text(app, "#titlebar")
+        assert "as of 2026-03-08" in _text(app, "#contextbar")
+        assert _p50(_text(app, "#forecast_headline")) != live_p50
+
+        await pilot.press("left_square_bracket")  # clamped at the first reading
+        await pilot.pause()
+        assert app._as_of == date(2026, 3, 8)
+        await pilot.press("right_square_bracket")
+        await pilot.pause()
+        assert app._as_of == date(2026, 5, 17) and _spent(app) == 28_500
+
+        await pilot.press("r")  # recalculates at the same as-of
+        await pilot.pause()
+        assert app._as_of == date(2026, 5, 17) and _spent(app) == 28_500
+
+        await pilot.press("right_square_bracket", "right_square_bracket")
+        await pilot.pause()
+        assert app._as_of is None and _spent(app) == 57_000
+        assert "as of" not in _text(app, "#titlebar")
+
+        await pilot.press("left_square_bracket", "L")
+        await pilot.pause()
+        assert app._as_of is None
+
+
+async def test_nothing_is_written_while_as_of(tmp_path, monkeypatch):
+    _three_readings(tmp_path, monkeypatch)
+    before = (tmp_path / "plan.csv").read_text()
+    app = BudgieTUI()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        await pilot.press("left_square_bracket")
+        await pilot.pause()
+        message = app.add_plan_row()
+        assert "as of" in message and "\n" not in message
+        app.on_plan_grid_commit(type("E", (), {"rows": [object()]})())
+        assert (tmp_path / "plan.csv").read_text() == before
+        assert app._as_of == date(2026, 7, 26)
+        assert app.check_action("live", ()) is True
+        await pilot.press("L")
+        await pilot.pause()
+        assert app.check_action("live", ()) is False
+
+
+async def test_plan_changes_show_the_year(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    async with BudgieTUI().run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        table = pilot.app.query_one("#plan_table")
+        cells = [str(c) for i in range(table.row_count) for c in table.get_row_at(i)]
+    assert any(" 2026→" in c for c in cells), cells
+
+
+async def test_projects_arrow_column_has_a_header(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    async with BudgieTUI().run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        table = pilot.app.query_one("#projects_table")
+        assert str(table.ordered_columns[0].label) == "Open"
+
+
+async def test_clock_ticks_without_recalculating(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    async with BudgieTUI().run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        monkeypatch.setattr(BudgieTUI, "_clock", staticmethod(lambda: "12:34:56"))
+        pilot.app._tick()
+        assert "12:34:56" in _text(pilot.app, "#titlebar")
+
+
+async def test_footer_shows_every_relevant_binding_at_80_columns(tmp_path, monkeypatch):
+    init_workspace(tmp_path, year=2026)
+    monkeypatch.chdir(tmp_path)
+    forget_workspaces()
+    async with BudgieTUI().run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        for tab in (
+            "tab_projects",
+            "tab_inputs",
+            "tab_plan",
+            "tab_forecast",
+            "tab_assumptions",
+        ):
+            pilot.app.action_show_tab(tab)
+            if tab == "tab_plan":
+                # The grid's own ~15 keys can't fit in 80 columns (a follow-up);
+                # the list view shows the tab's app-level keys.
+                pilot.app.action_toggle_grid()
+            pilot.app.set_focus(None)
+            # Under load the tab switch can land after the footer's next
+            # paint; ask for the bindings again so the footer reads this tab's.
+            pilot.app.refresh_bindings()
+            await pilot.pause()
+            await pilot.pause()
+            footer = pilot.app.query_one("Footer")
+            keys = list(footer.query("FooterKey"))
+            assert keys, tab
+            palette = next(k for k in keys if k.description == "palette")
+            shown = [k for k in keys if k.display and k is not palette]
+            for k in shown:
+                right = k.region.x + k.region.width
+                assert 0 < right <= palette.region.x, (tab, k.description)
+            bindings = [b for b in pilot.app.active_bindings.values() if b.binding.show]
+            assert len(shown) == len(bindings), (tab, [k.description for k in shown])

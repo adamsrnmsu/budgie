@@ -250,3 +250,44 @@ def test_the_bundled_sample_ignores_plans(tmp_path, monkeypatch):
     result = CliRunner().invoke(cli, ["forecast", "--seed", "1"])
     assert result.exit_code == 0, result.output
     assert "⚠" not in result.output
+
+
+# --- scenario starts from the project ---------------------------------------
+
+
+def test_scenario_baseline_equals_the_forecast(project, monkeypatch):
+    from budgie.core.scenario import run_scenarios
+
+    monkeypatch.chdir(project)
+    out = CliRunner().invoke(cli, ["forecast", "--seed", "42"]).output
+    base, pto = run_scenarios(project / "scenarios.yaml")[0]
+    assert round(base.sim.percentile(50)) == _p50(out)
+    assert pto.cost_delta < 0
+
+
+def test_scenario_field_that_cannot_map_is_a_one_line_error(project):
+    from budgie.core.scenario import run_scenarios
+
+    (project / "other.csv").write_text("name,hourly_cost\nZed,50\n")
+    cfg = project / "scenarios.yaml"
+    cfg.write_text(
+        "budget: 1000\nscenarios:\n  - name: A\n    people: other.csv\n    year: 2026\n"
+    )
+    with pytest.raises(
+        ValueError, match=r"scenario 'A': people .*other.csv is not this project's"
+    ):
+        run_scenarios(cfg)
+
+
+def test_a_scenario_for_another_year_carries_no_readings(project):
+    # weekly.csv weeks carry no year: this year's hours must not be re-dated
+    # into next year's span and counted as already booked there.
+    from budgie.core.scenario import _project_snapshot
+    from budgie.core.workspace import find_workspace, forget_workspaces
+
+    forget_workspaces()
+    ws = find_workspace(project)
+    now = _project_snapshot(ws, {"name": "now", "year": YEAR}, {}, project)
+    later = _project_snapshot(ws, {"name": "next", "year": YEAR + 1}, {}, project)
+    assert now.readings, "the scaffold has readings this year"
+    assert later.readings == {}

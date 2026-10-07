@@ -178,6 +178,19 @@ budgie status
 Lists every input file, whether it exists, how many rows it has, what it's for, and which
 commands consume it. Run this first when you're not sure where a number came from.
 
+### `budgie doctor` — is anything wrong?
+
+```bash
+budgie doctor [--project NAME]
+```
+
+Read only. Checks the install (interpreter vs the venv, where `budgie` imports from, the
+macOS hidden flag on the editable `.pth`, `$EDITOR`) and the project: every input loads,
+which budget wins when both a pinned `budget:` and `budget.csv` exist, weekly over actuals,
+a weekly reading older than 14 days, plan names missing from `people.csv`, and months the
+plan leaves unallocated. Each `warn` or `fail` prints a fix line; the exit code is 1 only on
+`fail`. With several projects and no `--project` it lists them.
+
 ### `budgie assumptions` — what is Budgie assuming?
 
 ```bash
@@ -195,6 +208,8 @@ Every command uses your project's files when there is one, and bundled sample da
 there isn't — so you can try them all immediately. Every command that reads your project's
 files also takes `--project NAME` to choose between several budgets. (`budgie init` and
 `budgie delete` manage the projects themselves — see [Start a project](#start-a-project).)
+
+With `PI_BLOCKS=1` (what `perch tui` sets) `forecast`, `monthly`, `hours`, `plan`, `scenario`, `assumptions`, `emails` and `status` print JSON-line blocks (tables, figures, notes) instead of text.
 
 ### `budgie forecast` — what will this team cost?
 
@@ -262,6 +277,26 @@ person's latest reading is simulated, so the band is a single line until then an
 there. The remaining hours are spread by the plan's shape when the project has a `plan.csv`,
 else by working days. Non-labor costs are unchanged. Without readings the output is as before.
 
+### `budgie calibrate` — can you trust the band?
+
+```bash
+budgie calibrate --project fy26 --seed 42 --iterations 2000
+```
+
+A backtest of the forecast against your own readings. For each past reading date it rebuilds
+the forecast as it stood then (the readings up to that date, and only the `plan.csv` rows
+effective by it) and compares the P10 / P50 / P90 of cumulative labor spend with what was
+actually booked at every later reading date. It reports, at team level, the number of
+(forecast date, target date) pairs, the share of actuals inside P10–P90 (an honest 80% band
+holds about 80%), the shares below P10 and above P90, and the median P50 error in dollars and
+percent (positive means spend ran hotter than forecast), overall and for 1–3, 4–7 and 8+ weeks
+ahead. Under 8 pairs in a row it prints `not enough history: n pairs` instead of a
+percentage. No reading is ever extrapolated: a target date past anyone's last reading is
+skipped. `--iterations` defaults to 2,000 (forecast's is 10,000) so it runs quickly. Pairs
+overlap, so read the shares as a description, not a test; `plan.csv` has only effective dates,
+so a row dated after a forecast date is treated as unknown then even if it was planned ahead.
+Non-labor costs are not scored.
+
 ### `budgie scenario` — compare what-ifs with a stoplight
 
 ```bash
@@ -280,7 +315,10 @@ Signals
   ● Lean team (3 people) — GOOD: Only 0% chance of exceeding budget -- comfortably covered.
 ```
 
-The first scenario is the baseline; the rest are measured against it.
+The first scenario is the baseline; the rest are measured against it. When `scenarios.yaml`
+sits in a project, each scenario starts from that project's plan and readings, so the baseline
+matches `budgie forecast`; there a scenario can change only `year` and `pto` (a different
+`people` file is an error, not ignored).
 
 ### `budgie plan` — allocations that change during the year
 
@@ -396,14 +434,17 @@ and the keys. `escape` or `?` closes it.
 2. **Inputs** — every project file plus `budgie.yaml` itself (year, PTO, budget, simulation
    runs), whether it exists, and which tab reads it. Select one and press `e` to open it in
    `$VISUAL`/`$EDITOR` (`vim` if neither is set), then `r` to recalculate.
-3. **Plan** — a **month grid**: everyone down the side, Jan–Dec across, the FTE as a
+3. **Plan** — a **month grid**: everyone down the side, the months of the year span across (fiscal when `year_start` is set), the FTE as a
    percentage in each cell. Opening the tab puts the cursor in the grid. Type a number
    (`50`, `50%` and `0.5` all mean half time) or press `enter` and the edit line opens
    right under the grid; `+`/`-` nudge the selected cells (or the cursor's) by 5 points,
-   kept within 0–100%. `space` selects a cell and `shift`+arrows extend the selection.
+   kept within 0–100%. `>` fills right: each row's first selected month (or the cursor's)
+   is copied into its later open months, one undo step, booked months untouched. `space` selects a cell and `shift`+arrows extend the selection.
    Edits are scratch: edited cells turn yellow, and the lines under the grid show
    `N changes · u undo · U redo · s save` and the cost effect (`plan cost $384,797 →
-   $381,200 (−$3,597)`); the line above shows plan cost · target · gap · P50 · P80.
+   $381,200 (−$3,597)`) and, with a budget, the decision before → after (`over budget
+   12% → 31% · GREEN → YELLOW`: chance of going over and the stoplight, computed as
+   `budgie forecast` does); the line above shows plan cost · target · gap · P50 · P80.
    `u`/`ctrl+z` undo and `U`/`ctrl+y` redo any edit, nudge, solve, import or discard.
    `t` sets a target (the budget by default; `425000`, `850k` and `1.2M` all work), and
    `v` fills the selected cells so the plan cost lands on it, scaling them by one factor,
@@ -438,6 +479,8 @@ and the keys. `escape` or `?` closes it.
 Press `1`–`5` to jump to a tab, `r` to recalculate, `e` to edit the file the tab shows
 (Plan → plan.csv, Forecast → people.csv, Inputs → the selected file, Projects → the open
 project's budgie.yaml), `d` on Projects to delete the selected project, `?` for help, `q` to quit.
+`[` and `]` step the forecast back and forward through the dates readings exist on (the header
+says `as of YYYY-MM-DD`, and nothing is saved while you browse the past); `L` returns to live.
 
 `P` and `G` jump to perch and gitboard on the same project. Inside `perch suite`
 the jump is instant and each app stays where you left it; started from

@@ -323,3 +323,47 @@ def test_verbose_keeps_the_traceback(project):
     (project / "people.csv").write_text("name,hourly_cost\n")
     result = _run("-v", "forecast")
     assert isinstance(result.exception, ValueError)
+
+
+def _one_line_error(result, *needles):
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    lines = [x for x in result.output.splitlines() if x.startswith("error:")]
+    assert len(lines) == 1
+    assert all(n in lines[0] for n in needles)
+
+
+def test_broken_yaml_is_one_line_naming_the_file(project):
+    (project / "budgie.yaml").write_text("budget: [1,\n")
+    _one_line_error(_run("forecast"), "budgie.yaml")
+
+
+def test_a_non_mapping_yaml_is_one_line_naming_the_file(project):
+    (project / "budgie.yaml").write_text("- a\n- b\n")
+    _one_line_error(_run("forecast"), "budgie.yaml", "key: value")
+
+
+def test_broken_scenarios_yaml_is_one_line_naming_the_file(project):
+    (project / "scenarios.yaml").write_text("scenarios: [1,\n")
+    _one_line_error(_run("scenario", "--config", "scenarios.yaml"), "scenarios.yaml")
+
+
+def test_an_unreadable_file_is_one_line_naming_the_file(project):
+    (project / "plan.csv").chmod(0)
+    try:
+        _one_line_error(_run("forecast"), "plan.csv")
+    finally:
+        (project / "plan.csv").chmod(0o644)
+
+
+def test_a_directory_where_a_file_belongs_is_one_line(project):
+    (project / "scen").mkdir()
+    _one_line_error(_run("scenario", "--config", "scen"), "scen")
+
+
+def test_a_yaml_error_is_one_line_with_its_line_number(project):
+    (project / "budgie.yaml").write_text("year: 2026\nbudget: [\n")
+    result = _run("forecast")
+    lines = [x for x in result.output.splitlines() if x.strip()]
+    assert len(lines) == 1, result.output
+    assert "budgie.yaml" in lines[0] and "line " in lines[0]

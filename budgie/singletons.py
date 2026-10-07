@@ -44,12 +44,15 @@ def banner() -> str:
 
 
 def set_verbose(verbose: bool) -> None:
-    """Turn on DEBUG for budgie's own loggers only.
+    """DEBUG (with INFO) for budgie's own loggers when verbose, else only warnings.
+
+    Routine INFO lines ("Loaded ...", "Simulating ...") are for ``-v``; warnings
+    and errors always show.
 
     Third-party libraries stay at INFO -- matplotlib's font manager alone emits
     hundreds of DEBUG records per figure and would bury everything useful.
     """
-    level = logging.DEBUG if verbose else logging.INFO
+    level = logging.DEBUG if verbose else logging.WARNING
     logging.getLogger("budgie").setLevel(level)
     logging.getLogger("budgie.core").setLevel(level)
     # Module loggers are named by import path (budgie.core.plan, ...), so

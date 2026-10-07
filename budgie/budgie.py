@@ -38,7 +38,15 @@ def _style(signal) -> tuple[str, str, str]:
 
 
 def _sample(name: str) -> str:
-    """Path to a bundled sample file, used when there's no workspace."""
+    """Path to a bundled sample file, used when there's no workspace.
+
+    Says so once per invocation, on stderr: numbers from the bundled samples
+    must never pass for the user's own. Not silenced by ``-q`` (warning-class).
+    """
+    global _SAMPLE_NOTED
+    if not _SAMPLE_NOTED:
+        _SAMPLE_NOTED = True
+        click.echo("sample data — budgie init NAME to start your own", err=True)
     return str(THIS_DIR / "tests" / name)
 
 
@@ -47,6 +55,7 @@ def _sample(name: str) -> str:
 # around, and the flag has to reach all of them. Set once at parse time by
 # `_project_option`, so nothing else can quietly change which budget is in play.
 _SELECTED_PROJECT: str | None = None
+_SAMPLE_NOTED = False  # the sample-data line is printed once per invocation
 
 
 def _remember_project(ctx, param, value):
@@ -65,8 +74,9 @@ def _forget_project() -> None:
     would otherwise carry one command's `--project` into the next and quietly
     read the wrong budget.
     """
-    global _SELECTED_PROJECT
+    global _SELECTED_PROJECT, _SAMPLE_NOTED
     _SELECTED_PROJECT = None
+    _SAMPLE_NOTED = False
 
 
 _project_option = click.option(
@@ -249,7 +259,14 @@ def _span(year):
 
 
 # Mistakes in the inputs, not bugs: these get one line instead of a traceback.
-_INPUT_ERRORS = (ValueError, FileNotFoundError, KeyError, csv.Error)
+_INPUT_ERRORS = (
+    ValueError,
+    FileNotFoundError,
+    PermissionError,
+    IsADirectoryError,
+    KeyError,
+    csv.Error,
+)
 
 
 class _Budgie(click.Group):
@@ -273,8 +290,9 @@ def _fail(exc: Exception) -> None:
     """``error: <message>``, then ``see: budgie guide <topic>`` if a file is named."""
     from budgie.core.workspace import INPUTS
 
-    if isinstance(exc, FileNotFoundError) and exc.filename:
-        message, filename = f"no such file: {exc.filename}", Path(exc.filename).name
+    if isinstance(exc, OSError) and exc.filename:
+        what = "no such file" if isinstance(exc, FileNotFoundError) else exc.strerror
+        message, filename = f"{what}: {exc.filename}", Path(exc.filename).name
     else:
         # KeyError's str() is the repr of the key; everything else is the message.
         message = f"missing {exc}" if isinstance(exc, KeyError) else str(exc)
@@ -291,17 +309,23 @@ def _fail(exc: Exception) -> None:
     "-v", "--verbose", is_flag=True, help="Show DEBUG logging from budgie's internals."
 )
 @click.option(
+    "-q",
+    "--quiet",
+    is_flag=True,
+    help="Warnings and errors only, even with -v. Routine INFO lines need -v.",
+)
+@click.option(
     "-h", "--help", "show_help", is_flag=True, help="Show this message and exit."
 )
 @click.pass_context
-def cli(ctx, verbose, show_help):
+def cli(ctx, verbose, quiet, show_help):
     """Budgie -- the ultimate budget companion."""
     from budgie.singletons import set_verbose
 
     # Runs before the subcommand's own options are parsed, so this clears the
     # previous invocation's selection without discarding this one's.
     _forget_project()
-    set_verbose(verbose)
+    set_verbose(verbose and not quiet)
 
     # Click's own group help is a flat alphabetical list, which tells a new user
     # nothing about what to run second. `budgie` and `budgie --help` both render
@@ -816,7 +840,7 @@ def hours(alloc_csv, year, pto, plan_csv):
     """Show each person's allocated / spent / remaining hours from their FTE."""
     from budgie.core.allocation import load_allocations
     from budgie.core.calendar import productive_hours
-    from budgie.singletons import console, logger
+    from budgie.singletons import console
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
@@ -837,13 +861,28 @@ def hours(alloc_csv, year, pto, plan_csv):
     # The project's latest reading is the spent figure, as in `emails`.
     readings = load_observations(span, *readings_files(_workspace()))
     allocs = with_readings(allocs, spent_to_date(readings))
-    logger.info(f"Available hours {span.label}: {ph.available_hours:,.0f} (1.0 FTE)")
+    if blocks.wanted():
+        out = [
+            blocks.figures(
+                [
+                    blocks.figure(
+                        f"Available hours {span.label}",
+                        f"{ph.available_hours:,.0f}",
+                        note="1.0 FTE",
+                    )
+                ]
+            ),
+            _hours_table_block(allocs),
+        ]
+        if plan_csv:
+            out.append(blocks.text(_PLAN_NOTE.format(Path(plan_csv).name), tone="dim"))
+        blocks.emit(out)
+        return
+    # A result, not a log line: -q/-v must not hide it.
+    console.print(f"Available hours {span.label}: {ph.available_hours:,.0f} (1.0 FTE)")
     _print_hours_table(allocs)
     if plan_csv:
-        console.print(
-            f"[dim]Allocated hours come from {Path(plan_csv).name}; "
-            "FTE is the year average.[/dim]"
-        )
+        console.print(f"[dim]{_PLAN_NOTE.format(Path(plan_csv).name)}[/dim]")
 
 
 @click.command()
@@ -1038,6 +1077,30 @@ def _write_html_emails(statuses, span, out_dir):
     return write_eml_drafts(statuses, span.label, out, charts=charts), charts_dir
 
 
+_PLAN_NOTE = "Allocated hours come from {}; FTE is the year average."
+
+
+def _hours_table_block(allocs):
+    """Blocks twin of :func:`_print_hours_table`."""
+    rows = [
+        [
+            a.name,
+            f"{a.fte:.2f}",
+            f"{a.allocated_hours:,.0f}",
+            f"{a.hours_spent:,.0f}",
+            f"{a.hours_remaining:,.0f}",
+            f"{a.fraction_used:.0%}",
+        ]
+        for a in allocs
+    ]
+    return blocks.table(
+        ["Name", "FTE", "Allocated", "Spent", "Remaining", "Used"],
+        rows,
+        title="FTE hours remaining",
+        align=["l"] + ["r"] * 5,
+    )
+
+
 def _print_hours_table(allocs):
     from rich.table import Table
 
@@ -1081,14 +1144,17 @@ def _print_hours_table(allocs):
 def scenario(config_path):
     """Compare what-if scenarios side by side, with a stoplight vs the budget."""
     from budgie.core.scenario import run_scenarios
-    from budgie.singletons import console, logger
+    from budgie.singletons import console
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
     config_path = _input("scenarios", config_path, "scenarios.yaml")
 
     results, budget = run_scenarios(config_path)
-    logger.info(f"Budget target: ${budget:,.0f}   (baseline: {results[0].name})")
+    if blocks.wanted():
+        blocks.emit(_scenario_blocks(results, budget))
+        return
+    console.print(f"Budget target: ${budget:,.0f}   (baseline: {results[0].name})")
     _print_scenario_table(results, budget)
     console.print("\n[bold]Signals[/bold]")
     for r in results:
@@ -1096,6 +1162,43 @@ def scenario(config_path):
         console.print(
             f"  [{color}]●[/{color}] [bold]{r.name}[/bold] — {word}: {r.signal.rationale}"
         )
+
+
+def _scenario_blocks(results, budget):
+    """Blocks twin of the scenario output: budget note, table, one line per signal."""
+    rows = []
+    for r in results:
+        delta = "—" if r.cost_delta == 0 else f"{r.cost_delta:+,.0f}"
+        rows.append(
+            [
+                r.name,
+                f"${r.forecast.total_cost:,.0f}",
+                delta,
+                f"${r.sim.percentile(90):,.0f}",
+                f"{r.signal.prob_over_budget:.0%}",
+            ]
+        )
+    out = [
+        blocks.text(
+            f"Budget target: ${budget:,.0f} (baseline: {results[0].name})", tone="dim"
+        ),
+        blocks.table(
+            ["Scenario", "Total (P50 det.)", "vs base", "P90", "P(over budget)"],
+            rows,
+            title="Scenario comparison",
+            align=["l"] + ["r"] * 4,
+        ),
+        blocks.heading("Signals", level=3),
+    ]
+    for r in results:
+        _, color, word = _style(r.signal.signal)
+        out.append(
+            blocks.text(
+                f"● {r.name} — {word}: {r.signal.rationale}",
+                tone=_SIGNAL_TONE.get(color),
+            )
+        )
+    return out
 
 
 def _print_scenario_table(results, budget):
@@ -1226,7 +1329,8 @@ def monthly(
         # Project file or nothing, as for `hours`: a sample plan would invent a team.
         _, plan = _plan_for_allocations(None)
         actuals = Actuals(readings, observations, plan)
-        _print_eac_note(readings, len(people))
+        if not blocks.wanted():
+            _print_eac_note(readings, len(people))
 
     mf = monthly_forecast(
         people,
@@ -1247,7 +1351,12 @@ def monthly(
     logger.info(
         f"{len(people)} people, {span.label} split into months by working-day share"
     )
-    _print_monthly_table(mf, sim, budget.latest if budget else None)
+    wanted = blocks.wanted()
+    if wanted:
+        shown = _eac_note_blocks(readings, len(people)) if readings else []
+        shown.append(_monthly_table_block(mf, sim))
+    else:
+        _print_monthly_table(mf, sim, budget.latest if budget else None)
 
     if plots:
         from budgie.plots import fan_chart, monthly_cost_bars
@@ -1256,7 +1365,47 @@ def monthly(
         out.mkdir(parents=True, exist_ok=True)
         f1 = fan_chart(sim, out / "fan.png", budget=budget)
         f2 = monthly_cost_bars(mf, out / "monthly.png")
-        console.print(f"[bold]Wrote[/bold] {f1} and {f2}")
+        if wanted:
+            shown.append(blocks.text(f"Wrote {f1} and {f2}"))
+        else:
+            console.print(f"[bold]Wrote[/bold] {f1} and {f2}")
+    if wanted:
+        blocks.emit(shown)
+
+
+def _monthly_table_block(mf, sim):
+    """Blocks twin of :func:`_print_monthly_table` (no red over-budget cell)."""
+    from budgie.core.monthly import month_names
+
+    p10, p90 = sim.band(10), sim.band(90)
+    cum = mf.cumulative_costs
+    rows = [
+        [
+            name,
+            f"{mf.hours[i]:,.0f}",
+            f"${mf.costs[i]:,.0f}",
+            f"${cum[i]:,.0f}",
+            f"${p10[i]:,.0f}",
+            f"${p90[i]:,.0f}",
+        ]
+        for i, name in enumerate(month_names(mf.span))
+    ]
+    rows.append(
+        [
+            "Year",
+            f"{sum(mf.hours):,.0f}",
+            f"${mf.total_cost:,.0f}",
+            "",
+            f"${p10[-1]:,.0f}",
+            f"${p90[-1]:,.0f}",
+        ]
+    )
+    return blocks.table(
+        ["Month", "Hours", "Cost", "Cumulative", "P10", "P90"],
+        rows,
+        title=f"Monthly breakdown {mf.span.label}",
+        align=["l"] + ["r"] * 5,
+    )
 
 
 def _print_monthly_table(mf, sim, budget):
@@ -1771,12 +1920,32 @@ def assumptions(year, pto):
             "core/budget.py",
         ),
     ]
+    if blocks.wanted():
+        blocks.emit(
+            [
+                blocks.table(
+                    ["Assumption", "Value", "Set in"],
+                    [list(r) for r in rows],
+                    title=f"Assumptions in force for {span.label}",
+                    align=["l"] * 3,
+                ),
+                blocks.text(_ASSUMPTIONS_NOTE, tone="dim"),
+            ]
+        )
+        return
     _print_assumptions_table(span.label, rows)
 
 
 def _row(name: str, value: str, source: str) -> tuple[str, str, str]:
     """One row of the assumptions table."""
     return (name, value, source)
+
+
+_ASSUMPTIONS_NOTE = (
+    "Change a value with the matching option, or in the input file or "
+    "budgie.yaml setting named in the last column. Rows that name a core/ "
+    "module are fixed rules."
+)
 
 
 def _print_assumptions_table(label, rows):
@@ -1796,11 +1965,7 @@ def _print_assumptions_table(label, rows):
     for name, value, source in rows:
         table.add_row(name, value, source)
     console.print(table)
-    console.print(
-        "[dim]Change a value with the matching option, or in the input file or "
-        "budgie.yaml setting named in the last column. Rows that name a core/ "
-        "module are fixed rules.[/dim]"
-    )
+    console.print(f"[dim]{_ASSUMPTIONS_NOTE}[/dim]")
 
 
 @click.command()
@@ -1844,7 +2009,31 @@ def plan(plan_csv, year, pto):
     pto_by_name = pto_overrides(alloc_csv) if alloc_csv else {}
 
     allocation_plan = load_plan(plan_csv)
+    if blocks.wanted():
+        blocks.emit([_plan_table_block(allocation_plan, span, pto, pto_by_name)])
+        return
     _print_plan_table(allocation_plan, span, pto, pto_by_name)
+
+
+def _plan_table_block(allocation_plan, span, pto, pto_by_name=None):
+    """Blocks twin of :func:`_print_plan_table`."""
+    rows, total = [], 0.0
+    for name in allocation_plan.names:
+        days = (pto_by_name or {}).get(name, pto)
+        hours = allocation_plan.allocated_hours(name, span, pto_days=days)
+        total += hours
+        changes = ", ".join(
+            f"{e.effective_date:%b %-d}→{e.fte:g}"
+            for e in allocation_plan.changes_for(name)
+        )
+        rows.append([name, changes, f"{hours:,.0f}"])
+    rows.append(["Total", "", f"{total:,.0f}"])
+    return blocks.table(
+        ["Name", "Changes", "Hours"],
+        rows,
+        title=f"Allocation plan {span.label}",
+        align=["l", "l", "r"],
+    )
 
 
 def _print_plan_table(allocation_plan, span, pto, pto_by_name=None):
@@ -1875,7 +2064,177 @@ def _print_plan_table(allocation_plan, span, pto, pto_by_name=None):
     console.print(table)
 
 
+@click.command()
+@_project_option
+def doctor():
+    """Check the install and the project; read only. Exit 1 only on a failure."""
+    from rich.markup import escape
+
+    from budgie.core import doctor as dr
+    from budgie.core.workspace import available_projects
+    from budgie.singletons import console
+    from budgie.utils.utils import display_startup_message
+
+    display_startup_message()
+    checks = dr.environment_checks()
+    workspace = _workspace()
+    projects = available_projects()
+    if workspace is not None:
+        checks += dr.project_checks(workspace, _today())
+    elif _SELECTED_PROJECT:
+        checks.append(
+            dr.Check(
+                dr.FAIL,
+                f"no project called {_SELECTED_PROJECT}",
+                "one of: " + ", ".join(p.name for p in projects),
+            )
+        )
+    elif len(projects) > 1:
+        checks += dr.several_checks([p.name for p in projects])
+    else:
+        checks += dr.sample_checks()
+    colour = {dr.OK: "green", dr.WARN: "yellow", dr.FAIL: "red"}
+    for c in checks:
+        console.print(f"[{colour[c.status]}]{c.status:<4}[/] {escape(c.what)}")
+        if c.status != dr.OK and c.fix:
+            console.print(f"     [dim]fix: {escape(c.fix)}[/dim]")
+    if any(c.status == dr.FAIL for c in checks):
+        raise SystemExit(1)
+
+
+@click.command()
+@click.option(
+    "--seed",
+    default=None,
+    type=int,
+    help="Random seed (default: the project's, else 1).",
+)
+@click.option(
+    "--iterations",
+    default=None,
+    type=int,
+    help="Simulation runs per forecast date (default 2000; forecast uses 10000).",
+)
+@_project_option
+def calibrate(seed, iterations):
+    """Backtest the forecast: how often did actual spend land inside P10-P90?
+
+    For each past reading date the forecast is rebuilt as it stood then and
+    compared with the spend actually read on every later reading date.
+    """
+    from budgie.core.calibrate import DEFAULT_ITERATIONS
+    from budgie.core.calibrate import calibrate as run
+    from budgie.core.project import load_snapshot
+    from budgie.singletons import console
+    from budgie.utils.utils import display_startup_message
+
+    display_startup_message()
+    workspace = _workspace()
+    if workspace is None:
+        from budgie.core.workspace import available_projects
+
+        names = [p.name for p in available_projects()]
+        if len(names) > 1 and not _SELECTED_PROJECT:
+            raise ValueError(
+                f"calibrate: several projects ({', '.join(names)}); "
+                "pick one with --project NAME"
+            )
+        raise ValueError("calibrate needs a project (budgie.yaml); run `budgie init`")
+    cal = run(
+        load_snapshot(workspace.root),
+        iterations=iterations or DEFAULT_ITERATIONS,
+        seed=seed,
+    )
+    out = _calibrate_blocks(cal)
+    if blocks.wanted():
+        blocks.emit(out)
+        return
+    from rich.table import Table
+
+    for b in out:
+        if b["block"] == "table":
+            t = Table(title=b["title"], header_style="bold magenta")
+            for col, al in zip(b["columns"], b["align"]):
+                t.add_column(col, justify="right" if al == "r" else "left")
+            for row in b["rows"]:
+                t.add_row(*row)
+            console.print(t)
+        elif b["block"] == "figures":
+            console.print(
+                "  ".join(f"[bold]{f['label']}[/bold] {f['value']}" for f in b["items"])
+            )
+        else:
+            console.print(b["text"], markup=False)
+
+
+def _calibrate_blocks(cal):
+    """Blocks for `calibrate`: the figures, one row per horizon, and the caveats."""
+
+    def pct(x):
+        return f"{x:.0%}"
+
+    def row(s):
+        if not s.enough:
+            return [s.label, str(s.pairs), *["-"] * 5]
+        err = "" if s.median_error_pct is None else f"{s.median_error_pct:+.1%}"
+        return [
+            s.label,
+            str(s.pairs),
+            pct(s.inside),
+            pct(s.below),
+            pct(s.above),
+            f"${s.median_error:+,.0f}",
+            err,
+        ]
+
+    t = cal.total
+    if t.enough:
+        figs = [
+            blocks.figure("Pairs", str(t.pairs)),
+            blocks.figure("Inside P10-P90", pct(t.inside), note="an honest band: ~80%"),
+            blocks.figure("Below P10", pct(t.below)),
+            blocks.figure("Above P90", pct(t.above)),
+            blocks.figure("Median P50 error", f"${t.median_error:+,.0f}"),
+        ]
+    else:
+        figs = [
+            blocks.figure("Pairs", str(t.pairs)),
+            blocks.figure("Result", f"not enough history: {t.pairs} pairs"),
+        ]
+    return [
+        blocks.heading("Forecast calibration (labor dollars)"),
+        blocks.figures(figs),
+        blocks.table(
+            [
+                "Weeks ahead",
+                "Pairs",
+                "Inside",
+                "Below P10",
+                "Above P90",
+                "Median err $",
+                "Median err %",
+            ],
+            [row(s) for s in (t, *cal.horizons)],
+            title="Actual spend against the forecast made weeks earlier",
+            align=["l", "r", "r", "r", "r", "r", "r"],
+        ),
+        *[
+            blocks.text(f"{s.label}: not enough history: {s.pairs} pairs", tone="warn")
+            for s in (t, *cal.horizons)
+            if not s.enough
+        ],
+        blocks.text(
+            f"Error is actual minus P50 (positive: spend ran hotter). "
+            f"{cal.iterations:,} runs per forecast date, seed {cal.seed}; "
+            "pairs overlap, so read the shares as a description, not a test. "
+            "Needs 8 pairs per row.",
+            tone="dim",
+        ),
+    ]
+
+
 cli.add_command(init)
+cli.add_command(doctor)
 cli.add_command(delete_project_cmd)
 cli.add_command(guide)
 cli.add_command(status)
@@ -1887,6 +2246,7 @@ cli.add_command(hours)
 cli.add_command(emails)
 cli.add_command(scenario)
 cli.add_command(monthly)
+cli.add_command(calibrate)
 
 if __name__ == "__main__":
     cli()

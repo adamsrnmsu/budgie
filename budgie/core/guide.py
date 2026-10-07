@@ -85,6 +85,7 @@ COMMAND_GROUPS: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...] = (
         (
             ("init", "Create a project folder with starter files"),
             ("status", "Which inputs exist, and what reads each one"),
+            ("doctor", "Is the install or the project wrong? Read only"),
             ("assumptions", "What Budgie assumes about time and money"),
             ("guide", "Walk through building a budget, step by step"),
             ("delete", "Remove a project and everything in it"),
@@ -110,7 +111,10 @@ COMMAND_GROUPS: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...] = (
     (
         "Report",
         "Tell people where they stand",
-        (("emails", "Per-person drafts (writes files, never sends)"),),
+        (
+            ("emails", "Per-person drafts (writes files, never sends)"),
+            ("calibrate", "Backtest: did actual spend land inside P10-P90?"),
+        ),
     ),
     (
         "Explore",

@@ -40,7 +40,11 @@ imports. The front-ends (CLI, TUI, plots, emails) are thin adapters over it.
 
 .. automodule:: budgie.core.burn
 
+.. automodule:: budgie.core.calibrate
+
 .. automodule:: budgie.core.costs
+
+.. automodule:: budgie.core.doctor
 
 .. automodule:: budgie.core.scenario
 ```
@@ -57,6 +61,8 @@ imports. The front-ends (CLI, TUI, plots, emails) are thin adapters over it.
 .. automodule:: budgie.core.actuals
 
 .. automodule:: budgie.core.eac
+
+.. automodule:: budgie.core.drift
 
 .. automodule:: budgie.core.burndown
 ```

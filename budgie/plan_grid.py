@@ -1,11 +1,12 @@
 """
 The Plan tab's month grid: people down the side, months across, FTE in each cell.
 
-Edits are *scratch*: they reprice the plan and write nothing until ``c``
-commits them as dated rows (appended, never edited -- see
-:mod:`budgie.core.plan`). ``s`` asks the solver (:mod:`budgie.core.solve`) to
-fill the selected cells so the plan cost lands on the target; ``S`` spreads
-the change evenly instead of in proportion. ``i`` seeds scratch edits from a
+Edits are *scratch*: they reprice the plan and write nothing until ``s``
+(or ``c``) saves them as dated rows (appended, never edited -- see
+:mod:`budgie.core.plan`); ``x`` discards them. ``v`` asks the solver
+(:mod:`budgie.core.solve`) to scale the selected cells so the plan cost lands
+on the ``t`` target; ``V`` adds the same FTE to each instead of scaling in
+proportion. ``i`` seeds scratch edits from a
 wide ``name,<month>,...`` sheet (:func:`budgie.core.solve.read_month_sheet`).
 
 :class:`GridModel` is the UI-free part -- scratch edits, solving, the rows a
@@ -40,13 +41,8 @@ from budgie.core.eac import at_completion
 from budgie.core.montecarlo import simulate
 from budgie.core.plan import AllocationPlan, PlanEntry
 from budgie.core.project import Snapshot
-from budgie.core.solve import (
-    Cell,
-    PlanCosting,
-    entries_for,
-    read_month_sheet,
-    solve,
-)
+from budgie.core.signals import Signal, evaluate
+from budgie.core.solve import Cell, PlanCosting, entries_for, read_month_sheet, solve
 
 #: Monte Carlo runs behind the readout's P50/P80. Fewer than the Forecast tab
 #: so every keystroke stays instant; the Forecast tab has the full figures.
@@ -134,6 +130,26 @@ class GridModel:
         self._check_open(cells)
         new = {c: round(min(1.0, max(0.0, self.current(c) + delta)), 4) for c in cells}
         new = {c: v for c, v in new.items() if v != self.current(c)}
+        if new:
+            self.checkpoint()
+            self.edits.update(new)
+        return len(new)
+
+    def fill_right(self, cells) -> int:
+        """Copy each row's first selected month into its later open months.
+
+        Booked months are skipped, never written; the number of cells that
+        changed. One undo step (none when everything already matches).
+        """
+        first: dict[str, int] = {}
+        for name, m in cells:
+            first[name] = min(m, first.get(name, m))
+        new = {}
+        for name, m0 in first.items():
+            v = round(self.current((name, m0)), 4)
+            for m in range(m0 + 1, len(self.months) + 1):
+                if self.base.editable(m) and round(self.current((name, m)), 4) != v:
+                    new[name, m] = v
         if new:
             self.checkpoint()
             self.edits.update(new)
@@ -246,18 +262,40 @@ class GridModel:
             )
         return f"{said}. {sol.note}".strip()
 
-    def readout(self) -> dict[str, float | None]:
-        """Plan cost, target, gap, and the P50/P80 of the scratch plan."""
-        cost = self.scratch.cost()
-        snap = self.snap.with_plan(self.plan)
+    def _sim(self, snap: Snapshot):
+        """The readout's Monte Carlo run for ``snap``, as ``budgie forecast`` runs it."""
         people = snap.people
         if snap.readings:
             people = at_completion(
                 people, snap.readings, snap.span, plan=snap.plan
             ).people
-        pct = simulate(
+        return simulate(
             people, iterations=READOUT_RUNS, seed=snap.seed, costs=snap.costs
-        ).percentiles((50, 80))
+        )
+
+    def _decision(self, sim) -> tuple[float, Signal] | None:
+        """(chance over budget, stoplight) of ``sim``; None without a budget."""
+        if self.snap.budget is None:
+            return None
+        result = evaluate(sim, self.snap.budget.latest)
+        return result.prob_over_budget, result.signal
+
+    @cached_property
+    def saved(self) -> tuple[float, Signal] | None:
+        """The decision for the plan as saved; computed once."""
+        return self._decision(self._sim(self.snap))
+
+    def readout(self) -> dict:
+        """Plan cost, target, gap, P50/P80 and the decision, before and after.
+
+        ``over``/``signal`` are the scratch plan's chance of going over the
+        budget and its stoplight; ``over0``/``signal0`` the saved plan's. All
+        None without a budget.
+        """
+        cost = self.scratch.cost()
+        sim = self._sim(self.snap.with_plan(self.plan))
+        pct = sim.percentiles((50, 80))
+        after, before = self._decision(sim), self.saved
         gap = None if self.target is None else self.target - cost
         return {
             "cost": cost,
@@ -265,6 +303,10 @@ class GridModel:
             "gap": gap,
             "p50": pct[50],
             "p80": pct[80],
+            "over": after and after[0],
+            "signal": after and after[1],
+            "over0": before and before[0],
+            "signal0": before and before[1],
         }
 
 
@@ -289,7 +331,7 @@ def parse_hours(text: str) -> float:
 
 
 LEGEND = (
-    "[b]type[/b] 0-100 or [b]Enter[/b] edit   [b]+ -[/b] nudge 5%   "
+    "[b]type[/b] 0-100 or [b]Enter[/b] edit   [b]+ -[/b] nudge 5%   [b]>[/b] fill right   "
     "[b]space[/b] select   [b]u[/b]/[b]U[/b] undo/redo   [b]s[/b] save   "
     "[b]x[/b] discard   [b]esc[/b] leave grid (then 1-5 switch tabs)\n"
     "[b yellow]yellow[/b yellow] edited, not saved   [reverse]reversed[/reverse] selected"
@@ -327,6 +369,7 @@ class PlanGrid(Vertical):
         Binding("plus", "nudge(0.05)", "+5%"),
         Binding("minus", "nudge(-0.05)", "-5%"),
         Binding("space", "toggle_cell", "Select"),
+        Binding("greater_than_sign", "fill_right", "Fill right"),
         Binding("c", "commit", show=False),
         Binding("ctrl+z", "undo", show=False),
         Binding("ctrl+y", "redo", show=False),
@@ -454,12 +497,18 @@ class PlanGrid(Vertical):
         self.query_one("#grid_readout", Static).update(line)
         saved = self.model.base.cost()
         delta = r["cost"] - saved
-        self.query_one("#grid_cost", Static).update(
-            f"unsaved: plan cost {_money(saved)} → {_money(r['cost'])} "
-            f"({_signed(delta)})"
-            if self.model.edits
-            else ""
-        )
+        text = ""
+        if self.model.edits:
+            text = (
+                f"unsaved: plan cost {_money(saved)} → {_money(r['cost'])} "
+                f"({_signed(delta)})"
+            )
+            if r["over"] is not None:
+                text += (
+                    f"   ·   over budget {r['over0']:.0%} → {r['over']:.0%}"
+                    f"   ·   {r['signal0'].name} → {r['signal'].name}"
+                )
+        self.query_one("#grid_cost", Static).update(text)
         m, n = self.model, len(self.model.edits)
         head = (
             f"[b yellow]{n} change{'s' * (n != 1)}[/b yellow]"
@@ -591,6 +640,17 @@ class PlanGrid(Vertical):
             + (" FTE" if self.hours else "")
             + "."
         )
+
+    def action_fill_right(self) -> None:
+        cells = self._targets()
+        if self.model is None or not cells or self._blocked():
+            return
+        moved = self.model.fill_right(cells)
+        if not moved:
+            self.say("Nothing to fill: later open months already match.")
+            return
+        self._redraw()
+        self.say(f"Filled {moved} cell(s) right. u undoes.")
 
     def action_undo(self) -> None:
         if self.model and self.model.undo():

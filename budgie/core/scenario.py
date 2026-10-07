@@ -25,7 +25,7 @@ Config shape (YAML), consumed by the ``budgie scenario`` command::
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import yaml
@@ -33,11 +33,14 @@ import yaml
 from budgie.core.budget import coerce_budget
 from budgie.core.calendar import productive_hours, year_span, year_start_month
 from budgie.core.costs import load_costs
+from budgie.core.eac import at_completion
 from budgie.core.forecast import Forecast
 from budgie.core.forecast import forecast as run_forecast
 from budgie.core.loader import load_people
 from budgie.core.montecarlo import SimulationResult, simulate
+from budgie.core.project import load_snapshot
 from budgie.core.signals import SignalResult, evaluate
+from budgie.core.workspace import CONFIG_NAME, load_workspace, yaml_problem
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +60,56 @@ def _resolve(path: str, base_dir: Path) -> Path:
     return p if p.is_absolute() else base_dir / p
 
 
+def _project_snapshot(workspace, spec, config, base_dir):
+    """The project's Snapshot for one scenario, or a one-line error.
+
+    ``year`` and ``pto`` vary the project's own settings. A different people,
+    costs or year_start file/value has no counterpart on the project's
+    Snapshot, so it is refused instead of silently ignored.
+    """
+    name = spec.get("name", "?")
+
+    def same(key: str, given, theirs) -> None:
+        if given and Path(given).resolve() != theirs:
+            raise ValueError(
+                f"scenario {name!r}: {key} {given} is not this project's "
+                f"{key} file; inside a project a scenario can only change "
+                "year and pto."
+            )
+
+    def theirs(key: str) -> Path | None:
+        found = workspace.resolve(key)
+        return Path(found).resolve() if found else None
+
+    same(
+        "people",
+        spec.get("people") and _resolve(spec["people"], base_dir),
+        theirs("people"),
+    )
+    same(
+        "costs",
+        config.get("costs") and _resolve(config["costs"], base_dir),
+        theirs("costs"),
+    )
+    given = spec.get("year_start", config.get("year_start"))
+    if given and given != workspace.setting("year_start", "01-01"):
+        raise ValueError(
+            f"scenario {name!r}: year_start {given} is not this project's; "
+            "inside a project a scenario can only change year and pto."
+        )
+    snap = load_snapshot(
+        workspace.root,
+        year=int(spec["year"]),
+        pto=float(spec["pto"]) if "pto" in spec else None,
+    )
+    # weekly.csv weeks carry no year: read into another year's span, this
+    # year's hours would count as already booked there. Another year starts
+    # with nothing booked.
+    if snap.span != load_snapshot(workspace.root).span:
+        snap = replace(snap, readings={})
+    return snap
+
+
 def run_scenarios(config_path: str | Path) -> tuple[list[ScenarioResult], float]:
     """Run every scenario in a config file; return results and the budget.
 
@@ -64,7 +117,14 @@ def run_scenarios(config_path: str | Path) -> tuple[list[ScenarioResult], float]
     signals.
     """
     config_path = Path(config_path)
-    config = yaml.safe_load(config_path.read_text())
+    try:
+        config = yaml.safe_load(config_path.read_text())
+    except yaml.YAMLError as exc:
+        raise ValueError(
+            f"{config_path.name}: not valid YAML ({yaml_problem(exc)})"
+        ) from exc
+    if not isinstance(config, dict):
+        raise ValueError(f"{config_path.name} must be key: value pairs")  # noqa: TRY004
     base_dir = config_path.parent
 
     # `budget:` accepts a plain number (as before), a list of dated revisions,
@@ -86,6 +146,14 @@ def run_scenarios(config_path: str | Path) -> tuple[list[ScenarioResult], float]
     if not specs:
         raise ValueError("config must define at least one scenario")
 
+    # A budgie.yaml beside the config makes each scenario a variant of that
+    # project, with its plan.csv and readings; without one there is only people.
+    workspace = (
+        load_workspace(base_dir / CONFIG_NAME)
+        if (base_dir / CONFIG_NAME).is_file()
+        else None
+    )
+
     results: list[ScenarioResult] = []
     baseline_total: float | None = None
     baseline_sim: SimulationResult | None = None
@@ -101,13 +169,28 @@ def run_scenarios(config_path: str | Path) -> tuple[list[ScenarioResult], float]
             raise ValueError(
                 f"{config_path.name}: scenario {spec.get('name', '?')!r}: {exc}"
             ) from None
-        ph = productive_hours(span, pto_days=float(spec.get("pto", 0.0)))
-        costs = (
-            load_costs(_resolve(cost_spec, base_dir), span=span) if cost_spec else []
-        )
-        people = load_people(_resolve(spec["people"], base_dir), productive_hours=ph)
+        if workspace is not None:
+            snap = _project_snapshot(workspace, spec, config, base_dir)
+            # Same steps as `budgie forecast`: plan hours, then readings.
+            people = at_completion(
+                snap.people, snap.readings, snap.span, plan=snap.plan
+            ).people
+            costs = snap.costs
+            it = int(config.get("iterations", snap.iterations))
+            sd = config.get("seed", snap.seed)
+        else:
+            ph = productive_hours(span, pto_days=float(spec.get("pto", 0.0)))
+            costs = (
+                load_costs(_resolve(cost_spec, base_dir), span=span)
+                if cost_spec
+                else []
+            )
+            people = load_people(
+                _resolve(spec["people"], base_dir), productive_hours=ph
+            )
+            it, sd = iterations, seed
         det = run_forecast(people, costs=costs)
-        sim = simulate(people, iterations=iterations, seed=seed, costs=costs)
+        sim = simulate(people, iterations=it, seed=sd, costs=costs)
         signal = evaluate(sim, budget, baseline=baseline_sim)
         logger.info(
             "Scenario %r: total=%.0f signal=%s",
