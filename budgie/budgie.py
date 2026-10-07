@@ -259,7 +259,14 @@ def _span(year):
 
 
 # Mistakes in the inputs, not bugs: these get one line instead of a traceback.
-_INPUT_ERRORS = (ValueError, FileNotFoundError, KeyError, csv.Error)
+_INPUT_ERRORS = (
+    ValueError,
+    FileNotFoundError,
+    PermissionError,
+    IsADirectoryError,
+    KeyError,
+    csv.Error,
+)
 
 
 class _Budgie(click.Group):
@@ -283,8 +290,9 @@ def _fail(exc: Exception) -> None:
     """``error: <message>``, then ``see: budgie guide <topic>`` if a file is named."""
     from budgie.core.workspace import INPUTS
 
-    if isinstance(exc, FileNotFoundError) and exc.filename:
-        message, filename = f"no such file: {exc.filename}", Path(exc.filename).name
+    if isinstance(exc, OSError) and exc.filename:
+        what = "no such file" if isinstance(exc, FileNotFoundError) else exc.strerror
+        message, filename = f"{what}: {exc.filename}", Path(exc.filename).name
     else:
         # KeyError's str() is the repr of the key; everything else is the message.
         message = f"missing {exc}" if isinstance(exc, KeyError) else str(exc)

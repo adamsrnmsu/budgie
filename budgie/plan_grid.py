@@ -1,11 +1,12 @@
 """
 The Plan tab's month grid: people down the side, months across, FTE in each cell.
 
-Edits are *scratch*: they reprice the plan and write nothing until ``c``
-commits them as dated rows (appended, never edited -- see
-:mod:`budgie.core.plan`). ``s`` asks the solver (:mod:`budgie.core.solve`) to
-fill the selected cells so the plan cost lands on the target; ``S`` spreads
-the change evenly instead of in proportion. ``i`` seeds scratch edits from a
+Edits are *scratch*: they reprice the plan and write nothing until ``s``
+(or ``c``) saves them as dated rows (appended, never edited -- see
+:mod:`budgie.core.plan`); ``x`` discards them. ``v`` asks the solver
+(:mod:`budgie.core.solve`) to scale the selected cells so the plan cost lands
+on the ``t`` target; ``V`` adds the same FTE to each instead of scaling in
+proportion. ``i`` seeds scratch edits from a
 wide ``name,<month>,...`` sheet (:func:`budgie.core.solve.read_month_sheet`).
 
 :class:`GridModel` is the UI-free part -- scratch edits, solving, the rows a

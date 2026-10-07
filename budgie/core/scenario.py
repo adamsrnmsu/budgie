@@ -64,7 +64,12 @@ def run_scenarios(config_path: str | Path) -> tuple[list[ScenarioResult], float]
     signals.
     """
     config_path = Path(config_path)
-    config = yaml.safe_load(config_path.read_text())
+    try:
+        config = yaml.safe_load(config_path.read_text())
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{config_path.name}: not valid YAML ({exc})") from exc
+    if not isinstance(config, dict):
+        raise ValueError(f"{config_path.name} must be key: value pairs")  # noqa: TRY004
     base_dir = config_path.parent
 
     # `budget:` accepts a plain number (as before), a list of dated revisions,
