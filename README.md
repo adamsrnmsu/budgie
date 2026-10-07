@@ -275,6 +275,26 @@ person's latest reading is simulated, so the band is a single line until then an
 there. The remaining hours are spread by the plan's shape when the project has a `plan.csv`,
 else by working days. Non-labor costs are unchanged. Without readings the output is as before.
 
+### `budgie calibrate` — can you trust the band?
+
+```bash
+budgie calibrate --project fy26 --seed 42 --iterations 2000
+```
+
+A backtest of the forecast against your own readings. For each past reading date it rebuilds
+the forecast as it stood then (the readings up to that date, and only the `plan.csv` rows
+effective by it) and compares the P10 / P50 / P90 of cumulative labor spend with what was
+actually booked at every later reading date. It reports, at team level, the number of
+(forecast date, target date) pairs, the share of actuals inside P10–P90 (an honest 80% band
+holds about 80%), the shares below P10 and above P90, and the median P50 error in dollars and
+percent (positive means spend ran hotter than forecast), overall and for 1–3, 4–7 and 8+ weeks
+ahead. Under 8 pairs in a row it prints `not enough history: n pairs` instead of a
+percentage. No reading is ever extrapolated: a target date past anyone's last reading is
+skipped. `--iterations` defaults to 2,000 (forecast's is 10,000) so it runs quickly. Pairs
+overlap, so read the shares as a description, not a test; `plan.csv` has only effective dates,
+so a row dated after a forecast date is treated as unknown then even if it was planned ahead.
+Non-labor costs are not scored.
+
 ### `budgie scenario` — compare what-ifs with a stoplight
 
 ```bash
