@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 from budgie.core.eac import at_completion
 from budgie.core.montecarlo import simulate
@@ -11,6 +12,7 @@ from budgie.core.signals import probability_over
 
 @dataclass(frozen=True)
 class Drift:
+    since: date  # the previous reading: the gap need not be a week
     p50_delta: float
     hours_booked: float
     over_before: float | None = None  # P(over budget); None without a budget
@@ -47,6 +49,7 @@ def since_last_reading(snap, iterations: int, seed: int | None) -> Drift | None:
     )
     budget = snap.budget.latest if snap.budget else None
     return Drift(
+        prev,
         s1.percentile(50) - s0.percentile(50),
         booked,
         None if budget is None else probability_over(s0, budget),
@@ -59,4 +62,4 @@ def drift_line(d: Drift) -> str:
     if d.over_before is not None:
         parts.append(f"over budget {d.over_before:.0%} → {d.over_after:.0%}")
     parts.append(f"{d.hours_booked:,.0f} h booked")
-    return "since last week: " + " · ".join(parts)
+    return f"since the {d.since:%b %-d} reading: " + " · ".join(parts)

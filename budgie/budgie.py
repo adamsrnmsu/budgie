@@ -2131,6 +2131,14 @@ def calibrate(seed, iterations):
     display_startup_message()
     workspace = _workspace()
     if workspace is None:
+        from budgie.core.workspace import available_projects
+
+        names = [p.name for p in available_projects()]
+        if len(names) > 1 and not _SELECTED_PROJECT:
+            raise ValueError(
+                f"calibrate: several projects ({', '.join(names)}); "
+                "pick one with --project NAME"
+            )
         raise ValueError("calibrate needs a project (budgie.yaml); run `budgie init`")
     cal = run(
         load_snapshot(workspace.root),

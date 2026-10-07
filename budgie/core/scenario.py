@@ -25,7 +25,7 @@ Config shape (YAML), consumed by the ``budgie scenario`` command::
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import yaml
@@ -40,7 +40,7 @@ from budgie.core.loader import load_people
 from budgie.core.montecarlo import SimulationResult, simulate
 from budgie.core.project import load_snapshot
 from budgie.core.signals import SignalResult, evaluate
-from budgie.core.workspace import CONFIG_NAME, load_workspace
+from budgie.core.workspace import CONFIG_NAME, load_workspace, yaml_problem
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,7 @@ def _project_snapshot(workspace, spec, config, base_dir):
 
     same(
         "people",
-        spec["people"] and _resolve(spec["people"], base_dir),
+        spec.get("people") and _resolve(spec["people"], base_dir),
         theirs("people"),
     )
     same(
@@ -97,11 +97,17 @@ def _project_snapshot(workspace, spec, config, base_dir):
             f"scenario {name!r}: year_start {given} is not this project's; "
             "inside a project a scenario can only change year and pto."
         )
-    return load_snapshot(
+    snap = load_snapshot(
         workspace.root,
         year=int(spec["year"]),
         pto=float(spec["pto"]) if "pto" in spec else None,
     )
+    # weekly.csv weeks carry no year: read into another year's span, this
+    # year's hours would count as already booked there. Another year starts
+    # with nothing booked.
+    if snap.span != load_snapshot(workspace.root).span:
+        snap = replace(snap, readings={})
+    return snap
 
 
 def run_scenarios(config_path: str | Path) -> tuple[list[ScenarioResult], float]:
@@ -114,7 +120,9 @@ def run_scenarios(config_path: str | Path) -> tuple[list[ScenarioResult], float]
     try:
         config = yaml.safe_load(config_path.read_text())
     except yaml.YAMLError as exc:
-        raise ValueError(f"{config_path.name}: not valid YAML ({exc})") from exc
+        raise ValueError(
+            f"{config_path.name}: not valid YAML ({yaml_problem(exc)})"
+        ) from exc
     if not isinstance(config, dict):
         raise ValueError(f"{config_path.name} must be key: value pairs")  # noqa: TRY004
     base_dir = config_path.parent

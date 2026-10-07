@@ -359,3 +359,11 @@ def test_an_unreadable_file_is_one_line_naming_the_file(project):
 def test_a_directory_where_a_file_belongs_is_one_line(project):
     (project / "scen").mkdir()
     _one_line_error(_run("scenario", "--config", "scen"), "scen")
+
+
+def test_a_yaml_error_is_one_line_with_its_line_number(project):
+    (project / "budgie.yaml").write_text("year: 2026\nbudget: [\n")
+    result = _run("forecast")
+    lines = [x for x in result.output.splitlines() if x.strip()]
+    assert len(lines) == 1, result.output
+    assert "budgie.yaml" in lines[0] and "line " in lines[0]

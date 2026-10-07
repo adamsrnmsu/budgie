@@ -746,6 +746,9 @@ class BudgieTUI(App):
         self._reading_dates: list[date] = []  # of the live snapshot, for stepping
 
         self._burn = None  # BurnSeries cached until the next recalculate
+        # The project as it stands today, kept beside the as-of `_snap`: the
+        # plan grid edits the future, so its booked months stay the live ones.
+        self._live_snap = None
         # Which project the next `d` would actually delete. Set by the first
         # press and cleared by anything else, so deletion always takes two
         # deliberate keystrokes aimed at the same row.
@@ -1408,7 +1411,10 @@ class BudgieTUI(App):
             else f"no project open — {self._no_project_hint()}"
         )
         if self._as_of:
-            location += f"   [b]as of {self._as_of}[/b]   (L: live, [ ]: step)"
+            location += (
+                f"   [b]as of {self._as_of}[/b] (readings only; plan and budget"
+                " are today's)   L: live"
+            )
         self.query_one("#contextbar", Static).update(location)
 
     def _tick(self) -> None:
@@ -1470,19 +1476,22 @@ class BudgieTUI(App):
                 f"the columns."
             )
             table.clear()
+            self._snap = self._live_snap = self._as_of = None
+            self._draw_burn()
             return
 
         # An open project is read the way the CLI and perch read it: hours
         # from plan.csv, readings, cost lines and the budget. The bundled
         # sample or a --people file is just that team, as before.
-        snap = self._snap = None
+        snap = self._snap = self._live_snap = None
+        self._reading_dates = []  # another project's dates would step nowhere
         if (
             self.workspace is not None
             and not self._people_override
             and not self.on_sample
         ):
             try:
-                snap = load_snapshot(self.workspace.root)
+                snap = self._live_snap = load_snapshot(self.workspace.root)
                 self._reading_dates = sorted(
                     {d for series in snap.readings.values() for d, _ in series}
                 )
@@ -1499,6 +1508,8 @@ class BudgieTUI(App):
                 banner.display = True
                 banner.update(f"{self._load_error}\nFix the file, then press r.")
                 table.clear()
+                self._snap = self._live_snap = self._as_of = None
+                self._draw_burn()
                 return
             people = snap.people
             if snap.readings:
@@ -1506,6 +1517,8 @@ class BudgieTUI(App):
                     people, snap.readings, snap.span, plan=snap.plan
                 ).people
         costs = snap.costs if snap else []
+        if snap is None:
+            self._as_of = None  # the sample or a --people file has no readings
 
         self._load_error = None
         # Numbers from the bundled sample look exactly like real ones.
@@ -1599,7 +1612,7 @@ class BudgieTUI(App):
         )
 
     def _refresh_plan(self, span, pto: float) -> None:
-        self.query_one("#plan_grid", PlanGrid).load(self._snap)
+        self.query_one("#plan_grid", PlanGrid).load(self._live_snap)
         table = self.query_one("#plan_table", DataTable)
         table.clear()
         path = self.plan_path

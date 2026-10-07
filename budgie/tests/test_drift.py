@@ -22,7 +22,9 @@ def test_two_readings_give_the_booked_difference_and_a_p50_move(tmp_path):
     assert d.over_before is not None and 0 <= d.over_after <= 1
     assert since_last_reading(snap, 2000, 7) == d  # same seed: no MC noise
     line = drift_line(d)
-    assert line.startswith("since last week: P50 ") and "46 h booked" in line
+    # names the reading it compares with: the gap need not be a week
+    assert line.startswith(f"since the {d.since:%b %-d} reading: P50 "), line
+    assert "46 h booked" in line
     assert "over budget" in line
 
 
@@ -40,4 +42,4 @@ async def test_tui_shows_the_line_only_with_two_readings(tmp_path, monkeypatch):
         async with app.run_test() as pilot:
             await pilot.pause()
             text = str(app.query_one("#forecast_headline").render())
-            assert ("since last week:" in text) is shown
+            assert (" reading: P50" in text) is shown

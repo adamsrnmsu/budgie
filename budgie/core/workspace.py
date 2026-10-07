@@ -314,6 +314,13 @@ def _is_config(path: Path) -> bool:
         return False
 
 
+def yaml_problem(exc) -> str:
+    """A YAML parse error as one line: what, and where (PyYAML spans five)."""
+    mark = getattr(exc, "problem_mark", None)
+    what = getattr(exc, "problem", None) or str(exc).splitlines()[0]
+    return f"{what} at line {mark.line + 1}" if mark else what
+
+
 def forget_workspaces() -> None:
     """Drop the :func:`find_workspace` cache (after init, or in tests)."""
     find_workspace.cache_clear()
@@ -327,7 +334,7 @@ def load_workspace(config_path: str | Path) -> Workspace:
     try:
         data = yaml.safe_load(path.read_text()) or {}
     except yaml.YAMLError as exc:
-        raise ValueError(f"{path.name}: not valid YAML ({exc})") from exc
+        raise ValueError(f"{path.name}: not valid YAML ({yaml_problem(exc)})") from exc
     if not isinstance(data, dict):
         raise ValueError(  # noqa: TRY004
             f"{path.name} must be key: value pairs, got a {type(data).__name__}"
