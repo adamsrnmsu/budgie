@@ -88,6 +88,33 @@ def project(tmp_path):
     return tmp_path
 
 
+def test_doctor_blocks(project):
+    out = parsed(run(["doctor"], project))
+    tbl = next(b for b in out if b["block"] == "table")
+    assert tbl["columns"] == ["status", "check", "fix"]
+    assert {r[0] for r in tbl["rows"]} <= {"ok", "warn", "fail"}
+    fig = next(b for b in out if b["block"] == "figures")
+    assert [f["label"] for f in fig["items"]] == ["ok", "warn", "fail"]
+
+
+def test_doctor_blocks_fail_exit_1(project):
+    (project / "people.csv").write_text("nonsense\n1\n")
+    proc = run(["doctor"], project)
+    assert proc.returncode == 1
+    out = [json.loads(line) for line in proc.stdout.splitlines()]
+    assert all(check(b) for b in out)
+    rows = next(b for b in out if b["block"] == "table")["rows"]
+    assert any(r[0] == "fail" and "people.csv" in r[1] for r in rows)
+
+
+def test_init_blocks(tmp_path):
+    out = parsed(run(["init", "demo", "--year", "2026"], tmp_path))
+    assert (tmp_path / "budget" / "demo" / "budgie.yaml").is_file()
+    text = " ".join(b.get("text", "") for b in out if b["block"] == "text")
+    assert "budgie status" in text
+    assert any(b["block"] == "list" for b in out)
+
+
 def test_checker_rejects_bad_blocks():
     assert not check(
         {"pi": 1, "block": "table", "columns": ["a"], "rows": [["x", "y"]]}

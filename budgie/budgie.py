@@ -1535,6 +1535,26 @@ def init(name, year, year_start, force, here):
     forget_workspaces()
 
     root = Path(target).resolve()
+    if blocks.wanted():
+        out = [
+            blocks.text(f"Project at {root}"),
+            blocks.bullets(
+                [p.name for p in written]
+                + [f"{p.name} (already there, left alone)" for p in skipped]
+            ),
+        ]
+        if skipped and not force:
+            out.append(blocks.text("Pass --force to overwrite.", tone="dim"))
+        if not here:
+            out.append(blocks.text(f"cd {target} to work in it."))
+        out.append(
+            blocks.text(
+                f"Edit the CSVs, then run budgie status to check them. "
+                f"Settings like year, PTO and budget live in {CONFIG_NAME}."
+            )
+        )
+        blocks.emit(out)
+        return
     console.print(f"[bold]Project at[/bold] {root}")
     for path in written:
         console.print(f"  [green]+[/green] {path.name}")
@@ -2093,6 +2113,30 @@ def doctor():
         checks += dr.several_checks([p.name for p in projects])
     else:
         checks += dr.sample_checks()
+    if blocks.wanted():
+        counts = [sum(c.status == s for c in checks) for s in (dr.OK, dr.WARN, dr.FAIL)]
+        blocks.emit(
+            [
+                blocks.table(
+                    ["status", "check", "fix"],
+                    [
+                        [c.status, c.what, c.fix if c.status != dr.OK else ""]
+                        for c in checks
+                    ],
+                ),
+                blocks.figures(
+                    [
+                        blocks.figure(label, str(n), tone=tone)
+                        for label, n, tone in zip(
+                            ("ok", "warn", "fail"), counts, ("good", "warn", "bad")
+                        )
+                    ]
+                ),
+            ]
+        )
+        if counts[2]:
+            raise SystemExit(1)
+        return
     colour = {dr.OK: "green", dr.WARN: "yellow", dr.FAIL: "red"}
     for c in checks:
         console.print(f"[{colour[c.status]}]{c.status:<4}[/] {escape(c.what)}")

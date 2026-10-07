@@ -89,6 +89,13 @@ def test_bad_input_fails_with_one_line(project, monkeypatch):
     assert "fix: edit" in r.output
 
 
+def test_bad_budget_names_the_file_once(project):
+    (project / "budget.csv").write_text("nonsense\n1\n")
+    c = by(checks(project), "budget.csv")[0]
+    assert c.status == dr.FAIL and c.what.startswith("budget.csv")
+    assert "budget.csv: budget.csv" not in c.what
+
+
 def test_plan_name_missing_from_people_fails(project):
     with (project / "plan.csv").open("a") as f:
         f.write("Zed,2026-01-01,0.5\n")
