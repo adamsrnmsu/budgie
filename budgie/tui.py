@@ -708,21 +708,24 @@ class BudgieTUI(App):
     BINDINGS: ClassVar[list[BindingType]] = [
         # First, so a narrow footer cuts something else off rather than help.
         Binding("question_mark", "help", "Help", key_display="?"),
-        ("r", "recalculate", "Recalculate"),
-        Binding("left_square_bracket", "as_of(-1)", "Earlier", key_display="["),
-        Binding("right_square_bracket", "as_of(1)", "Later", key_display="]"),
+        ("r", "recalculate", "Recalc"),
+        # One footer entry for both steps, like 1-5: it fits at 80 columns.
+        Binding("left_square_bracket", "as_of(-1)", "Step", key_display="[/]"),
+        Binding("right_square_bracket", "as_of(1)", "Later", show=False),
         Binding("L", "live", "Live"),
-        ("e", "edit_selected", "Edit file"),
-        ("d", "delete_project", "Delete project"),
-        ("1", "show_tab('tab_projects')", "Projects"),
-        ("2", "show_tab('tab_inputs')", "Inputs"),
-        ("3", "show_tab('tab_plan')", "Plan"),
-        ("4", "show_tab('tab_forecast')", "Forecast"),
-        ("5", "show_tab('tab_assumptions')", "Assumptions"),
-        ("g", "toggle_grid", "Grid/list"),
-        ("a", "toggle_form", "Add by name"),
-        ("P", "switch('perch')", "perch"),
-        ("G", "switch('gitboard')", "gitboard"),
+        ("e", "edit_selected", "Edit"),
+        ("d", "delete_project", "Delete"),
+        # The tab headers already read "1 Projects" … "5 Assumptions", so the
+        # digits stay out of the footer: 80 columns also hold [/] and L.
+        Binding("1", "show_tab('tab_projects')", "Projects", show=False),
+        Binding("2", "show_tab('tab_inputs')", "Inputs", show=False),
+        Binding("3", "show_tab('tab_plan')", "Plan", show=False),
+        Binding("4", "show_tab('tab_forecast')", "Forecast", show=False),
+        Binding("5", "show_tab('tab_assumptions')", "Assumptions", show=False),
+        ("g", "toggle_grid", "Grid"),
+        ("a", "toggle_form", "Add"),
+        Binding("P", "switch('perch')", "Apps", key_display="P/G"),
+        Binding("G", "switch('gitboard')", "gitboard", show=False),
         ("q", "quit", "Quit"),
         Binding("escape", "leave_input", "Leave field", show=False),
     ]
@@ -878,6 +881,7 @@ class BudgieTUI(App):
 
     def on_mount(self) -> None:
         self.title = "Budgie"
+        self.set_interval(60, self._tick)
         self.sub_title = str(self.workspace.root) if self.workspace else "no project"
 
         forecast_table = self.query_one("#forecast", DataTable)
@@ -1042,7 +1046,9 @@ class BudgieTUI(App):
         if action == "edit_selected":
             return self._active_tab() != "tab_assumptions"
         if action == "as_of":
-            return self._active_tab() in ("tab_plan", "tab_forecast", "tab_assumptions")
+            # Where the past is shown. Not Plan: its footer is full at 80
+            # columns, and while browsing it only refuses saves (L still shows).
+            return self._active_tab() in ("tab_forecast", "tab_assumptions")
         if action == "live":
             return self._as_of is not None
         if action in ("toggle_grid", "toggle_form"):
@@ -1350,7 +1356,7 @@ class BudgieTUI(App):
         table = self.query_one("#projects_table", DataTable)
         cursor = table.cursor_row
         table.clear(columns=True)
-        table.add_columns("", "Project", "Inputs", "Location")
+        table.add_columns("Open", "Project", "Inputs", "Location")
 
         current = self.workspace.root if self.workspace else None
         projects = self.projects()
@@ -1382,6 +1388,7 @@ class BudgieTUI(App):
 
     def _refresh_chrome(self, label: str, pto: float) -> None:
         """The two header rows: who/what/when on top, where below."""
+        self._chrome = (label, pto)
         figures = f"{label}   ·   PTO {pto:g}d   ·   {self._clock()}"
         if self._as_of:
             figures = f"[b $warning]as of {self._as_of}[/b $warning]   ·   {figures}"
@@ -1397,6 +1404,11 @@ class BudgieTUI(App):
         if self._as_of:
             location += f"   [b]as of {self._as_of}[/b]   (L: live, [ ]: step)"
         self.query_one("#contextbar", Static).update(location)
+
+    def _tick(self) -> None:
+        """Once a minute: redraw the title bar's clock, nothing else."""
+        if getattr(self, "_chrome", None):
+            self._refresh_chrome(*self._chrome)
 
     @staticmethod
     def _clock() -> str:
@@ -1540,7 +1552,7 @@ class BudgieTUI(App):
                 + f"{style}  {_money(pct[p]):>12}"
                 for p, style, gloss in zip(
                     (10, 50, 90),
-                    ("[green]P10[/green]", "[b]P50[/b]", "[green]P90[/green]"),
+                    ("P10", "[b]P50[/b]", "P90"),
                     glosses,
                 )
             )
@@ -1587,7 +1599,8 @@ class BudgieTUI(App):
             )
             total += hours
             changes = ", ".join(
-                f"{e.effective_date:%b %-d}→{e.fte:g}" for e in plan.changes_for(name)
+                f"{e.effective_date:%b %-d %Y}→{e.fte:g}"
+                for e in plan.changes_for(name)
             )
             table.add_row(name, changes, f"{hours:,.0f}")
         table.add_row("[b]Total[/b]", "", f"[b]{total:,.0f}[/b]")
