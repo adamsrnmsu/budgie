@@ -44,10 +44,6 @@ from budgie.core.project import Snapshot
 from budgie.core.signals import Signal, evaluate
 from budgie.core.solve import Cell, PlanCosting, entries_for, read_month_sheet, solve
 
-#: Monte Carlo runs behind the readout's P50/P80. Fewer than the Forecast tab
-#: so every keystroke stays instant; the Forecast tab has the full figures.
-READOUT_RUNS = 2_000
-
 
 def costing_for(snap: Snapshot) -> PlanCosting:
     """The solver's view of a project: its plan, rates, PTO, costs and spend.
@@ -269,8 +265,14 @@ class GridModel:
             people = at_completion(
                 people, snap.readings, snap.span, plan=snap.plan
             ).people
+        # The Forecast tab's run count and seed (it defaults the seed to 42), so
+        # the saved side equals its headline. ~20 ms at 10,000 runs, so no cap.
+        seed = 42 if snap.seed is None else snap.seed
         return simulate(
-            people, iterations=READOUT_RUNS, seed=snap.seed, costs=snap.costs
+            people,
+            iterations=max(snap.iterations, 100),
+            seed=seed,
+            costs=snap.costs,
         )
 
     def _decision(self, sim) -> tuple[float, Signal] | None:

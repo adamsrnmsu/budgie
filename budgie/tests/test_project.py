@@ -42,11 +42,12 @@ def test_a_named_readings_file_beats_the_projects(project):
 
     assert readings_files(workspace, actuals="mine.csv") == ("mine.csv", None)
     actuals, weekly = readings_files(workspace)
-    assert actuals.endswith("actuals.csv") and weekly.endswith("weekly.csv")
+    assert actuals is None and weekly.endswith("weekly.csv")
     assert readings_files(None) == (None, None)
 
 
 def test_weekly_beats_monthly(project):
+    (project / "actuals.csv").write_text("name,month,hours\nAlice,1,150\nAlice,2,140\n")
     both = load_observations(
         year_span(2026), project / "actuals.csv", project / "weekly.csv"
     )
@@ -79,11 +80,11 @@ def test_a_reading_beats_hours_spent_and_no_reading_keeps_it():
 
 def test_a_pinned_budget_beats_budget_csv(project):
     config = project / CONFIG_NAME
-    # The scaffold pins `budget: 425000` and also writes a budget.csv.
-    assert budget_source(load_workspace(config)) == 425000
-
-    config.write_text(config.read_text().replace("budget: 425000", ""))
+    # The scaffold writes only a budget.csv; a pinned number beats it.
     assert budget_source(load_workspace(config)).endswith("budget.csv")
+
+    config.write_text(config.read_text() + "budget: 425000\n")
+    assert budget_source(load_workspace(config)) == 425000
     assert budget_source(None) is None
 
 
@@ -144,9 +145,6 @@ def test_hours_and_emails_quote_the_same_spent_hours(project, monkeypatch):
 
 
 def test_snapshot_carries_budget_revisions_and_plan(project):
-    cfg = project / CONFIG_NAME  # the scaffold pins a number; drop it for budget.csv
-    cfg.write_text(cfg.read_text().replace("budget: 425000\n", ""))
-
     snap = load_snapshot(project)
 
     assert snap.budget_revisions is snap.budget and snap.budget.has_revisions
@@ -155,6 +153,8 @@ def test_snapshot_carries_budget_revisions_and_plan(project):
 
 def test_pinned_budget_has_no_revisions_and_no_plan_csv_means_no_plan(project):
     (project / "plan.csv").unlink()
+    cfg = project / CONFIG_NAME
+    cfg.write_text(cfg.read_text() + "budget: 425000\n")
     snap = load_snapshot(project)
 
     assert snap.budget.latest == 425000

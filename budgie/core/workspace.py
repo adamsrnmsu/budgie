@@ -13,7 +13,7 @@ input files next to it.
       plan.csv
       costs.csv
       budget.csv
-      actuals.csv
+      weekly.csv         (or monthly actuals.csv; weekly wins when both exist)
 
 ``budgie init`` writes that directory. Every command afterwards finds it by
 walking up from the working directory, so you can run ``budgie forecast`` from

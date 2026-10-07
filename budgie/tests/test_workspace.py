@@ -36,7 +36,8 @@ def test_scaffold_writes_a_loadable_project(tmp_path):
     # The generated files are real data, not placeholders: they load.
     workspace = load_workspace(tmp_path / CONFIG_NAME)
     assert workspace.setting("year") == 2026
-    assert all(item.exists for item in workspace.inputs())
+    # monthly actuals.csv is the alternative to weekly.csv, so it isn't scaffolded
+    assert all(i.exists for i in workspace.inputs() if i.key != "actuals")
 
 
 def test_init_never_overwrites_without_force(tmp_path):

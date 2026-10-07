@@ -138,7 +138,7 @@ year_start: "01-01"   # "10-01" for a federal fiscal year
 pto: 0
 iterations: 10000
 seed: 42
-budget: 425000
+# budget: 425000   # optional: pins one flat number over budget.csv
 
 inputs:
   people: people.csv
@@ -209,7 +209,7 @@ there isn't — so you can try them all immediately. Every command that reads yo
 files also takes `--project NAME` to choose between several budgets. (`budgie init` and
 `budgie delete` manage the projects themselves — see [Start a project](#start-a-project).)
 
-With `PI_BLOCKS=1` (what `perch tui` sets) `forecast`, `monthly`, `hours`, `plan`, `scenario`, `assumptions`, `emails` and `status` print JSON-line blocks (tables, figures, notes) instead of text.
+With `PI_BLOCKS=1` (what `perch tui` sets) `forecast`, `monthly`, `hours`, `plan`, `scenario`, `assumptions`, `emails`, `status`, `calibrate`, `doctor` and `init` print JSON-line blocks (tables, figures, notes) instead of text.
 
 ### `budgie forecast` — what will this team cost?
 
@@ -444,7 +444,7 @@ and the keys. `escape` or `?` closes it.
    `N changes · u undo · U redo · s save` and the cost effect (`plan cost $384,797 →
    $381,200 (−$3,597)`) and, with a budget, the decision before → after (`over budget
    12% → 31% · GREEN → YELLOW`: chance of going over and the stoplight, computed as
-   `budgie forecast` does); the line above shows plan cost · target · gap · P50 · P80.
+   `budgie forecast` does, with the project's iterations and seed, so the "before" figure is the Forecast headline's); the line above shows plan cost · target · gap · P50 · P80.
    `u`/`ctrl+z` undo and `U`/`ctrl+y` redo any edit, nudge, solve, import or discard.
    `t` sets a target (the budget by default; `425000`, `850k` and `1.2M` all work), and
    `v` fills the selected cells so the plan cost lands on it, scaling them by one factor,
