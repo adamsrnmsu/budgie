@@ -178,6 +178,19 @@ budgie status
 Lists every input file, whether it exists, how many rows it has, what it's for, and which
 commands consume it. Run this first when you're not sure where a number came from.
 
+### `budgie doctor` — is anything wrong?
+
+```bash
+budgie doctor [--project NAME]
+```
+
+Read only. Checks the install (interpreter vs the venv, where `budgie` imports from, the
+macOS hidden flag on the editable `.pth`, `$EDITOR`) and the project: every input loads,
+which budget wins when both a pinned `budget:` and `budget.csv` exist, weekly over actuals,
+a weekly reading older than 14 days, plan names missing from `people.csv`, and months the
+plan leaves unallocated. Each `warn` or `fail` prints a fix line; the exit code is 1 only on
+`fail`. With several projects and no `--project` it lists them.
+
 ### `budgie assumptions` — what is Budgie assuming?
 
 ```bash
