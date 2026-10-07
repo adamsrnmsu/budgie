@@ -288,6 +288,23 @@ async def test_help_has_a_plan_section(project, monkeypatch):
         assert "Plan tab" in str(text) and "undo" in str(text)
 
 
+def test_fill_right_copies_into_open_months_only_and_undoes_in_one_step(project):
+    model = GridModel(load_snapshot(project))
+    model.set({("Bob", 6)}, 0.3)
+    model.set({("Alice", 8)}, 0.2)
+    before = dict(model.edits)
+    # Bob: first selected month is Jun. Alice: Apr is booked, a legal source
+    # whose value is copied, but nothing booked is ever written.
+    n = model.fill_right({("Bob", 6), ("Bob", 9), ("Alice", 4)})
+    assert n > 0
+    assert [model.current(("Bob", m)) for m in range(7, 13)] == pytest.approx([0.3] * 6)
+    assert model.current(("Alice", 12)) == pytest.approx(model.current(("Alice", 4)))
+    assert all(model.base.editable(m) for _, m in model.edits)
+    assert ("Alice", 4) not in model.edits and ("Bob", 5) not in model.edits
+    assert model.fill_right({("Bob", 6)}) == 0  # already filled: no undo step
+    assert model.undo() and model.edits == before  # one step back
+
+
 def test_a_nudge_past_the_limit_changes_nothing_and_leaves_no_undo_step(project):
     model = GridModel(load_snapshot(project))
     cell = ("Bob", 12)
@@ -438,3 +455,20 @@ async def test_actual_and_trend_cells_are_read_only_and_say_so(project, monkeypa
         assert "averages are read-only" in _status(app)
         assert not app.query_one("#grid_input").display
         assert not grid.model.edits and not grid.selected
+
+
+async def test_greater_than_fills_right_from_the_cursor(project, monkeypatch):
+    app, size = await _plan(project, monkeypatch)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        grid = app.query_one("#plan_grid")
+        table = app.query_one("#grid_table")
+        table.move_cursor(row=grid.model.names.index("Bob"), column=8)
+        await pilot.press("5", "0", "enter", "greater_than_sign")
+        await pilot.pause()
+        assert grid.model.current(("Bob", 12)) == 0.5
+        assert grid.model.current(("Bob", 7)) != 0.5
+        await pilot.press("u")
+        assert grid.model.current(("Bob", 12)) != 0.5
+        assert grid.model.current(("Bob", 8)) == 0.5
