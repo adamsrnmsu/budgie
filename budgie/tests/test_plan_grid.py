@@ -487,9 +487,6 @@ def test_readout_omits_the_decision_without_a_budget(project):
 
 
 async def test_unsaved_line_shows_over_budget_and_stoplight(project, monkeypatch):
-
-
-async def test_greater_than_fills_right_from_the_cursor(project, monkeypatch):
     app, size = await _plan(project, monkeypatch)
     async with app.run_test(size=size) as pilot:
         await pilot.press("3")
@@ -503,6 +500,12 @@ async def test_greater_than_fills_right_from_the_cursor(project, monkeypatch):
         assert "over budget 5" in text and "RED → " in text
 
 
+async def test_greater_than_fills_right_from_the_cursor(project, monkeypatch):
+    app, size = await _plan(project, monkeypatch)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        grid = app.query_one("#plan_grid")
         table = app.query_one("#grid_table")
         table.move_cursor(row=grid.model.names.index("Bob"), column=8)
         await pilot.press("5", "0", "enter", "greater_than_sign")

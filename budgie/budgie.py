@@ -840,7 +840,7 @@ def hours(alloc_csv, year, pto, plan_csv):
     """Show each person's allocated / spent / remaining hours from their FTE."""
     from budgie.core.allocation import load_allocations
     from budgie.core.calendar import productive_hours
-    from budgie.singletons import console, logger
+    from budgie.singletons import console
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
@@ -861,7 +861,6 @@ def hours(alloc_csv, year, pto, plan_csv):
     # The project's latest reading is the spent figure, as in `emails`.
     readings = load_observations(span, *readings_files(_workspace()))
     allocs = with_readings(allocs, spent_to_date(readings))
-    logger.info(f"Available hours {span.label}: {ph.available_hours:,.0f} (1.0 FTE)")
     if blocks.wanted():
         out = [
             blocks.figures(
@@ -879,6 +878,8 @@ def hours(alloc_csv, year, pto, plan_csv):
             out.append(blocks.text(_PLAN_NOTE.format(Path(plan_csv).name), tone="dim"))
         blocks.emit(out)
         return
+    # A result, not a log line: -q/-v must not hide it.
+    console.print(f"Available hours {span.label}: {ph.available_hours:,.0f} (1.0 FTE)")
     _print_hours_table(allocs)
     if plan_csv:
         console.print(f"[dim]{_PLAN_NOTE.format(Path(plan_csv).name)}[/dim]")
@@ -1143,17 +1144,17 @@ def _print_hours_table(allocs):
 def scenario(config_path):
     """Compare what-if scenarios side by side, with a stoplight vs the budget."""
     from budgie.core.scenario import run_scenarios
-    from budgie.singletons import console, logger
+    from budgie.singletons import console
     from budgie.utils.utils import display_startup_message
 
     display_startup_message()
     config_path = _input("scenarios", config_path, "scenarios.yaml")
 
     results, budget = run_scenarios(config_path)
-    logger.info(f"Budget target: ${budget:,.0f}   (baseline: {results[0].name})")
     if blocks.wanted():
         blocks.emit(_scenario_blocks(results, budget))
         return
+    console.print(f"Budget target: ${budget:,.0f}   (baseline: {results[0].name})")
     _print_scenario_table(results, budget)
     console.print("\n[bold]Signals[/bold]")
     for r in results:
