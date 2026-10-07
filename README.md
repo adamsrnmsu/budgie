@@ -444,7 +444,7 @@ and the keys. `escape` or `?` closes it.
    `N changes · u undo · U redo · s save` and the cost effect (`plan cost $384,797 →
    $381,200 (−$3,597)`) and, with a budget, the decision before → after (`over budget
    12% → 31% · GREEN → YELLOW`: chance of going over and the stoplight, computed as
-   `budgie forecast` does); the line above shows plan cost · target · gap · P50 · P80.
+   `budgie forecast` does, with the project's iterations and seed, so the "before" figure is the Forecast headline's); the line above shows plan cost · target · gap · P50 · P80.
    `u`/`ctrl+z` undo and `U`/`ctrl+y` redo any edit, nudge, solve, import or discard.
    `t` sets a target (the budget by default; `425000`, `850k` and `1.2M` all work), and
    `v` fills the selected cells so the plan cost lands on it, scaling them by one factor,
