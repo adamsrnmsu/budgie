@@ -135,6 +135,26 @@ class GridModel:
             self.edits.update(new)
         return len(new)
 
+    def fill_right(self, cells) -> int:
+        """Copy each row's first selected month into its later open months.
+
+        Booked months are skipped, never written; the number of cells that
+        changed. One undo step (none when everything already matches).
+        """
+        first: dict[str, int] = {}
+        for name, m in cells:
+            first[name] = min(m, first.get(name, m))
+        new = {}
+        for name, m0 in first.items():
+            v = round(self.current((name, m0)), 4)
+            for m in range(m0 + 1, len(self.months) + 1):
+                if self.base.editable(m) and round(self.current((name, m)), 4) != v:
+                    new[name, m] = v
+        if new:
+            self.checkpoint()
+            self.edits.update(new)
+        return len(new)
+
     def _check_open(self, cells) -> None:
         booked = sorted({m for _, m in cells if not self.base.editable(m)})
         if booked:
@@ -311,7 +331,7 @@ def parse_hours(text: str) -> float:
 
 
 LEGEND = (
-    "[b]type[/b] 0-100 or [b]Enter[/b] edit   [b]+ -[/b] nudge 5%   "
+    "[b]type[/b] 0-100 or [b]Enter[/b] edit   [b]+ -[/b] nudge 5%   [b]>[/b] fill right   "
     "[b]space[/b] select   [b]u[/b]/[b]U[/b] undo/redo   [b]s[/b] save   "
     "[b]x[/b] discard   [b]esc[/b] leave grid (then 1-5 switch tabs)\n"
     "[b yellow]yellow[/b yellow] edited, not saved   [reverse]reversed[/reverse] selected"
@@ -349,6 +369,7 @@ class PlanGrid(Vertical):
         Binding("plus", "nudge(0.05)", "+5%"),
         Binding("minus", "nudge(-0.05)", "-5%"),
         Binding("space", "toggle_cell", "Select"),
+        Binding("greater_than_sign", "fill_right", "Fill right"),
         Binding("c", "commit", show=False),
         Binding("ctrl+z", "undo", show=False),
         Binding("ctrl+y", "redo", show=False),
@@ -619,6 +640,17 @@ class PlanGrid(Vertical):
             + (" FTE" if self.hours else "")
             + "."
         )
+
+    def action_fill_right(self) -> None:
+        cells = self._targets()
+        if self.model is None or not cells or self._blocked():
+            return
+        moved = self.model.fill_right(cells)
+        if not moved:
+            self.say("Nothing to fill: later open months already match.")
+            return
+        self._redraw()
+        self.say(f"Filled {moved} cell(s) right. u undoes.")
 
     def action_undo(self) -> None:
         if self.model and self.model.undo():

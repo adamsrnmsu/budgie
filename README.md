@@ -413,7 +413,8 @@ and the keys. `escape` or `?` closes it.
    percentage in each cell. Opening the tab puts the cursor in the grid. Type a number
    (`50`, `50%` and `0.5` all mean half time) or press `enter` and the edit line opens
    right under the grid; `+`/`-` nudge the selected cells (or the cursor's) by 5 points,
-   kept within 0–100%. `space` selects a cell and `shift`+arrows extend the selection.
+   kept within 0–100%. `>` fills right: each row's first selected month (or the cursor's)
+   is copied into its later open months, one undo step, booked months untouched. `space` selects a cell and `shift`+arrows extend the selection.
    Edits are scratch: edited cells turn yellow, and the lines under the grid show
    `N changes · u undo · U redo · s save` and the cost effect (`plan cost $384,797 →
    $381,200 (−$3,597)`) and, with a budget, the decision before → after (`over budget

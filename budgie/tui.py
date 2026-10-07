@@ -283,6 +283,7 @@ PLAN_KEYS: tuple[tuple[str, str], ...] = (
         "edit the cell under the cursor: 50, 50% or 0.5 all mean half time",
     ),
     ("+  -", "nudge the selected cells (or the cursor's) by 5 points, kept in 0-100%"),
+    (">", "copy the first selected month (or the cursor's) into the later open months"),
     ("space, shift+arrows", "select cells; an edit or nudge applies to all of them"),
     ("u / U", "undo / redo (edits, nudges, solves, imports, discard)"),
     ("s", "save the edits as dated rows appended to plan.csv"),
