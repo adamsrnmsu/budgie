@@ -1434,9 +1434,14 @@ class BudgieTUI(App):
         det = run_forecast(people, costs=costs)
         sim = simulate(people, iterations=iterations, seed=seed, costs=costs)
         pct = sim.percentiles()
-        self.query_one("#forecast_headline", Static).update(
-            _headline(snap, people, pct[50], sim) if snap else ""
-        )
+        head = _headline(snap, people, pct[50], sim) if snap else ""
+        if snap:
+            from budgie.core.drift import drift_line, since_last_reading
+
+            moved = since_last_reading(snap, iterations, seed)
+            if moved:
+                head += f"\n[dim]{drift_line(moved)}[/dim]"
+        self.query_one("#forecast_headline", Static).update(head)
         self.query_one("#forecast_settings", Static).update(
             f"[dim]{ph.span.label} · PTO {ph.pto_days:g}d · {iterations:,} runs   "
             f"(e on Projects edits)[/dim]"
