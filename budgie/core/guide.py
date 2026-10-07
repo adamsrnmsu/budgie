@@ -110,7 +110,10 @@ COMMAND_GROUPS: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...] = (
     (
         "Report",
         "Tell people where they stand",
-        (("emails", "Per-person drafts (writes files, never sends)"),),
+        (
+            ("emails", "Per-person drafts (writes files, never sends)"),
+            ("calibrate", "Backtest: did actual spend land inside P10-P90?"),
+        ),
     ),
     (
         "Explore",

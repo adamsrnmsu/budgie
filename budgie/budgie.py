@@ -1875,6 +1875,129 @@ def _print_plan_table(allocation_plan, span, pto, pto_by_name=None):
     console.print(table)
 
 
+@click.command()
+@click.option(
+    "--seed",
+    default=None,
+    type=int,
+    help="Random seed (default: the project's, else 1).",
+)
+@click.option(
+    "--iterations",
+    default=None,
+    type=int,
+    help="Simulation runs per forecast date (default 2000; forecast uses 10000).",
+)
+@_project_option
+def calibrate(seed, iterations):
+    """Backtest the forecast: how often did actual spend land inside P10-P90?
+
+    For each past reading date the forecast is rebuilt as it stood then and
+    compared with the spend actually read on every later reading date.
+    """
+    from budgie.core.calibrate import DEFAULT_ITERATIONS
+    from budgie.core.calibrate import calibrate as run
+    from budgie.core.project import load_snapshot
+    from budgie.singletons import console
+    from budgie.utils.utils import display_startup_message
+
+    display_startup_message()
+    workspace = _workspace()
+    if workspace is None:
+        raise ValueError("calibrate needs a project (budgie.yaml); run `budgie init`")
+    cal = run(
+        load_snapshot(workspace.root),
+        iterations=iterations or DEFAULT_ITERATIONS,
+        seed=seed,
+    )
+    out = _calibrate_blocks(cal)
+    if blocks.wanted():
+        blocks.emit(out)
+        return
+    from rich.table import Table
+
+    for b in out:
+        if b["block"] == "table":
+            t = Table(title=b["title"], header_style="bold magenta")
+            for col, al in zip(b["columns"], b["align"]):
+                t.add_column(col, justify="right" if al == "r" else "left")
+            for row in b["rows"]:
+                t.add_row(*row)
+            console.print(t)
+        elif b["block"] == "figures":
+            console.print(
+                "  ".join(f"[bold]{f['label']}[/bold] {f['value']}" for f in b["items"])
+            )
+        else:
+            console.print(b["text"], markup=False)
+
+
+def _calibrate_blocks(cal):
+    """Blocks for `calibrate`: the figures, one row per horizon, and the caveats."""
+
+    def pct(x):
+        return f"{x:.0%}"
+
+    def row(s):
+        if not s.enough:
+            return [s.label, str(s.pairs), *["-"] * 5]
+        err = "" if s.median_error_pct is None else f"{s.median_error_pct:+.1%}"
+        return [
+            s.label,
+            str(s.pairs),
+            pct(s.inside),
+            pct(s.below),
+            pct(s.above),
+            f"${s.median_error:+,.0f}",
+            err,
+        ]
+
+    t = cal.total
+    if t.enough:
+        figs = [
+            blocks.figure("Pairs", str(t.pairs)),
+            blocks.figure("Inside P10-P90", pct(t.inside), note="an honest band: ~80%"),
+            blocks.figure("Below P10", pct(t.below)),
+            blocks.figure("Above P90", pct(t.above)),
+            blocks.figure("Median P50 error", f"${t.median_error:+,.0f}"),
+        ]
+    else:
+        figs = [
+            blocks.figure("Pairs", str(t.pairs)),
+            blocks.figure("Result", f"not enough history: {t.pairs} pairs"),
+        ]
+    return [
+        blocks.heading("Forecast calibration (labor dollars)"),
+        blocks.figures(figs),
+        blocks.table(
+            [
+                "Weeks ahead",
+                "Pairs",
+                "Inside",
+                "Below P10",
+                "Above P90",
+                "Median err $",
+                "Median err %",
+            ],
+            [row(s) for s in (t, *cal.horizons)],
+            title="Actual spend against the forecast made weeks earlier",
+            align=["l", "r", "r", "r", "r", "r", "r"],
+        ),
+        *[
+            blocks.text(f"{s.label}: not enough history: {s.pairs} pairs", tone="warn")
+            for s in (t, *cal.horizons)
+            if not s.enough
+        ],
+        blocks.text(
+            f"Error is actual minus P50 (positive: spend ran hotter). "
+            f"{cal.iterations:,} runs per forecast date, seed {cal.seed}; "
+            "pairs overlap, so read the shares as a description, not a test. "
+            "Needs 8 pairs per row.",
+            tone="dim",
+        ),
+    ]
+
+
 cli.add_command(init)
 cli.add_command(delete_project_cmd)
 cli.add_command(guide)
@@ -1887,6 +2010,7 @@ cli.add_command(hours)
 cli.add_command(emails)
 cli.add_command(scenario)
 cli.add_command(monthly)
+cli.add_command(calibrate)
 
 if __name__ == "__main__":
     cli()
