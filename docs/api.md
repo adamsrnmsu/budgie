@@ -42,6 +42,8 @@ imports. The front-ends (CLI, TUI, plots, emails) are thin adapters over it.
 
 .. automodule:: budgie.core.costs
 
+.. automodule:: budgie.core.doctor
+
 .. automodule:: budgie.core.scenario
 ```
 

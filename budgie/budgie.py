@@ -1891,7 +1891,46 @@ def _print_plan_table(allocation_plan, span, pto, pto_by_name=None):
     console.print(table)
 
 
+@click.command()
+@_project_option
+def doctor():
+    """Check the install and the project; read only. Exit 1 only on a failure."""
+    from rich.markup import escape
+
+    from budgie.core import doctor as dr
+    from budgie.core.workspace import available_projects
+    from budgie.singletons import console
+    from budgie.utils.utils import display_startup_message
+
+    display_startup_message()
+    checks = dr.environment_checks()
+    workspace = _workspace()
+    projects = available_projects()
+    if workspace is not None:
+        checks += dr.project_checks(workspace, _today())
+    elif _SELECTED_PROJECT:
+        checks.append(
+            dr.Check(
+                dr.FAIL,
+                f"no project called {_SELECTED_PROJECT}",
+                "one of: " + ", ".join(p.name for p in projects),
+            )
+        )
+    elif len(projects) > 1:
+        checks += dr.several_checks([p.name for p in projects])
+    else:
+        checks += dr.sample_checks()
+    colour = {dr.OK: "green", dr.WARN: "yellow", dr.FAIL: "red"}
+    for c in checks:
+        console.print(f"[{colour[c.status]}]{c.status:<4}[/] {escape(c.what)}")
+        if c.status != dr.OK and c.fix:
+            console.print(f"     [dim]fix: {escape(c.fix)}[/dim]")
+    if any(c.status == dr.FAIL for c in checks):
+        raise SystemExit(1)
+
+
 cli.add_command(init)
+cli.add_command(doctor)
 cli.add_command(delete_project_cmd)
 cli.add_command(guide)
 cli.add_command(status)
