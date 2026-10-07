@@ -222,3 +222,61 @@ def test_blocks_twins_match_plain_output(project, args, monkeypatch):
     plain = _plain(run(args, project, blocks_on=False))
     missing = [v for b in blocks_out for v in _values(b) if v not in plain]
     assert not missing, missing
+
+
+_FIVE = {
+    "monthly": [
+        "monthly",
+        "--people",
+        str(TESTS / "team.csv"),
+        "--seed",
+        "1",
+        "--iterations",
+        "200",
+        "--year",
+        "2026",
+    ],
+    "hours": ["hours", "--allocations", str(TESTS / "allocations.csv")],
+    "plan": ["plan", "--plan", str(TESTS / "plan.csv"), "--year", "2026"],
+    "scenario": ["scenario", "--config", str(TESTS / "scenarios.yaml")],
+    "assumptions": ["assumptions", "--year", "2026"],
+}
+
+
+@pytest.mark.parametrize("name", list(_FIVE))
+def test_five_commands_blocks_match_plain(name, project, monkeypatch):
+    """Each emits only contract blocks, same cells as the text, no JSON in plain."""
+    monkeypatch.setenv("COLUMNS", "400")
+    out = parsed(run(_FIVE[name], project))
+    tables = [b for b in out if b["block"] == "table"]
+    assert len(tables) == 1 and tables[0]["rows"]
+    plain = _plain(run(_FIVE[name], project, blocks_on=False))
+    assert '{"pi"' not in plain
+    missing = [v for b in out for v in _values(b) if v not in plain]
+    assert not missing, missing
+
+
+def test_five_commands_columns_and_order(project):
+    def t(name):
+        out = parsed(run(_FIVE[name], project))
+        return next(b for b in out if b["block"] == "table")
+
+    m = t("monthly")
+    assert m["columns"] == ["Month", "Hours", "Cost", "Cumulative", "P10", "P90"]
+    assert len(m["rows"]) == 13 and m["rows"][-1][0] == "Year"
+    h = t("hours")
+    assert h["columns"] == ["Name", "FTE", "Allocated", "Spent", "Remaining", "Used"]
+    p = t("plan")
+    assert p["columns"] == ["Name", "Changes", "Hours"] and p["rows"][-1][0] == "Total"
+    s = parsed(run(_FIVE["scenario"], project))
+    assert s[1]["columns"][0] == "Scenario" and s[2]["block"] == "heading"
+    assert all(b["block"] == "text" and b["tone"] in TONES for b in s[3:])
+    a = t("assumptions")
+    assert a["columns"] == ["Assumption", "Value", "Set in"]
+
+
+def test_monthly_plots_still_written_in_blocks_mode(project):
+    out = parsed(run([*_FIVE["monthly"], "--plots", "--out-dir", "o"], project))
+    assert out[-1]["text"].startswith("Wrote ")
+    assert (project / "o" / "fan.png").exists()
+    assert (project / "o" / "monthly.png").exists()
