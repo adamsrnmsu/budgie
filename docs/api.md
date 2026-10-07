@@ -58,6 +58,8 @@ imports. The front-ends (CLI, TUI, plots, emails) are thin adapters over it.
 
 .. automodule:: budgie.core.eac
 
+.. automodule:: budgie.core.drift
+
 .. automodule:: budgie.core.burndown
 ```
 
