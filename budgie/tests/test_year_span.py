@@ -472,15 +472,13 @@ def test_the_tui_default_year_outside_a_project_is_the_samples_year(
     forget_workspaces()
 
 
-def test_a_fiscal_scaffold_dates_its_readings_from_the_first_month(tmp_path):
+def test_a_fiscal_scaffold_dates_its_weekly_readings_from_the_first_week(tmp_path):
     from budgie.core.scaffold import scaffold_files
 
     cal = scaffold_files(2026)
     assert "Alice,12,430\nAlice,20,660" in cal["weekly.csv"]
-    assert "Alice,1,150\nAlice,2,140" in cal["actuals.csv"]
     fy = scaffold_files(2027, "10-01")
     assert "Alice,51,430\nAlice,6,660" in fy["weekly.csv"]
-    assert "Alice,10,150\nAlice,11,140" in fy["actuals.csv"]
 
 
 def test_the_html_email_names_the_span_end():

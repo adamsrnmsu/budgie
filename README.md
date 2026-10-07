@@ -138,7 +138,7 @@ year_start: "01-01"   # "10-01" for a federal fiscal year
 pto: 0
 iterations: 10000
 seed: 42
-budget: 425000
+# budget: 425000   # optional: pins one flat number over budget.csv
 
 inputs:
   people: people.csv
