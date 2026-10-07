@@ -416,7 +416,9 @@ and the keys. `escape` or `?` closes it.
    kept within 0–100%. `space` selects a cell and `shift`+arrows extend the selection.
    Edits are scratch: edited cells turn yellow, and the lines under the grid show
    `N changes · u undo · U redo · s save` and the cost effect (`plan cost $384,797 →
-   $381,200 (−$3,597)`); the line above shows plan cost · target · gap · P50 · P80.
+   $381,200 (−$3,597)`) and, with a budget, the decision before → after (`over budget
+   12% → 31% · GREEN → YELLOW`: chance of going over and the stoplight, computed as
+   `budgie forecast` does); the line above shows plan cost · target · gap · P50 · P80.
    `u`/`ctrl+z` undo and `U`/`ctrl+y` redo any edit, nudge, solve, import or discard.
    `t` sets a target (the budget by default; `425000`, `850k` and `1.2M` all work), and
    `v` fills the selected cells so the plan cost lands on it, scaling them by one factor,

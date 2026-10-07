@@ -41,13 +41,8 @@ from budgie.core.eac import at_completion
 from budgie.core.montecarlo import simulate
 from budgie.core.plan import AllocationPlan, PlanEntry
 from budgie.core.project import Snapshot
-from budgie.core.solve import (
-    Cell,
-    PlanCosting,
-    entries_for,
-    read_month_sheet,
-    solve,
-)
+from budgie.core.signals import Signal, evaluate
+from budgie.core.solve import Cell, PlanCosting, entries_for, read_month_sheet, solve
 
 #: Monte Carlo runs behind the readout's P50/P80. Fewer than the Forecast tab
 #: so every keystroke stays instant; the Forecast tab has the full figures.
@@ -247,18 +242,40 @@ class GridModel:
             )
         return f"{said}. {sol.note}".strip()
 
-    def readout(self) -> dict[str, float | None]:
-        """Plan cost, target, gap, and the P50/P80 of the scratch plan."""
-        cost = self.scratch.cost()
-        snap = self.snap.with_plan(self.plan)
+    def _sim(self, snap: Snapshot):
+        """The readout's Monte Carlo run for ``snap``, as ``budgie forecast`` runs it."""
         people = snap.people
         if snap.readings:
             people = at_completion(
                 people, snap.readings, snap.span, plan=snap.plan
             ).people
-        pct = simulate(
+        return simulate(
             people, iterations=READOUT_RUNS, seed=snap.seed, costs=snap.costs
-        ).percentiles((50, 80))
+        )
+
+    def _decision(self, sim) -> tuple[float, Signal] | None:
+        """(chance over budget, stoplight) of ``sim``; None without a budget."""
+        if self.snap.budget is None:
+            return None
+        result = evaluate(sim, self.snap.budget.latest)
+        return result.prob_over_budget, result.signal
+
+    @cached_property
+    def saved(self) -> tuple[float, Signal] | None:
+        """The decision for the plan as saved; computed once."""
+        return self._decision(self._sim(self.snap))
+
+    def readout(self) -> dict:
+        """Plan cost, target, gap, P50/P80 and the decision, before and after.
+
+        ``over``/``signal`` are the scratch plan's chance of going over the
+        budget and its stoplight; ``over0``/``signal0`` the saved plan's. All
+        None without a budget.
+        """
+        cost = self.scratch.cost()
+        sim = self._sim(self.snap.with_plan(self.plan))
+        pct = sim.percentiles((50, 80))
+        after, before = self._decision(sim), self.saved
         gap = None if self.target is None else self.target - cost
         return {
             "cost": cost,
@@ -266,6 +283,10 @@ class GridModel:
             "gap": gap,
             "p50": pct[50],
             "p80": pct[80],
+            "over": after and after[0],
+            "signal": after and after[1],
+            "over0": before and before[0],
+            "signal0": before and before[1],
         }
 
 
@@ -455,12 +476,18 @@ class PlanGrid(Vertical):
         self.query_one("#grid_readout", Static).update(line)
         saved = self.model.base.cost()
         delta = r["cost"] - saved
-        self.query_one("#grid_cost", Static).update(
-            f"unsaved: plan cost {_money(saved)} → {_money(r['cost'])} "
-            f"({_signed(delta)})"
-            if self.model.edits
-            else ""
-        )
+        text = ""
+        if self.model.edits:
+            text = (
+                f"unsaved: plan cost {_money(saved)} → {_money(r['cost'])} "
+                f"({_signed(delta)})"
+            )
+            if r["over"] is not None:
+                text += (
+                    f"   ·   over budget {r['over0']:.0%} → {r['over']:.0%}"
+                    f"   ·   {r['signal0'].name} → {r['signal'].name}"
+                )
+        self.query_one("#grid_cost", Static).update(text)
         m, n = self.model, len(self.model.edits)
         head = (
             f"[b yellow]{n} change{'s' * (n != 1)}[/b yellow]"
