@@ -44,7 +44,6 @@ other tools read Budgie projects through {py:func}`budgie.core.project.load_snap
 ## Development
 
 ```bash
-make venv      # build the virtualenv at ~/Documents/tools/budgie
 make test      # pytest
 make lint      # ruff check
 make format    # isort + ruff format
@@ -52,8 +51,7 @@ make docs      # build this site into docs/_build/html
 make help      # list all targets
 ```
 
-Every target takes `VENV=/path/to/env` to use a different virtualenv.
-`make docs` needs the `docs` extra: `pip install -e '.[dev,docs]'`.
+The environment comes from perch (`make install` in the perch checkout).
 
 Run a single test:
 

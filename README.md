@@ -36,34 +36,13 @@ interface, cost scenario management — and is just cooler than a spreadsheet.
 
 Requires Python 3.10+.
 
-```bash
-git clone https://github.com/adamsrnmsu/budgie.git
-cd budgie
-make venv                      # creates the venv and installs budgie + deps + dev tools
-make activate                  # prints the source command for your shell
-```
-
-`make venv` builds the virtualenv **outside the repo**, at `~/Documents/tools/budgie`,
-so nothing in the working tree is a build artifact. Put it somewhere else with
-`make venv VENV=/path/to/env` (every other target takes the same `VENV=`).
-
-Or by hand:
+Budgie installs through perch, which clones it and builds the one shared environment:
 
 ```bash
-python3 -m venv /path/to/env && source /path/to/env/bin/activate
-pip install -e .                # to use it
-pip install -e '.[dev]'          # to work on it: adds pytest, ruff, isort
-pip install -e '.[dev,docs]'     # ...and Sphinx, to build the docs site
+git clone https://github.com/adamsrnmsu/perch.git && cd perch && make install
 ```
 
-> **Note:** make sure the interpreter running `budgie` is the same one `pip` installed into.
-> A bare `python3` on your `PATH` may be a different version than your virtualenv.
->
-> **macOS:** if `budgie` dies with `ModuleNotFoundError: No module named 'budgie'`
-> right after a successful `pip install -e .`, check the editable `.pth` for the
-> hidden flag: `ls -lO "$(python -c 'import site;print(site.getsitepackages()[0])')"`.
-> `site.py` silently skips any `.pth` marked `hidden`, so the finder never installs.
-> Clear it with `chflags nohidden <file>`.
+Budgie's checkout is then `perch/apps/budgie`, installed editable.
 
 ## Start a project
 
@@ -714,9 +693,8 @@ make docs      # Sphinx site in docs/_build/html
 make help      # list all targets
 ```
 
-Every target runs against the virtualenv at `~/Documents/tools/budgie` (see
-[Install](#install)), not one inside the repo — pass `VENV=/path/to/env` to point them
-elsewhere. The working tree holds no build artifacts.
+Every target runs against the virtualenv perch built (see
+[Install](#install)), not one inside the repo. The working tree holds no build artifacts.
 
 The docs are not hosted anywhere: Budgie is a private repo. Build them with `make docs`,
 or download the `docs` artifact from any CI run on `main`.

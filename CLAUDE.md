@@ -6,24 +6,14 @@ Budgie is a CLI budget/forecasting companion — a terminal alternative to sprea
 
 ## Install & Run
 
-Editable install, then invoke via the `budgie` console script (`pyproject.toml` → `budgie.budgie:cli`):
-
-```bash
-pip install -e .                 # to use it (runtime deps only)
-pip install -e '.[dev]'           # to work on it: adds pytest, pytest-asyncio, ruff, isort
-                                 # or: make venv  (builds the venv and installs '.[dev]')
-```
+Install through perch (`git clone https://github.com/adamsrnmsu/perch.git && cd perch && make install`), which puts this checkout at `perch/apps/budgie` and installs it editable. Invoke via the `budgie` console script (`pyproject.toml` → `budgie.budgie:cli`).
 
 There is a user-facing `README.md` covering install, every command, and the input file
 formats — keep it in sync when commands or CSV shapes change.
 
 Or run the module directly: `python -m budgie.budgie forecast ...`.
 
-Note: this project is typically installed into a virtualenv. Be careful that the interpreter running the package matches the one `pip`/`pytest` use — a bare `python3` on PATH may be a different version than where the package is installed.
-
-**The venv lives outside the repo, at `~/Documents/tools/budgie`** (alongside the other tools there), so the working tree holds no build artifacts. `Makefile` `VENV ?=` sets it; every target takes `VENV=` to override. Run the suite as `~/Documents/tools/budgie/bin/pytest`.
-
-**macOS hidden-`.pth` trap.** `site.addpackage` *silently skips any `.pth` file carrying the `UF_HIDDEN` flag* — so an editable install can report success while the package stays unimportable, and `budgie` dies with `ModuleNotFoundError: No module named 'budgie'`. The tell: importing works from the repo root (cwd puts `./budgie/` on `sys.path`) but fails from anywhere else, and every test module errors on collection at once. Diagnose from a **neutral cwd** — testing from the repo root gives a false pass. `/bin/ls -lO <site-packages>` shows the flag; `chflags nohidden <file>` clears it (`chflags -R` skips symlinks — use `find ... -print0 | xargs -0 chflags -h nohidden`). Moving the venv out of the tree is what keeps whatever hides files from reaching it.
+Run the suite as `~/Documents/tools/perch/bin/pytest` (perch's environment).
 
 ## Commands
 
