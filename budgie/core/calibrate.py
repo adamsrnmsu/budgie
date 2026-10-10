@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 DEFAULT_ITERATIONS = 2000  # forecast's is 10,000; the band only needs 2 percentiles
 DEFAULT_SEED = 1
 MIN_PAIRS = 8
-#: (label, lowest weeks ahead): a pair belongs to the last row it reaches.
+#: Each row is a label and its lowest weeks ahead; a pair belongs to the last row it reaches.
 HORIZONS = (("1-3 weeks", 1), ("4-7 weeks", 4), ("8+ weeks", 8))
 
 
